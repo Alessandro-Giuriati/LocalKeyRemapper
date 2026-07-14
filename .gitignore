@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Xcode: impostazioni personali dell'utente
+xcuserdata/
+*.xcuserstate
+
+# Output e cache di compilazione
+DerivedData/
+build/
+*.hmap
+
+# Archivi e simboli di debug generati
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
