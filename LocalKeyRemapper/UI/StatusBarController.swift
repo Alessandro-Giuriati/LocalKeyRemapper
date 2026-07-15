@@ -7,11 +7,19 @@
 
 import AppKit
 
+/// Manages the application's menu bar interface.
+@MainActor
 final class StatusBarController: NSObject {
 
     private let statusItem: NSStatusItem
+    private let remappingController: RemappingControlling
 
-    override init() {
+    private var stateMenuItem: NSMenuItem?
+    private var toggleMenuItem: NSMenuItem?
+
+    init(remappingController: RemappingControlling) {
+        self.remappingController = remappingController
+
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.squareLength
         )
@@ -19,6 +27,8 @@ final class StatusBarController: NSObject {
         super.init()
 
         configureStatusItem()
+        observeRemappingState()
+        updateMenu(for: remappingController.state)
     }
 
     private func configureStatusItem() {
@@ -52,20 +62,85 @@ final class StatusBarController: NSObject {
             action: nil,
             keyEquivalent: ""
         )
+
         stateMenuItem.isEnabled = false
+
+        let toggleMenuItem = NSMenuItem(
+            title: "Enable Remapping",
+            action: #selector(toggleRemapping),
+            keyEquivalent: ""
+        )
+
+        toggleMenuItem.target = self
 
         let quitMenuItem = NSMenuItem(
             title: "Quit LocalKeyRemapper",
             action: #selector(quitApplication),
             keyEquivalent: "q"
         )
+
         quitMenuItem.target = self
 
         menu.addItem(stateMenuItem)
+        menu.addItem(toggleMenuItem)
         menu.addItem(.separator())
         menu.addItem(quitMenuItem)
 
         statusItem.menu = menu
+
+        self.stateMenuItem = stateMenuItem
+        self.toggleMenuItem = toggleMenuItem
+    }
+
+    private func observeRemappingState() {
+        remappingController.onStateChange = { [weak self] state in
+            self?.updateMenu(for: state)
+        }
+    }
+
+    private func updateMenu(for state: RemappingState) {
+        switch state {
+        case .disabled:
+            stateMenuItem?.title = "Remapping: Off"
+            toggleMenuItem?.title = "Enable Remapping"
+            toggleMenuItem?.isEnabled = true
+
+        case .enabling:
+            stateMenuItem?.title = "Remapping: Enabling…"
+            toggleMenuItem?.title = "Cancel"
+            toggleMenuItem?.isEnabled = true
+
+        case .enabled:
+            stateMenuItem?.title = "Remapping: On"
+            toggleMenuItem?.title = "Disable Remapping"
+            toggleMenuItem?.isEnabled = true
+
+        case .permissionRequired:
+            stateMenuItem?.title = "Accessibility Permission Required"
+            toggleMenuItem?.title = "Check Permission and Enable"
+            toggleMenuItem?.isEnabled = true
+
+        case .failed(let failure):
+            updateMenuForFailure(failure)
+        }
+    }
+
+    private func updateMenuForFailure(_ failure: RemappingFailure) {
+        switch failure {
+        case .rulesLoadingFailed:
+            stateMenuItem?.title = "Error: Rules Could Not Load"
+
+        case .eventTapStartFailed:
+            stateMenuItem?.title = "Error: Event Tap Could Not Start"
+        }
+
+        toggleMenuItem?.title = "Try Again"
+        toggleMenuItem?.isEnabled = true
+    }
+
+    @objc
+    private func toggleRemapping() {
+        remappingController.toggle()
     }
 
     @objc
