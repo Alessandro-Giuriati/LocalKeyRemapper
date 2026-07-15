@@ -1,0 +1,39 @@
+{
+  "configurations" : [
+    {
+      "id" : "1D2D7EA9-A954-402D-94E0-A2BB62798370",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:LocalKeyRemapper.xcodeproj",
+      "identifier" : "BD3F1DAA2FBB52D1002684D0",
+      "name" : "LocalKeyRemapper"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:LocalKeyRemapper.xcodeproj",
+        "identifier" : "BD3F1DBA2FBB52D6002684D0",
+        "name" : "LocalKeyRemapperTests"
+      }
+    },
+    {
+      "enabled" : false,
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:LocalKeyRemapper.xcodeproj",
+        "identifier" : "BD3F1DC42FBB52D6002684D0",
+        "name" : "LocalKeyRemapperUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

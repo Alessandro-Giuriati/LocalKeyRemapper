@@ -27,6 +27,7 @@
 		BD3F1DAB2FBB52D1002684D0 /* LocalKeyRemapper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalKeyRemapper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BD3F1DBB2FBB52D6002684D0 /* LocalKeyRemapperTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalKeyRemapperTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BD3F1DC52FBB52D6002684D0 /* LocalKeyRemapperUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalKeyRemapperUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD8B099230078F1700D42025 /* LocalKeyRemapper.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = file; path = LocalKeyRemapper.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +76,7 @@
 		BD3F1DA22FBB52D1002684D0 = {
 			isa = PBXGroup;
 			children = (
+				BD8B099230078F1700D42025 /* LocalKeyRemapper.xctestplan */,
 				BD3F1DAD2FBB52D1002684D0 /* LocalKeyRemapper */,
 				BD3F1DBE2FBB52D6002684D0 /* LocalKeyRemapperTests */,
 				BD3F1DC82FBB52D6002684D0 /* LocalKeyRemapperUITests */,
