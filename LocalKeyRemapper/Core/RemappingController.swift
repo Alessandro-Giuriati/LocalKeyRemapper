@@ -26,8 +26,8 @@ protocol RemappingControlling: AnyObject {
     func toggle()
 }
 
-/// Coordinates permissions, rules, the remapping engine,
-/// and the keyboard event tap.
+/// Coordinates permissions, rule validation, storage,
+/// the remapping engine, and the keyboard event tap.
 ///
 /// This controller does not process individual keyboard events
 /// and does not store or log keyboard input.
@@ -37,10 +37,19 @@ final class RemappingController:
     RemappingSettingsControlling
 {
 
-    private let permissionService: AccessibilityPermissionChecking
+    private let permissionService:
+        AccessibilityPermissionChecking
+
     private let rulesStore: RulesStore
-    private let remappingEngine: RemappingEngine
-    private let eventTapManager: EventTapManaging
+
+    private let rulesValidator:
+        RemappingRulesValidating
+
+    private let remappingEngine:
+        RemappingEngine
+
+    private let eventTapManager:
+        EventTapManaging
 
     private var isKeyCaptureActive = false
 
@@ -49,19 +58,38 @@ final class RemappingController:
     var onStateChange: ((RemappingState) -> Void)?
 
     init(
-        permissionService: AccessibilityPermissionChecking,
-        rulesStore: RulesStore,
-        remappingEngine: RemappingEngine,
-        eventTapManager: EventTapManaging
+        permissionService:
+            AccessibilityPermissionChecking,
+        rulesStore:
+            RulesStore,
+        rulesValidator:
+            RemappingRulesValidating,
+        remappingEngine:
+            RemappingEngine,
+        eventTapManager:
+            EventTapManaging
     ) {
-        self.permissionService = permissionService
-        self.rulesStore = rulesStore
-        self.remappingEngine = remappingEngine
-        self.eventTapManager = eventTapManager
+        self.permissionService =
+            permissionService
+
+        self.rulesStore =
+            rulesStore
+
+        self.rulesValidator =
+            rulesValidator
+
+        self.remappingEngine =
+            remappingEngine
+
+        self.eventTapManager =
+            eventTapManager
     }
 
     func enable() {
-        guard state != .enabled && state != .enabling else {
+        guard
+            state != .enabled,
+            state != .enabling
+        else {
             return
         }
 
@@ -80,6 +108,15 @@ final class RemappingController:
         } catch {
             updateState(
                 .failed(.rulesLoadingFailed)
+            )
+            return
+        }
+
+        do {
+            try rulesValidator.validate(rules)
+        } catch {
+            updateState(
+                .failed(.invalidRules)
             )
             return
         }
@@ -114,7 +151,9 @@ final class RemappingController:
         case .enabled, .enabling:
             disable()
 
-        case .disabled, .permissionRequired, .failed:
+        case .disabled,
+             .permissionRequired,
+             .failed:
             enable()
         }
     }
@@ -124,13 +163,15 @@ final class RemappingController:
         try rulesStore.loadRules()
     }
 
-    /// Replaces all configured rules.
+    /// Validates and replaces all configured rules.
     ///
+    /// The rules are validated before storage is modified.
     /// The prepared dictionary inside RemappingEngine is updated
-    /// immediately without restarting the event tap.
+    /// immediately after a successful save.
     func replaceConfiguredRules(
         _ rules: [RemapRule]
     ) throws {
+        try rulesValidator.validate(rules)
         try rulesStore.saveRules(rules)
         remappingEngine.replaceRules(rules)
     }
@@ -167,7 +208,9 @@ final class RemappingController:
         eventTapManager.resume()
     }
 
-    private func updateState(_ newState: RemappingState) {
+    private func updateState(
+        _ newState: RemappingState
+    ) {
         guard state != newState else {
             return
         }

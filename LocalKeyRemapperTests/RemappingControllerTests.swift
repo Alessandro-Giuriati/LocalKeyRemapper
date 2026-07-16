@@ -1,324 +1,620 @@
 //
 //  RemappingControllerTests.swift
-//  LocalKeyRemapper
+//  LocalKeyRemapperTests
 //
-//  Created by Alessandro Giuriati on 7/15/26.
+//  Created by Alessandro Giuriati on 7/16/26.
 //
 
-import Testing
+import XCTest
 @testable import LocalKeyRemapper
 
-@Suite("Remapping Controller")
-struct RemappingControllerTests {
+@MainActor
+final class RemappingControllerTests:
+    XCTestCase
+{
 
-    @Test("Enabling starts the event tap when permission is granted")
-    @MainActor
-    func enableStartsEventTapWhenPermissionIsGranted() {
-        let permissionService = FakePermissionService(
-            isGranted: true
-        )
+    func testEnableWithoutPermissionRequestsAccess() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: false
+            )
 
-        let rulesStore = FakeRulesStore(
-            rules: [
-                RemapRule(
-                    sourceKeyCode: KeyCode.v,
-                    destinationKeyCode: KeyCode.w
-                )
-            ]
-        )
+        let rulesStore =
+            ControllerMockRulesStore()
 
-        let remappingEngine = RemappingEngine()
-        let eventTapManager = FakeEventTapManager()
+        let eventTapManager =
+            ControllerMockEventTapManager()
 
-        let controller = RemappingController(
-            permissionService: permissionService,
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
-        )
+        let engine =
+            RemappingEngine()
 
-        controller.enable()
-
-        #expect(controller.state == .enabled)
-        #expect(eventTapManager.startCallCount == 1)
-        #expect(eventTapManager.stopCallCount == 0)
-
-        #expect(
-            remappingEngine.decision(for: KeyCode.v)
-                == .replaceKeyCode(KeyCode.w)
-        )
-    }
-
-    @Test("Enabling requests permission when permission is missing")
-    @MainActor
-    func enableRequestsPermissionWhenPermissionIsMissing() {
-        let permissionService = FakePermissionService(
-            isGranted: false
-        )
-
-        let rulesStore = FakeRulesStore(rules: [])
-        let remappingEngine = RemappingEngine()
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: permissionService,
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
-        )
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
 
         controller.enable()
 
-        #expect(controller.state == .permissionRequired)
-        #expect(permissionService.requestAccessCallCount == 1)
-        #expect(eventTapManager.startCallCount == 0)
+        XCTAssertEqual(
+            controller.state,
+            .permissionRequired
+        )
+
+        XCTAssertEqual(
+            permissionService
+                .requestAccessCallCount,
+            1
+        )
+
+        XCTAssertEqual(
+            rulesStore.loadCallCount,
+            0
+        )
+
+        XCTAssertEqual(
+            eventTapManager.startCallCount,
+            0
+        )
     }
 
-    @Test("Disabling stops the event tap")
-    @MainActor
-    func disableStopsEventTap() {
-        let permissionService = FakePermissionService(
-            isGranted: true
+    func testRulesLoadingFailureUpdatesState() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
+            )
+
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        rulesStore.loadError =
+            ControllerTestError.expected
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    RemappingEngine(),
+                eventTapManager:
+                    eventTapManager
+            )
+
+        controller.enable()
+
+        XCTAssertEqual(
+            controller.state,
+            .failed(
+                .rulesLoadingFailed
+            )
         )
 
-        let rulesStore = FakeRulesStore(rules: [])
-        let remappingEngine = RemappingEngine()
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: permissionService,
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
+        XCTAssertEqual(
+            eventTapManager.startCallCount,
+            0
         )
+    }
+
+    func testInvalidLoadedRulesPreventEventTapStart() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
+            )
+
+        let invalidRules = [
+            RemapRule(
+                sourceKeyCode:
+                    KeyCode.v,
+                destinationKeyCode:
+                    KeyCode.v
+            )
+        ]
+
+        let rulesStore =
+            ControllerMockRulesStore(
+                rules: invalidRules
+            )
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let engine =
+            RemappingEngine()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
+
+        controller.enable()
+
+        XCTAssertEqual(
+            controller.state,
+            .failed(.invalidRules)
+        )
+
+        XCTAssertEqual(
+            eventTapManager.startCallCount,
+            0
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for: KeyCode.v
+            ),
+            .passThrough
+        )
+    }
+
+    func testEnableWithPermissionStartsEventTap() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
+            )
+
+        let rules = [
+            RemapRule(
+                sourceKeyCode:
+                    KeyCode.v,
+                destinationKeyCode:
+                    KeyCode.w
+            )
+        ]
+
+        let rulesStore =
+            ControllerMockRulesStore(
+                rules: rules
+            )
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let engine =
+            RemappingEngine()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
+
+        controller.enable()
+
+        XCTAssertEqual(
+            controller.state,
+            .enabled
+        )
+
+        XCTAssertEqual(
+            rulesStore.loadCallCount,
+            1
+        )
+
+        XCTAssertEqual(
+            eventTapManager.startCallCount,
+            1
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for: KeyCode.v
+            ),
+            .replaceKeyCode(
+                KeyCode.w
+            )
+        )
+    }
+
+    func testEventTapFailureStopsTapAndUpdatesState() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
+            )
+
+        let rulesStore =
+            ControllerMockRulesStore(
+                rules: [
+                    RemapRule(
+                        sourceKeyCode:
+                            KeyCode.v,
+                        destinationKeyCode:
+                            KeyCode.w
+                    )
+                ]
+            )
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        eventTapManager.startError =
+            ControllerTestError.expected
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    RemappingEngine(),
+                eventTapManager:
+                    eventTapManager
+            )
+
+        controller.enable()
+
+        XCTAssertEqual(
+            controller.state,
+            .failed(
+                .eventTapStartFailed
+            )
+        )
+
+        XCTAssertEqual(
+            eventTapManager.startCallCount,
+            1
+        )
+
+        XCTAssertEqual(
+            eventTapManager.stopCallCount,
+            1
+        )
+    }
+
+    func testDisableStopsEventTap() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
+            )
+
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    RemappingEngine(),
+                eventTapManager:
+                    eventTapManager
+            )
 
         controller.enable()
         controller.disable()
 
-        #expect(controller.state == .disabled)
-        #expect(eventTapManager.stopCallCount == 1)
+        XCTAssertEqual(
+            controller.state,
+            .disabled
+        )
+
+        XCTAssertEqual(
+            eventTapManager.stopCallCount,
+            1
+        )
+
+        XCTAssertFalse(
+            eventTapManager.isRunning
+        )
     }
 
-    @Test("A rules loading failure does not start the event tap")
-    @MainActor
-    func rulesLoadingFailureDoesNotStartEventTap() {
-        let permissionService = FakePermissionService(
-            isGranted: true
-        )
-
-        let rulesStore = FakeRulesStore(
-            error: FakeRulesStoreError.expectedFailure
-        )
-
-        let remappingEngine = RemappingEngine()
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: permissionService,
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
-        )
-
-        controller.enable()
-
-        #expect(
-            controller.state == .failed(.rulesLoadingFailed)
-        )
-
-        #expect(eventTapManager.startCallCount == 0)
-    }
-
-    @Test("An event tap failure sets the failed state")
-    @MainActor
-    func eventTapFailureSetsFailedState() {
-        let permissionService = FakePermissionService(
-            isGranted: true
-        )
-
-        let rulesStore = FakeRulesStore(rules: [])
-        let remappingEngine = RemappingEngine()
-
-        let eventTapManager = FakeEventTapManager(
-            shouldFailWhenStarting: true
-        )
-
-        let controller = RemappingController(
-            permissionService: permissionService,
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
-        )
-
-        controller.enable()
-
-        #expect(
-            controller.state == .failed(.eventTapStartFailed)
-        )
-
-        #expect(eventTapManager.startCallCount == 1)
-        #expect(eventTapManager.stopCallCount == 1)
-    }
-
-    @Test("Loading configured rules returns the stored rules")
-    @MainActor
-    func loadingConfiguredRulesReturnsStoredRules() throws {
-        let expectedRules = [
-            RemapRule(
-                sourceKeyCode: KeyCode.v,
-                destinationKeyCode: KeyCode.w
+    func testKeyCapturePausesAndResumesEnabledTap() {
+        let permissionService =
+            ControllerMockPermissionService(
+                isGranted: true
             )
-        ]
 
-        let rulesStore = FakeRulesStore(
-            rules: expectedRules
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    RemappingEngine(),
+                eventTapManager:
+                    eventTapManager
+            )
+
+        controller.enable()
+
+        controller.beginKeyCapture()
+        controller.beginKeyCapture()
+
+        XCTAssertEqual(
+            eventTapManager.pauseCallCount,
+            1
         )
 
-        let controller = RemappingController(
-            permissionService: FakePermissionService(
-                isGranted: true
-            ),
-            rulesStore: rulesStore,
-            remappingEngine: RemappingEngine(),
-            eventTapManager: FakeEventTapManager()
+        controller.endKeyCapture()
+        controller.endKeyCapture()
+
+        XCTAssertEqual(
+            eventTapManager.resumeCallCount,
+            1
         )
-
-        let loadedRules = try controller.loadConfiguredRules()
-
-        #expect(loadedRules == expectedRules)
     }
 
-    @Test("Replacing configured rules updates the store and engine")
-    @MainActor
-    func replacingConfiguredRulesUpdatesStoreAndEngine() throws {
-        let rulesStore = FakeRulesStore(
-            rules: [
-                RemapRule(
-                    sourceKeyCode: KeyCode.v,
-                    destinationKeyCode: KeyCode.w
-                )
-            ]
-        )
-
-        let remappingEngine = RemappingEngine()
-
-        let controller = RemappingController(
-            permissionService: FakePermissionService(
+    func testValidReplacementSavesAndUpdatesEngine()
+        throws
+    {
+        let permissionService =
+            ControllerMockPermissionService(
                 isGranted: true
-            ),
-            rulesStore: rulesStore,
-            remappingEngine: remappingEngine,
-            eventTapManager: FakeEventTapManager()
-        )
+            )
 
-        let replacementRules = [
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let engine =
+            RemappingEngine()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
+
+        let rules = [
             RemapRule(
-                sourceKeyCode: KeyCode.w,
-                destinationKeyCode: KeyCode.v
+                sourceKeyCode:
+                    KeyCode.v,
+                destinationKeyCode:
+                    KeyCode.w
             )
         ]
 
         try controller.replaceConfiguredRules(
-            replacementRules
+            rules
         )
 
-        let storedRules = try rulesStore.loadRules()
-
-        #expect(storedRules == replacementRules)
-
-        #expect(
-            remappingEngine.decision(for: KeyCode.w)
-                == .replaceKeyCode(KeyCode.v)
+        XCTAssertEqual(
+            rulesStore.savedRules,
+            rules
         )
 
-        #expect(
-            remappingEngine.decision(for: KeyCode.v)
-                == .passThrough
+        XCTAssertEqual(
+            rulesStore.saveCallCount,
+            1
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for: KeyCode.v
+            ),
+            .replaceKeyCode(
+                KeyCode.w
+            )
         )
     }
 
-    @Test("Beginning key capture pauses an enabled event tap")
-    @MainActor
-    func beginningKeyCapturePausesEnabledEventTap() {
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: FakePermissionService(
+    func testInvalidReplacementDoesNotSaveOrUpdateEngine() {
+        let permissionService =
+            ControllerMockPermissionService(
                 isGranted: true
-            ),
-            rulesStore: FakeRulesStore(rules: []),
-            remappingEngine: RemappingEngine(),
-            eventTapManager: eventTapManager
+            )
+
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let engine =
+            RemappingEngine()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
+
+        let invalidRules = [
+            RemapRule(
+                sourceKeyCode:
+                    KeyCode.v,
+                destinationKeyCode:
+                    KeyCode.v
+            )
+        ]
+
+        do {
+            try controller
+                .replaceConfiguredRules(
+                    invalidRules
+                )
+
+            XCTFail(
+                "Expected invalid rules to be rejected."
+            )
+        } catch let error
+            as RemappingRulesValidationError
+        {
+            XCTAssertEqual(
+                error,
+                .identicalSourceAndDestination(
+                    KeyCode.v
+                )
+            )
+        } catch {
+            XCTFail(
+                "Unexpected error: \(error)"
+            )
+        }
+
+        XCTAssertEqual(
+            rulesStore.saveCallCount,
+            0
         )
 
-        controller.enable()
-        controller.beginKeyCapture()
+        XCTAssertNil(
+            rulesStore.savedRules
+        )
 
-        #expect(controller.state == .enabled)
-        #expect(eventTapManager.pauseCallCount == 1)
-
-        controller.beginKeyCapture()
-
-        #expect(eventTapManager.pauseCallCount == 1)
+        XCTAssertEqual(
+            engine.decision(
+                for: KeyCode.v
+            ),
+            .passThrough
+        )
     }
 
-    @Test("Ending key capture resumes an enabled event tap")
-    @MainActor
-    func endingKeyCaptureResumesEnabledEventTap() {
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: FakePermissionService(
+    func testStorageFailureDoesNotUpdateEngine() {
+        let permissionService =
+            ControllerMockPermissionService(
                 isGranted: true
-            ),
-            rulesStore: FakeRulesStore(rules: []),
-            remappingEngine: RemappingEngine(),
-            eventTapManager: eventTapManager
+            )
+
+        let rulesStore =
+            ControllerMockRulesStore()
+
+        rulesStore.saveError =
+            ControllerTestError.expected
+
+        let eventTapManager =
+            ControllerMockEventTapManager()
+
+        let engine =
+            RemappingEngine()
+
+        let controller =
+            makeController(
+                permissionService:
+                    permissionService,
+                rulesStore:
+                    rulesStore,
+                engine:
+                    engine,
+                eventTapManager:
+                    eventTapManager
+            )
+
+        let rules = [
+            RemapRule(
+                sourceKeyCode:
+                    KeyCode.v,
+                destinationKeyCode:
+                    KeyCode.w
+            )
+        ]
+
+        do {
+            try controller
+                .replaceConfiguredRules(
+                    rules
+                )
+
+            XCTFail(
+                "Expected storage failure."
+            )
+        } catch ControllerTestError.expected {
+            // Expected error.
+        } catch {
+            XCTFail(
+                "Unexpected error: \(error)"
+            )
+        }
+
+        XCTAssertEqual(
+            rulesStore.saveCallCount,
+            1
         )
 
-        controller.enable()
-        controller.beginKeyCapture()
-        controller.endKeyCapture()
-
-        #expect(eventTapManager.pauseCallCount == 1)
-        #expect(eventTapManager.resumeCallCount == 1)
-
-        controller.endKeyCapture()
-
-        #expect(eventTapManager.resumeCallCount == 1)
+        XCTAssertEqual(
+            engine.decision(
+                for: KeyCode.v
+            ),
+            .passThrough
+        )
     }
 
-    @Test("Enabling while key capture is active starts and pauses the tap")
-    @MainActor
-    func enablingDuringKeyCaptureStartsAndPausesEventTap() {
-        let eventTapManager = FakeEventTapManager()
-
-        let controller = RemappingController(
-            permissionService: FakePermissionService(
-                isGranted: true
-            ),
-            rulesStore: FakeRulesStore(rules: []),
-            remappingEngine: RemappingEngine(),
-            eventTapManager: eventTapManager
+    private func makeController(
+        permissionService:
+            ControllerMockPermissionService,
+        rulesStore:
+            ControllerMockRulesStore,
+        engine:
+            RemappingEngine,
+        eventTapManager:
+            ControllerMockEventTapManager
+    ) -> RemappingController {
+        RemappingController(
+            permissionService:
+                permissionService,
+            rulesStore:
+                rulesStore,
+            rulesValidator:
+                RemappingRulesValidator(),
+            remappingEngine:
+                engine,
+            eventTapManager:
+                eventTapManager
         )
-
-        controller.beginKeyCapture()
-        controller.enable()
-
-        #expect(controller.state == .enabled)
-        #expect(eventTapManager.startCallCount == 1)
-        #expect(eventTapManager.pauseCallCount == 1)
-
-        controller.endKeyCapture()
-
-        #expect(eventTapManager.resumeCallCount == 1)
     }
 }
 
-private nonisolated final class FakePermissionService:
-    AccessibilityPermissionChecking {
+nonisolated enum ControllerTestError:
+    Error
+{
+    case expected
+}
 
-    let isGranted: Bool
+nonisolated final class
+ControllerMockPermissionService:
+    AccessibilityPermissionChecking
+{
+
+    var isGranted: Bool
 
     private(set) var requestAccessCallCount = 0
 
@@ -334,22 +630,29 @@ private nonisolated final class FakePermissionService:
 }
 
 @MainActor
-private final class FakeRulesStore: RulesStore {
+final class ControllerMockRulesStore:
+    RulesStore
+{
 
-    private(set) var rules: [RemapRule]
-    private let error: Error?
+    var rules: [RemapRule]
+    var loadError: Error?
+    var saveError: Error?
+
+    private(set) var loadCallCount = 0
+    private(set) var saveCallCount = 0
+    private(set) var savedRules: [RemapRule]?
 
     init(
-        rules: [RemapRule] = [],
-        error: Error? = nil
+        rules: [RemapRule] = []
     ) {
         self.rules = rules
-        self.error = error
     }
 
     func loadRules() throws -> [RemapRule] {
-        if let error {
-            throw error
+        loadCallCount += 1
+
+        if let loadError {
+            throw loadError
         }
 
         return rules
@@ -358,50 +661,44 @@ private final class FakeRulesStore: RulesStore {
     func saveRules(
         _ rules: [RemapRule]
     ) throws {
-        if let error {
-            throw error
+        saveCallCount += 1
+
+        if let saveError {
+            throw saveError
         }
 
         self.rules = rules
+        savedRules = rules
     }
 }
 
-private nonisolated enum FakeRulesStoreError: Error {
-
-    case expectedFailure
-}
-
 @MainActor
-private final class FakeEventTapManager: EventTapManaging {
+final class ControllerMockEventTapManager:
+    EventTapManaging
+{
+
+    private(set) var isRunning = false
+
+    var startError: Error?
 
     private(set) var startCallCount = 0
     private(set) var stopCallCount = 0
     private(set) var pauseCallCount = 0
     private(set) var resumeCallCount = 0
 
-    private let shouldFailWhenStarting: Bool
-
-    var isRunning: Bool {
-        startCallCount > stopCallCount
-    }
-
-    init(
-        shouldFailWhenStarting: Bool = false
-    ) {
-        self.shouldFailWhenStarting =
-            shouldFailWhenStarting
-    }
-
     func start() throws {
         startCallCount += 1
 
-        if shouldFailWhenStarting {
-            throw FakeEventTapError.expectedFailure
+        if let startError {
+            throw startError
         }
+
+        isRunning = true
     }
 
     func stop() {
         stopCallCount += 1
+        isRunning = false
     }
 
     func pause() {
@@ -411,9 +708,4 @@ private final class FakeEventTapManager: EventTapManaging {
     func resume() {
         resumeCallCount += 1
     }
-}
-
-private nonisolated enum FakeEventTapError: Error {
-
-    case expectedFailure
 }

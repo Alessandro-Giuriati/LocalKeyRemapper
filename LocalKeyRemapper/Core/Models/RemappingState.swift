@@ -12,6 +12,9 @@ nonisolated enum RemappingFailure: Error, Equatable {
     /// The configured remapping rules could not be loaded.
     case rulesLoadingFailed
 
+    /// The loaded remapping rules are not valid.
+    case invalidRules
+
     /// The keyboard event tap could not be created or installed.
     case eventTapStartFailed
 }
