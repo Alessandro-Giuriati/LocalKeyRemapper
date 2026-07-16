@@ -18,11 +18,17 @@ final class AppCoordinator {
     private let remappingController: RemappingController
 
     private var statusBarController: StatusBarController?
+    private var settingsWindowController: SettingsWindowController?
 
     init() {
-        let permissionService = AccessibilityPermissionService()
-        let rulesStore = StaticRulesStore()
-        let remappingEngine = RemappingEngine()
+        let permissionService =
+            AccessibilityPermissionService()
+
+        let rulesStore =
+            StaticRulesStore()
+
+        let remappingEngine =
+            RemappingEngine()
 
         let eventTapManager = EventTapManager(
             remappingEngine: remappingEngine
@@ -46,23 +52,42 @@ final class AppCoordinator {
     func start() {
         statusBarController = StatusBarController(
             remappingController: remappingController,
-            accessibilitySettingsOpener: permissionService
+            accessibilitySettingsOpener: permissionService,
+            openSettingsHandler: { [weak self] in
+                self?.showSettings()
+            }
         )
     }
 
     /// Checks whether Accessibility permission was granted
     /// after the application becomes active again.
     func applicationDidBecomeActive() {
-        guard remappingController.state == .permissionRequired else {
+        guard
+            remappingController.state == .permissionRequired
+        else {
             return
         }
 
         remappingController.enable()
     }
 
-    /// Stops active system components before the application terminates.
+    /// Stops active system components before
+    /// the application terminates.
     func stop() {
         remappingController.disable()
+
+        settingsWindowController?.close()
+        settingsWindowController = nil
+
         statusBarController = nil
+    }
+
+    private func showSettings() {
+        if settingsWindowController == nil {
+            settingsWindowController =
+                SettingsWindowController()
+        }
+
+        settingsWindowController?.showWindow(nil)
     }
 }

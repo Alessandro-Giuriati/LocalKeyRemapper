@@ -14,16 +14,19 @@ final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
     private let remappingController: RemappingControlling
     private let accessibilitySettingsOpener: AccessibilitySettingsOpening
+    private let openSettingsHandler: () -> Void
 
     private var stateMenuItem: NSMenuItem?
     private var toggleMenuItem: NSMenuItem?
 
     init(
         remappingController: RemappingControlling,
-        accessibilitySettingsOpener: AccessibilitySettingsOpening
+        accessibilitySettingsOpener: AccessibilitySettingsOpening,
+        openSettingsHandler: @escaping () -> Void
     ) {
         self.remappingController = remappingController
         self.accessibilitySettingsOpener = accessibilitySettingsOpener
+        self.openSettingsHandler = openSettingsHandler
 
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.squareLength
@@ -78,6 +81,14 @@ final class StatusBarController: NSObject {
 
         toggleMenuItem.target = self
 
+        let settingsMenuItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+
+        settingsMenuItem.target = self
+
         let quitMenuItem = NSMenuItem(
             title: "Quit LocalKeyRemapper",
             action: #selector(quitApplication),
@@ -88,6 +99,8 @@ final class StatusBarController: NSObject {
 
         menu.addItem(stateMenuItem)
         menu.addItem(toggleMenuItem)
+        menu.addItem(.separator())
+        menu.addItem(settingsMenuItem)
         menu.addItem(.separator())
         menu.addItem(quitMenuItem)
 
@@ -130,13 +143,17 @@ final class StatusBarController: NSObject {
         }
     }
 
-    private func updateMenuForFailure(_ failure: RemappingFailure) {
+    private func updateMenuForFailure(
+        _ failure: RemappingFailure
+    ) {
         switch failure {
         case .rulesLoadingFailed:
-            stateMenuItem?.title = "Error: Rules Could Not Load"
+            stateMenuItem?.title =
+                "Error: Rules Could Not Load"
 
         case .eventTapStartFailed:
-            stateMenuItem?.title = "Error: Event Tap Could Not Start"
+            stateMenuItem?.title =
+                "Error: Event Tap Could Not Start"
         }
 
         toggleMenuItem?.title = "Try Again"
@@ -156,11 +173,18 @@ final class StatusBarController: NSObject {
     private func checkPermissionOrOpenSettings() {
         remappingController.enable()
 
-        guard remappingController.state == .permissionRequired else {
+        guard
+            remappingController.state == .permissionRequired
+        else {
             return
         }
 
         accessibilitySettingsOpener.openAccessibilitySettings()
+    }
+
+    @objc
+    private func openSettings() {
+        openSettingsHandler()
     }
 
     @objc
