@@ -23,6 +23,15 @@ final class StatusBarController: NSObject {
     private let openSettingsHandler:
         () -> Void
 
+    private let increaseTextSizeHandler:
+        () -> Void
+
+    private let decreaseTextSizeHandler:
+        () -> Void
+
+    private let resetTextSizeHandler:
+        () -> Void
+
     private var stateMenuItem:
         NSMenuItem?
 
@@ -35,6 +44,12 @@ final class StatusBarController: NSObject {
         accessibilitySettingsOpener:
             AccessibilitySettingsOpening,
         openSettingsHandler:
+            @escaping () -> Void,
+        increaseTextSizeHandler:
+            @escaping () -> Void,
+        decreaseTextSizeHandler:
+            @escaping () -> Void,
+        resetTextSizeHandler:
             @escaping () -> Void
     ) {
         self.remappingController =
@@ -45,6 +60,15 @@ final class StatusBarController: NSObject {
 
         self.openSettingsHandler =
             openSettingsHandler
+
+        self.increaseTextSizeHandler =
+            increaseTextSizeHandler
+
+        self.decreaseTextSizeHandler =
+            decreaseTextSizeHandler
+
+        self.resetTextSizeHandler =
+            resetTextSizeHandler
 
         statusItem =
             NSStatusBar.system.statusItem(
@@ -121,6 +145,14 @@ final class StatusBarController: NSObject {
 
         settingsMenuItem.target = self
 
+        let textSizeMenuItem = NSMenuItem(
+            title: "Text Size",
+            action: nil,
+            keyEquivalent: ""
+        )
+
+        textSizeMenuItem.submenu = makeTextSizeMenu()
+
         let quitMenuItem =
             NSMenuItem(
                 title:
@@ -138,6 +170,7 @@ final class StatusBarController: NSObject {
         menu.addItem(toggleMenuItem)
         menu.addItem(.separator())
         menu.addItem(settingsMenuItem)
+        menu.addItem(textSizeMenuItem)
         menu.addItem(.separator())
         menu.addItem(quitMenuItem)
 
@@ -148,6 +181,43 @@ final class StatusBarController: NSObject {
 
         self.toggleMenuItem =
             toggleMenuItem
+    }
+
+    private func makeTextSizeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Text Size")
+
+        let increaseItem = NSMenuItem(
+            title: "Increase Text Size",
+            action: #selector(increaseTextSize),
+            keyEquivalent: "+"
+        )
+
+        increaseItem.target = self
+        increaseItem.keyEquivalentModifierMask = [.command]
+
+        let decreaseItem = NSMenuItem(
+            title: "Decrease Text Size",
+            action: #selector(decreaseTextSize),
+            keyEquivalent: "-"
+        )
+
+        decreaseItem.target = self
+        decreaseItem.keyEquivalentModifierMask = [.command]
+
+        let resetItem = NSMenuItem(
+            title: "Reset Text Size",
+            action: #selector(resetTextSize),
+            keyEquivalent: "0"
+        )
+
+        resetItem.target = self
+        resetItem.keyEquivalentModifierMask = [.command]
+
+        menu.addItem(increaseItem)
+        menu.addItem(decreaseItem)
+        menu.addItem(resetItem)
+
+        return menu
     }
 
     private func observeRemappingState() {
@@ -260,6 +330,21 @@ final class StatusBarController: NSObject {
     @objc
     private func openSettings() {
         openSettingsHandler()
+    }
+
+    @objc
+    private func increaseTextSize() {
+        increaseTextSizeHandler()
+    }
+
+    @objc
+    private func decreaseTextSize() {
+        decreaseTextSizeHandler()
+    }
+
+    @objc
+    private func resetTextSize() {
+        resetTextSizeHandler()
     }
 
     @objc

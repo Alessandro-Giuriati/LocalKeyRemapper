@@ -29,6 +29,9 @@ final class AppCoordinator {
     private let remappingController:
         RemappingController
 
+    private var applicationMenuController:
+        ApplicationMenuController?
+
     private var statusBarController:
         StatusBarController?
 
@@ -88,6 +91,25 @@ final class AppCoordinator {
 
     /// Starts the application user interface.
     func start() {
+        applicationMenuController =
+            ApplicationMenuController(
+                increaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.increaseTextSize()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
+
+                    self?.resetTextSize()
+                }
+            )
+
         statusBarController =
             StatusBarController(
                 remappingController:
@@ -98,6 +120,21 @@ final class AppCoordinator {
                     [weak self] in
 
                     self?.showSettings()
+                },
+                increaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.increaseTextSize()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
+
+                    self?.resetTextSize()
                 }
             )
     }
@@ -124,18 +161,56 @@ final class AppCoordinator {
         settingsWindowController = nil
 
         statusBarController = nil
+        applicationMenuController = nil
+    }
+
+    private func settingsController()
+        -> SettingsWindowController
+    {
+        if let settingsWindowController {
+            return settingsWindowController
+        }
+
+        let controller = SettingsWindowController(
+            remappingController:
+                remappingController
+        )
+
+        settingsWindowController = controller
+        return controller
     }
 
     private func showSettings() {
-        if settingsWindowController == nil {
-            settingsWindowController =
-                SettingsWindowController(
-                    remappingController:
-                        remappingController
-                )
+        settingsController().showWindow(nil)
+    }
+
+    private func increaseTextSize() {
+        let controller = settingsController()
+
+        if controller.window?.isVisible != true {
+            controller.showWindow(nil)
         }
 
-        settingsWindowController?
-            .showWindow(nil)
+        controller.increaseTextSize()
+    }
+
+    private func decreaseTextSize() {
+        let controller = settingsController()
+
+        if controller.window?.isVisible != true {
+            controller.showWindow(nil)
+        }
+
+        controller.decreaseTextSize()
+    }
+
+    private func resetTextSize() {
+        let controller = settingsController()
+
+        if controller.window?.isVisible != true {
+            controller.showWindow(nil)
+        }
+
+        controller.resetTextSize()
     }
 }

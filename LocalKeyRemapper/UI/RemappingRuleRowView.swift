@@ -26,11 +26,19 @@ final class RemappingRuleRowView: NSView {
     var onRemoveRequested: (() -> Void)?
 
     private let sourceKeyButton = NSButton()
+
     private let arrowLabel = NSTextField(
         labelWithString: "→"
     )
+
     private let destinationKeyButton = NSButton()
     private let removeButton = NSButton()
+
+    private var rowHeightConstraint:
+        NSLayoutConstraint?
+
+    private var isShowingValidationError = false
+    private var textScale: CGFloat = 1.0
 
     private(set) var sourceKeyCode: CGKeyCode?
     private(set) var destinationKeyCode: CGKeyCode?
@@ -59,12 +67,18 @@ final class RemappingRuleRowView: NSView {
 
         configureContent()
         restoreButtonTitles()
+        updateValidationAppearance()
     }
 
     required init?(coder: NSCoder) {
         fatalError(
             "init(coder:) has not been implemented"
         )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateValidationAppearance()
     }
 
     /// Updates one of the two key codes represented by this row.
@@ -109,7 +123,54 @@ final class RemappingRuleRowView: NSView {
         )
     }
 
+    /// Highlights this row when its rule is incomplete or invalid.
+    func setValidationErrorVisible(
+        _ isVisible: Bool
+    ) {
+        guard
+            isShowingValidationError != isVisible
+        else {
+            return
+        }
+
+        isShowingValidationError = isVisible
+        updateValidationAppearance()
+    }
+
+    /// Applies the text scale selected in the Settings window.
+    func applyTextScale(
+        _ scale: CGFloat
+    ) {
+        textScale = scale
+
+        let controlFont = NSFont.systemFont(
+            ofSize: 14 * scale,
+            weight: .regular
+        )
+
+        sourceKeyButton.font = controlFont
+        destinationKeyButton.font = controlFont
+
+        removeButton.font = NSFont.systemFont(
+            ofSize: 13 * scale,
+            weight: .regular
+        )
+
+        arrowLabel.font = NSFont.systemFont(
+            ofSize: 20 * scale,
+            weight: .regular
+        )
+
+        rowHeightConstraint?.constant = 40 * scale
+
+        needsLayout = true
+    }
+
     private func configureContent() {
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+
         configureKeyButton(
             sourceKeyButton,
             action: #selector(requestSourceKey)
@@ -118,11 +179,6 @@ final class RemappingRuleRowView: NSView {
         configureKeyButton(
             destinationKeyButton,
             action: #selector(requestDestinationKey)
-        )
-
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 18,
-            weight: .regular
         )
 
         arrowLabel.alignment = .center
@@ -146,16 +202,25 @@ final class RemappingRuleRowView: NSView {
             addSubview(view)
         }
 
+        let rowHeightConstraint = heightAnchor.constraint(
+            equalToConstant: 40
+        )
+
+        self.rowHeightConstraint = rowHeightConstraint
+
         NSLayoutConstraint.activate(
             [
                 sourceKeyButton.leadingAnchor.constraint(
-                    equalTo: leadingAnchor
+                    equalTo: leadingAnchor,
+                    constant: 6
                 ),
                 sourceKeyButton.topAnchor.constraint(
-                    equalTo: topAnchor
+                    equalTo: topAnchor,
+                    constant: 4
                 ),
                 sourceKeyButton.bottomAnchor.constraint(
-                    equalTo: bottomAnchor
+                    equalTo: bottomAnchor,
+                    constant: -4
                 ),
 
                 arrowLabel.leadingAnchor.constraint(
@@ -174,10 +239,12 @@ final class RemappingRuleRowView: NSView {
                     constant: 12
                 ),
                 destinationKeyButton.topAnchor.constraint(
-                    equalTo: topAnchor
+                    equalTo: topAnchor,
+                    constant: 4
                 ),
                 destinationKeyButton.bottomAnchor.constraint(
-                    equalTo: bottomAnchor
+                    equalTo: bottomAnchor,
+                    constant: -4
                 ),
 
                 removeButton.leadingAnchor.constraint(
@@ -186,13 +253,16 @@ final class RemappingRuleRowView: NSView {
                     constant: 12
                 ),
                 removeButton.trailingAnchor.constraint(
-                    equalTo: trailingAnchor
+                    equalTo: trailingAnchor,
+                    constant: -6
                 ),
                 removeButton.topAnchor.constraint(
-                    equalTo: topAnchor
+                    equalTo: topAnchor,
+                    constant: 4
                 ),
                 removeButton.bottomAnchor.constraint(
-                    equalTo: bottomAnchor
+                    equalTo: bottomAnchor,
+                    constant: -4
                 ),
 
                 sourceKeyButton.widthAnchor.constraint(
@@ -212,11 +282,11 @@ final class RemappingRuleRowView: NSView {
                     equalToConstant: 90
                 ),
 
-                heightAnchor.constraint(
-                    equalToConstant: 32
-                )
+                rowHeightConstraint
             ]
         )
+
+        applyTextScale(textScale)
     }
 
     private func configureKeyButton(
@@ -226,6 +296,24 @@ final class RemappingRuleRowView: NSView {
         button.bezelStyle = .rounded
         button.target = self
         button.action = action
+    }
+
+    private func updateValidationAppearance() {
+        guard let layer else {
+            return
+        }
+
+        if isShowingValidationError {
+            layer.borderWidth = 1.5
+            layer.borderColor = NSColor.systemRed.cgColor
+            layer.backgroundColor = NSColor.systemRed
+                .withAlphaComponent(0.08)
+                .cgColor
+        } else {
+            layer.borderWidth = 0
+            layer.borderColor = NSColor.clear.cgColor
+            layer.backgroundColor = NSColor.clear.cgColor
+        }
     }
 
     private func buttonTitle(

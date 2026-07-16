@@ -48,8 +48,61 @@ final class SettingsWindowController:
     NSWindowDelegate
 {
 
+    private enum TextSizePreference {
+        static let storageKey =
+            "settingsTextScale.v1"
+
+        static let defaultScale: CGFloat = 1.0
+        static let minimumScale: CGFloat = 0.8
+        static let maximumScale: CGFloat = 1.4
+        static let step: CGFloat = 0.1
+    }
+
+    private enum EditorValidationIssue {
+        case incompleteRule
+        case duplicateSourceKey
+        case identicalSourceAndDestination
+
+        var message: String {
+            switch self {
+            case .incompleteRule:
+                return "Complete every highlighted rule before saving."
+
+            case .duplicateSourceKey:
+                return "Each source key can appear only once."
+
+            case .identicalSourceAndDestination:
+                return "A source and destination key cannot be identical."
+            }
+        }
+    }
+
+    private struct ValidationSnapshot {
+        let issue: EditorValidationIssue?
+        let invalidRows: Set<ObjectIdentifier>
+    }
+
     private let remappingController:
         RemappingSettingsControlling
+
+    private let titleLabel = NSTextField(
+        labelWithString: "Remapping Rules"
+    )
+
+    private let descriptionLabel = NSTextField(
+        wrappingLabelWithString:
+            "Choose the physical source keys and the keys that macOS should receive."
+    )
+
+    private let headerView = NSView()
+
+    private let sourceHeader = NSTextField(
+        labelWithString: "Source key"
+    )
+
+    private let destinationHeader = NSTextField(
+        labelWithString: "Destination key"
+    )
 
     private let rulesScrollView = NSScrollView()
     private let rulesDocumentView = FlippedView()
@@ -57,6 +110,9 @@ final class SettingsWindowController:
 
     private let addRuleButton = NSButton()
     private let saveButton = NSButton()
+
+    private let actionsStack = NSStackView()
+    private let mainStack = NSStackView()
 
     private let statusLabel = NSTextField(
         wrappingLabelWithString: ""
@@ -71,17 +127,31 @@ final class SettingsWindowController:
     private var captureField:
         RemappingRuleRowView.KeyField?
 
+    private var textScale: CGFloat
+
     init(
         remappingController: RemappingSettingsControlling
     ) {
         self.remappingController = remappingController
 
+        let storedScale = UserDefaults.standard.double(
+            forKey: TextSizePreference.storageKey
+        )
+
+        if storedScale == 0 {
+            textScale = TextSizePreference.defaultScale
+        } else {
+            textScale = Self.clampedTextScale(
+                CGFloat(storedScale)
+            )
+        }
+
         let window = SettingsWindow(
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 720,
-                height: 520
+                width: 740,
+                height: 540
             ),
             styleMask: [
                 .titled,
@@ -97,12 +167,12 @@ final class SettingsWindowController:
         window.isReleasedWhenClosed = false
 
         window.contentMinSize = NSSize(
-            width: 640,
-            height: 400
+            width: 660,
+            height: 420
         )
 
         window.contentMaxSize = NSSize(
-            width: 820,
+            width: 980,
             height: CGFloat.greatestFiniteMagnitude
         )
 
@@ -117,6 +187,7 @@ final class SettingsWindowController:
         }
 
         configureContent()
+        applyTextScale()
     }
 
     required init?(coder: NSCoder) {
@@ -137,6 +208,27 @@ final class SettingsWindowController:
 
         NSApplication.shared.activate(
             ignoringOtherApps: true
+        )
+    }
+
+    /// Increases the Settings interface text size.
+    func increaseTextSize() {
+        setTextScale(
+            textScale + TextSizePreference.step
+        )
+    }
+
+    /// Decreases the Settings interface text size.
+    func decreaseTextSize() {
+        setTextScale(
+            textScale - TextSizePreference.step
+        )
+    }
+
+    /// Restores the default Settings interface text size.
+    func resetTextSize() {
+        setTextScale(
+            TextSizePreference.defaultScale
         )
     }
 
@@ -195,171 +287,44 @@ final class SettingsWindowController:
             return
         }
 
-        let titleLabel = NSTextField(
-            labelWithString: "Remapping Rules"
-        )
-
-        titleLabel.font = NSFont.systemFont(
-            ofSize: 20,
-            weight: .semibold
-        )
-
-        let descriptionLabel = NSTextField(
-            wrappingLabelWithString:
-                "Choose the physical source keys and the keys that macOS should receive."
-        )
-
         descriptionLabel.textColor =
             .secondaryLabelColor
-
-        let headerView = NSView()
-
-        let sourceHeader = NSTextField(
-            labelWithString: "Source key"
-        )
-
-        sourceHeader.font = NSFont.systemFont(
-            ofSize: 12,
-            weight: .medium
-        )
 
         sourceHeader.textColor =
             .secondaryLabelColor
 
-        let arrowSpacer = NSView()
-
-        let destinationHeader = NSTextField(
-            labelWithString: "Destination key"
-        )
-
-        destinationHeader.font = NSFont.systemFont(
-            ofSize: 12,
-            weight: .medium
-        )
-
         destinationHeader.textColor =
             .secondaryLabelColor
 
-        let removeSpacer = NSView()
-
-        let headerSubviews: [NSView] = [
-            sourceHeader,
-            arrowSpacer,
-            destinationHeader,
-            removeSpacer
-        ]
-
-        for view in headerSubviews {
-            view.translatesAutoresizingMaskIntoConstraints =
-                false
-
-            headerView.addSubview(view)
-        }
-
-        NSLayoutConstraint.activate(
-            [
-                sourceHeader.leadingAnchor.constraint(
-                    equalTo: headerView.leadingAnchor
-                ),
-                sourceHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
-                ),
-                sourceHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
-                ),
-
-                arrowSpacer.leadingAnchor.constraint(
-                    equalTo: sourceHeader.trailingAnchor,
-                    constant: 12
-                ),
-                arrowSpacer.widthAnchor.constraint(
-                    equalToConstant: 18
-                ),
-
-                destinationHeader.leadingAnchor.constraint(
-                    equalTo: arrowSpacer.trailingAnchor,
-                    constant: 12
-                ),
-                destinationHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
-                ),
-                destinationHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
-                ),
-
-                removeSpacer.leadingAnchor.constraint(
-                    equalTo: destinationHeader.trailingAnchor,
-                    constant: 12
-                ),
-                removeSpacer.trailingAnchor.constraint(
-                    equalTo: headerView.trailingAnchor
-                ),
-                removeSpacer.widthAnchor.constraint(
-                    equalToConstant: 90
-                ),
-
-                sourceHeader.widthAnchor.constraint(
-                    equalTo: destinationHeader.widthAnchor
-                ),
-
-                headerView.heightAnchor.constraint(
-                    equalToConstant: 18
-                )
-            ]
-        )
-
+        configureHeaderView()
         configureRulesScrollView()
+        configureActionButtons()
 
-        addRuleButton.title = "Add Rule"
-
-        addRuleButton.image = NSImage(
-            systemSymbolName: "plus",
-            accessibilityDescription: "Add Rule"
-        )
-
-        addRuleButton.imagePosition = .imageLeading
-        addRuleButton.bezelStyle = .rounded
-        addRuleButton.target = self
-        addRuleButton.action = #selector(addEmptyRule)
-
-        saveButton.title = "Save Rules"
-        saveButton.bezelStyle = .rounded
-        saveButton.keyEquivalent = "\r"
-        saveButton.target = self
-        saveButton.action = #selector(saveRules)
-
-        statusLabel.textColor =
-            .secondaryLabelColor
-
-        statusLabel.font = NSFont.systemFont(
-            ofSize: 12
-        )
-
-        let actionsStack = NSStackView(
-            views: [
+        actionsStack.setViews(
+            [
                 addRuleButton,
                 saveButton
-            ]
+            ],
+            in: .leading
         )
 
         actionsStack.orientation = .horizontal
         actionsStack.alignment = .centerY
-        actionsStack.spacing = 12
 
-        let mainStack = NSStackView(
-            views: [
+        mainStack.setViews(
+            [
                 titleLabel,
                 descriptionLabel,
                 headerView,
                 rulesScrollView,
                 actionsStack,
                 statusLabel
-            ]
+            ],
+            in: .leading
         )
 
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
-        mainStack.spacing = 16
         mainStack.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -397,11 +362,103 @@ final class SettingsWindowController:
         )
     }
 
+    private func configureHeaderView() {
+        let arrowSpacer = NSView()
+        let removeSpacer = NSView()
+
+        let headerSubviews: [NSView] = [
+            sourceHeader,
+            arrowSpacer,
+            destinationHeader,
+            removeSpacer
+        ]
+
+        for view in headerSubviews {
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
+            headerView.addSubview(view)
+        }
+
+        NSLayoutConstraint.activate(
+            [
+                sourceHeader.leadingAnchor.constraint(
+                    equalTo: headerView.leadingAnchor,
+                    constant: 6
+                ),
+                sourceHeader.topAnchor.constraint(
+                    equalTo: headerView.topAnchor
+                ),
+                sourceHeader.bottomAnchor.constraint(
+                    equalTo: headerView.bottomAnchor
+                ),
+
+                arrowSpacer.leadingAnchor.constraint(
+                    equalTo: sourceHeader.trailingAnchor,
+                    constant: 12
+                ),
+                arrowSpacer.widthAnchor.constraint(
+                    equalToConstant: 18
+                ),
+
+                destinationHeader.leadingAnchor.constraint(
+                    equalTo: arrowSpacer.trailingAnchor,
+                    constant: 12
+                ),
+                destinationHeader.topAnchor.constraint(
+                    equalTo: headerView.topAnchor
+                ),
+                destinationHeader.bottomAnchor.constraint(
+                    equalTo: headerView.bottomAnchor
+                ),
+
+                removeSpacer.leadingAnchor.constraint(
+                    equalTo: destinationHeader.trailingAnchor,
+                    constant: 12
+                ),
+                removeSpacer.trailingAnchor.constraint(
+                    equalTo: headerView.trailingAnchor,
+                    constant: -6
+                ),
+                removeSpacer.widthAnchor.constraint(
+                    equalToConstant: 90
+                ),
+
+                sourceHeader.widthAnchor.constraint(
+                    equalTo: destinationHeader.widthAnchor
+                ),
+
+                headerView.heightAnchor.constraint(
+                    greaterThanOrEqualToConstant: 20
+                )
+            ]
+        )
+    }
+
+    private func configureActionButtons() {
+        addRuleButton.title = "Add Rule"
+
+        addRuleButton.image = NSImage(
+            systemSymbolName: "plus",
+            accessibilityDescription: "Add Rule"
+        )
+
+        addRuleButton.imagePosition = .imageLeading
+        addRuleButton.bezelStyle = .rounded
+        addRuleButton.target = self
+        addRuleButton.action = #selector(addEmptyRule)
+
+        saveButton.title = "Save Rules"
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"
+        saveButton.target = self
+        saveButton.action = #selector(saveRules)
+    }
+
     private func configureRulesScrollView() {
         rulesStackView.orientation = .vertical
         rulesStackView.alignment = .leading
         rulesStackView.distribution = .fill
-        rulesStackView.spacing = 10
         rulesStackView.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -463,7 +520,7 @@ final class SettingsWindowController:
                 ),
 
                 rulesScrollView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
+                    greaterThanOrEqualToConstant: 140
                 )
             ]
         )
@@ -491,8 +548,10 @@ final class SettingsWindowController:
         } catch {
             savedRules = []
 
-            statusLabel.stringValue =
-                "The configured rules could not be loaded."
+            setStatus(
+                "The configured rules could not be loaded.",
+                isError: true
+            )
 
             saveButton.isEnabled = false
         }
@@ -505,6 +564,8 @@ final class SettingsWindowController:
         let row = RemappingRuleRowView(
             rule: rule
         )
+
+        row.applyTextScale(textScale)
 
         row.onSourceKeyRequested = {
             [weak self, weak row] in
@@ -607,9 +668,6 @@ final class SettingsWindowController:
     @objc
     private func addEmptyRule() {
         addRuleRow()
-
-        statusLabel.stringValue =
-            "Choose both keys for the new rule."
     }
 
     private func beginKeyCapture(
@@ -629,8 +687,10 @@ final class SettingsWindowController:
             for: field
         )
 
-        statusLabel.stringValue =
-            "Press a key. Press Escape to cancel."
+        setStatus(
+            "Press a key. Press Escape to cancel.",
+            isError: false
+        )
     }
 
     private func handleKeyDown(
@@ -647,10 +707,7 @@ final class SettingsWindowController:
 
         if Int(keyCode) == kVK_Escape {
             endKeyCapture()
-
-            statusLabel.stringValue =
-                "Key selection cancelled."
-
+            refreshChangeState()
             return true
         }
 
@@ -719,33 +776,125 @@ final class SettingsWindowController:
         }
     }
 
+    private func validationSnapshot() -> ValidationSnapshot {
+        var invalidRows = Set<ObjectIdentifier>()
+        var rowsBySourceKey:
+            [CGKeyCode: [RemappingRuleRowView]] = [:]
+
+        var hasIncompleteRule = false
+        var hasIdentityRule = false
+        var hasDuplicateSourceKey = false
+
+        for row in ruleRows {
+            if
+                row.sourceKeyCode == nil ||
+                row.destinationKeyCode == nil
+            {
+                hasIncompleteRule = true
+                invalidRows.insert(
+                    ObjectIdentifier(row)
+                )
+            }
+
+            if
+                let sourceKeyCode = row.sourceKeyCode,
+                let destinationKeyCode = row.destinationKeyCode,
+                sourceKeyCode == destinationKeyCode
+            {
+                hasIdentityRule = true
+                invalidRows.insert(
+                    ObjectIdentifier(row)
+                )
+            }
+
+            if let sourceKeyCode = row.sourceKeyCode {
+                rowsBySourceKey[
+                    sourceKeyCode,
+                    default: []
+                ].append(row)
+            }
+        }
+
+        for rows in rowsBySourceKey.values
+        where rows.count > 1 {
+            hasDuplicateSourceKey = true
+
+            for row in rows {
+                invalidRows.insert(
+                    ObjectIdentifier(row)
+                )
+            }
+        }
+
+        let issue: EditorValidationIssue?
+
+        if hasDuplicateSourceKey {
+            issue = .duplicateSourceKey
+        } else if hasIdentityRule {
+            issue = .identicalSourceAndDestination
+        } else if hasIncompleteRule {
+            issue = .incompleteRule
+        } else {
+            issue = nil
+        }
+
+        return ValidationSnapshot(
+            issue: issue,
+            invalidRows: invalidRows
+        )
+    }
+
+    private func applyValidationAppearance(
+        _ snapshot: ValidationSnapshot
+    ) {
+        for row in ruleRows {
+            let isInvalid = snapshot.invalidRows.contains(
+                ObjectIdentifier(row)
+            )
+
+            row.setValidationErrorVisible(
+                isInvalid
+            )
+        }
+    }
+
     private func refreshChangeState() {
-        let rulesAreComplete =
-            completeCurrentRules != nil
+        let snapshot = validationSnapshot()
+        applyValidationAppearance(snapshot)
+
+        let hasChanges = hasUnsavedChanges
 
         saveButton.isEnabled =
-            rulesAreComplete
-            && hasUnsavedChanges
+            snapshot.issue == nil && hasChanges
 
-        if !hasUnsavedChanges {
+        if let issue = snapshot.issue {
+            setStatus(
+                issue.message,
+                isError: true
+            )
+            return
+        }
+
+        if !hasChanges {
             if savedRules.isEmpty {
-                statusLabel.stringValue =
-                    "No remapping rules are configured."
+                setStatus(
+                    "No remapping rules are configured.",
+                    isError: false
+                )
             } else {
-                statusLabel.stringValue =
-                    "Rules are saved locally on this Mac."
+                setStatus(
+                    "Rules are saved locally on this Mac.",
+                    isError: false
+                )
             }
 
             return
         }
 
-        if !rulesAreComplete {
-            statusLabel.stringValue =
-                "Complete every rule before saving."
-        } else {
-            statusLabel.stringValue =
-                "You have unsaved changes."
-        }
+        setStatus(
+            "You have unsaved changes.",
+            isError: false
+        )
     }
 
     @objc
@@ -755,28 +904,22 @@ final class SettingsWindowController:
 
     @discardableResult
     private func persistRules() -> Bool {
+        let snapshot = validationSnapshot()
+        applyValidationAppearance(snapshot)
+
+        if let issue = snapshot.issue {
+            setStatus(
+                issue.message,
+                isError: true
+            )
+            return false
+        }
+
         guard let rules = completeCurrentRules else {
-            statusLabel.stringValue =
-                "Complete every rule before saving."
-
-            return false
-        }
-
-        guard !containsDuplicateSourceKeys(
-            in: rules
-        ) else {
-            statusLabel.stringValue =
-                "Each source key can appear only once."
-
-            return false
-        }
-
-        guard !containsIdentityRule(
-            in: rules
-        ) else {
-            statusLabel.stringValue =
-                "A source and destination key cannot be identical."
-
+            setStatus(
+                "Complete every highlighted rule before saving.",
+                isError: true
+            )
             return false
         }
 
@@ -788,31 +931,121 @@ final class SettingsWindowController:
             refreshChangeState()
 
             return true
+        } catch let error as RemappingRulesValidationError {
+            switch error {
+            case .duplicateSourceKey:
+                setStatus(
+                    EditorValidationIssue
+                        .duplicateSourceKey
+                        .message,
+                    isError: true
+                )
+
+            case .identicalSourceAndDestination:
+                setStatus(
+                    EditorValidationIssue
+                        .identicalSourceAndDestination
+                        .message,
+                    isError: true
+                )
+            }
+
+            return false
         } catch {
-            statusLabel.stringValue =
-                "The remapping rules could not be saved."
+            setStatus(
+                "The remapping rules could not be saved.",
+                isError: true
+            )
 
             return false
         }
     }
 
-    private func containsDuplicateSourceKeys(
-        in rules: [RemapRule]
-    ) -> Bool {
-        let sourceKeyCodes = rules.map {
-            $0.sourceKeyCode
-        }
-
-        return Set(sourceKeyCodes).count
-            != sourceKeyCodes.count
+    private func setStatus(
+        _ message: String,
+        isError: Bool
+    ) {
+        statusLabel.stringValue = message
+        statusLabel.textColor =
+            isError ? .systemRed : .secondaryLabelColor
     }
 
-    private func containsIdentityRule(
-        in rules: [RemapRule]
-    ) -> Bool {
-        rules.contains {
-            $0.sourceKeyCode
-                == $0.destinationKeyCode
+    private func setTextScale(
+        _ proposedScale: CGFloat
+    ) {
+        let newScale = Self.clampedTextScale(
+            proposedScale
+        )
+
+        guard newScale != textScale else {
+            return
         }
+
+        textScale = newScale
+
+        UserDefaults.standard.set(
+            Double(newScale),
+            forKey: TextSizePreference.storageKey
+        )
+
+        applyTextScale()
+    }
+
+    private func applyTextScale() {
+        titleLabel.font = NSFont.systemFont(
+            ofSize: 22 * textScale,
+            weight: .semibold
+        )
+
+        descriptionLabel.font = NSFont.systemFont(
+            ofSize: 14 * textScale,
+            weight: .regular
+        )
+
+        sourceHeader.font = NSFont.systemFont(
+            ofSize: 13 * textScale,
+            weight: .medium
+        )
+
+        destinationHeader.font = NSFont.systemFont(
+            ofSize: 13 * textScale,
+            weight: .medium
+        )
+
+        statusLabel.font = NSFont.systemFont(
+            ofSize: 13 * textScale,
+            weight: .regular
+        )
+
+        let actionFont = NSFont.systemFont(
+            ofSize: 14 * textScale,
+            weight: .regular
+        )
+
+        addRuleButton.font = actionFont
+        saveButton.font = actionFont
+
+        rulesStackView.spacing = 10 * textScale
+        actionsStack.spacing = 12 * textScale
+        mainStack.spacing = 16 * textScale
+
+        for row in ruleRows {
+            row.applyTextScale(textScale)
+        }
+
+        window?.contentView?.needsLayout = true
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private static func clampedTextScale(
+        _ scale: CGFloat
+    ) -> CGFloat {
+        min(
+            max(
+                scale,
+                TextSizePreference.minimumScale
+            ),
+            TextSizePreference.maximumScale
+        )
     }
 }
