@@ -85,6 +85,9 @@ final class SettingsWindowController:
     private let remappingController:
         RemappingSettingsControlling
 
+    private let appPreferencesController:
+        AppPreferencesControlling
+
     private let titleLabel = NSTextField(
         labelWithString: "Remapping Rules"
     )
@@ -102,6 +105,13 @@ final class SettingsWindowController:
 
     private let destinationHeader = NSTextField(
         labelWithString: "Destination key"
+    )
+
+    private let launchRemappingCheckbox = NSButton(
+        checkboxWithTitle:
+            "Enable remapping when the app launches",
+        target: nil,
+        action: nil
     )
 
     private let rulesScrollView = NSScrollView()
@@ -130,9 +140,13 @@ final class SettingsWindowController:
     private var textScale: CGFloat
 
     init(
-        remappingController: RemappingSettingsControlling
+        remappingController: RemappingSettingsControlling,
+        appPreferencesController:
+            AppPreferencesControlling
     ) {
         self.remappingController = remappingController
+        self.appPreferencesController =
+            appPreferencesController
 
         let storedScale = UserDefaults.standard.double(
             forKey: TextSizePreference.storageKey
@@ -187,6 +201,7 @@ final class SettingsWindowController:
         }
 
         configureContent()
+        synchronizeLaunchPreference()
         applyTextScale()
     }
 
@@ -198,6 +213,7 @@ final class SettingsWindowController:
 
     override func showWindow(_ sender: Any?) {
         if window?.isVisible == false {
+            synchronizeLaunchPreference()
             loadConfiguredRules()
         }
 
@@ -297,6 +313,7 @@ final class SettingsWindowController:
             .secondaryLabelColor
 
         configureHeaderView()
+        configureLaunchPreference()
         configureRulesScrollView()
         configureActionButtons()
 
@@ -315,6 +332,7 @@ final class SettingsWindowController:
             [
                 titleLabel,
                 descriptionLabel,
+                launchRemappingCheckbox,
                 headerView,
                 rulesScrollView,
                 actionsStack,
@@ -433,6 +451,53 @@ final class SettingsWindowController:
                 )
             ]
         )
+    }
+
+    private func configureLaunchPreference() {
+        launchRemappingCheckbox.allowsMixedState = false
+        launchRemappingCheckbox.target = self
+        launchRemappingCheckbox.action =
+            #selector(launchPreferenceChanged)
+
+        launchRemappingCheckbox.toolTip =
+            "Automatically attempts to enable remapping after the app launches."
+    }
+
+    private func synchronizeLaunchPreference() {
+        launchRemappingCheckbox.state =
+            appPreferencesController
+                .preferences
+                .enableRemappingAtLaunch
+                ? .on
+                : .off
+    }
+
+    @objc
+    private func launchPreferenceChanged() {
+        let previousValue =
+            appPreferencesController
+                .preferences
+                .enableRemappingAtLaunch
+
+        let requestedValue =
+            launchRemappingCheckbox.state == .on
+
+        do {
+            try appPreferencesController
+                .setEnableRemappingAtLaunch(
+                    requestedValue
+                )
+
+            refreshChangeState()
+        } catch {
+            launchRemappingCheckbox.state =
+                previousValue ? .on : .off
+
+            setStatus(
+                "The launch preference could not be saved.",
+                isError: true
+            )
+        }
     }
 
     private func configureActionButtons() {
@@ -1022,6 +1087,7 @@ final class SettingsWindowController:
             weight: .regular
         )
 
+        launchRemappingCheckbox.font = actionFont
         addRuleButton.font = actionFont
         saveButton.font = actionFont
 

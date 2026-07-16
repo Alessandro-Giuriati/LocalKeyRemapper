@@ -20,6 +20,12 @@ final class AppCoordinator {
     private let rulesValidator:
         RemappingRulesValidator
 
+    private let appPreferencesStore:
+        UserDefaultsAppPreferencesStore
+
+    private let appPreferencesController:
+        AppPreferencesController
+
     private let remappingEngine:
         RemappingEngine
 
@@ -47,6 +53,14 @@ final class AppCoordinator {
 
         let rulesValidator =
             RemappingRulesValidator()
+
+        let appPreferencesStore =
+            UserDefaultsAppPreferencesStore()
+
+        let appPreferencesController =
+            AppPreferencesController(
+                store: appPreferencesStore
+            )
 
         let remappingEngine =
             RemappingEngine()
@@ -79,6 +93,12 @@ final class AppCoordinator {
         self.rulesValidator =
             rulesValidator
 
+        self.appPreferencesStore =
+            appPreferencesStore
+
+        self.appPreferencesController =
+            appPreferencesController
+
         self.remappingEngine =
             remappingEngine
 
@@ -91,6 +111,8 @@ final class AppCoordinator {
 
     /// Starts the application user interface.
     func start() {
+        loadAppPreferences()
+
         applicationMenuController =
             ApplicationMenuController(
                 increaseTextSizeHandler: {
@@ -137,6 +159,8 @@ final class AppCoordinator {
                     self?.resetTextSize()
                 }
             )
+
+        enableRemappingAtLaunchIfRequested()
     }
 
     /// Checks whether Accessibility permission was granted
@@ -173,11 +197,34 @@ final class AppCoordinator {
 
         let controller = SettingsWindowController(
             remappingController:
-                remappingController
+                remappingController,
+            appPreferencesController:
+                appPreferencesController
         )
 
         settingsWindowController = controller
         return controller
+    }
+
+    private func loadAppPreferences() {
+        do {
+            try appPreferencesController
+                .loadPreferences()
+        } catch {
+            // Safe fallback: automatic remapping remains disabled.
+        }
+    }
+
+    private func enableRemappingAtLaunchIfRequested() {
+        guard
+            appPreferencesController
+                .preferences
+                .enableRemappingAtLaunch
+        else {
+            return
+        }
+
+        remappingController.enable()
     }
 
     private func showSettings() {
