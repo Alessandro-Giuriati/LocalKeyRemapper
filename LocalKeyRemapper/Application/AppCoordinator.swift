@@ -10,44 +10,44 @@ import AppKit
 /// Creates and connects the main application components.
 @MainActor
 final class AppCoordinator {
-
+    
     private let permissionService: AccessibilityPermissionService
     private let rulesStore: InMemoryRulesStore
     private let remappingEngine: RemappingEngine
     private let eventTapManager: EventTapManager
     private let remappingController: RemappingController
-
+    
     private var statusBarController: StatusBarController?
     private var settingsWindowController: SettingsWindowController?
-
+    
     init() {
         let permissionService =
-            AccessibilityPermissionService()
-
+        AccessibilityPermissionService()
+        
         let rulesStore =
-            InMemoryRulesStore()
-
+        InMemoryRulesStore()
+        
         let remappingEngine =
-            RemappingEngine()
-
+        RemappingEngine()
+        
         let eventTapManager = EventTapManager(
             remappingEngine: remappingEngine
         )
-
+        
         let remappingController = RemappingController(
             permissionService: permissionService,
             rulesStore: rulesStore,
             remappingEngine: remappingEngine,
             eventTapManager: eventTapManager
         )
-
+        
         self.permissionService = permissionService
         self.rulesStore = rulesStore
         self.remappingEngine = remappingEngine
         self.eventTapManager = eventTapManager
         self.remappingController = remappingController
     }
-
+    
     /// Starts the application user interface.
     func start() {
         statusBarController = StatusBarController(
@@ -58,7 +58,7 @@ final class AppCoordinator {
             }
         )
     }
-
+    
     /// Checks whether Accessibility permission was granted
     /// after the application becomes active again.
     func applicationDidBecomeActive() {
@@ -67,25 +67,28 @@ final class AppCoordinator {
         else {
             return
         }
-
+        
         remappingController.enable()
     }
-
+    
     /// Stops active system components before
     /// the application terminates.
     func stop() {
         remappingController.disable()
-
+        
         settingsWindowController?.close()
         settingsWindowController = nil
-
+        
         statusBarController = nil
     }
-
+    
     private func showSettings() {
         if settingsWindowController == nil {
             settingsWindowController =
-                SettingsWindowController()
+                SettingsWindowController(
+                    remappingController:
+                        remappingController
+                )
         }
 
         settingsWindowController?.showWindow(nil)

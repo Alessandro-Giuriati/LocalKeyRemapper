@@ -32,7 +32,10 @@ protocol RemappingControlling: AnyObject {
 /// This controller does not process individual keyboard events
 /// and does not store or log keyboard input.
 @MainActor
-final class RemappingController: RemappingControlling {
+final class RemappingController:
+    RemappingControlling,
+    RemappingSettingsControlling
+{
 
     private let permissionService: AccessibilityPermissionChecking
     private let rulesStore: RulesStore
