@@ -5,7 +5,6 @@
 //  Created by Alessandro Giuriati on 7/16/26.
 //
 
-
 import AppKit
 import CoreGraphics
 
@@ -27,6 +26,9 @@ final class RemappingRuleRowView: NSView {
     var onRemoveRequested: (() -> Void)?
 
     private let sourceKeyButton = NSButton()
+    private let arrowLabel = NSTextField(
+        labelWithString: "→"
+    )
     private let destinationKeyButton = NSButton()
     private let removeButton = NSButton()
 
@@ -118,60 +120,100 @@ final class RemappingRuleRowView: NSView {
             action: #selector(requestDestinationKey)
         )
 
-        let arrowLabel = NSTextField(
-            labelWithString: "→"
-        )
-
         arrowLabel.font = NSFont.systemFont(
             ofSize: 18,
             weight: .regular
         )
+
+        arrowLabel.alignment = .center
 
         removeButton.title = "Remove"
         removeButton.bezelStyle = .rounded
         removeButton.target = self
         removeButton.action = #selector(requestRemoval)
 
-        let stackView = NSStackView(
-            views: [
-                sourceKeyButton,
-                arrowLabel,
-                destinationKeyButton,
-                removeButton
-            ]
-        )
+        let views: [NSView] = [
+            sourceKeyButton,
+            arrowLabel,
+            destinationKeyButton,
+            removeButton
+        ]
 
-        stackView.orientation = .horizontal
-        stackView.alignment = .centerY
-        stackView.spacing = 14
-        stackView.translatesAutoresizingMaskIntoConstraints =
-            false
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
 
-        addSubview(stackView)
+            addSubview(view)
+        }
 
         NSLayoutConstraint.activate(
             [
-                stackView.topAnchor.constraint(
-                    equalTo: topAnchor
-                ),
-                stackView.leadingAnchor.constraint(
+                sourceKeyButton.leadingAnchor.constraint(
                     equalTo: leadingAnchor
                 ),
-                stackView.trailingAnchor.constraint(
+                sourceKeyButton.topAnchor.constraint(
+                    equalTo: topAnchor
+                ),
+                sourceKeyButton.bottomAnchor.constraint(
+                    equalTo: bottomAnchor
+                ),
+
+                arrowLabel.leadingAnchor.constraint(
+                    equalTo: sourceKeyButton.trailingAnchor,
+                    constant: 12
+                ),
+                arrowLabel.centerYAnchor.constraint(
+                    equalTo: sourceKeyButton.centerYAnchor
+                ),
+                arrowLabel.widthAnchor.constraint(
+                    equalToConstant: 18
+                ),
+
+                destinationKeyButton.leadingAnchor.constraint(
+                    equalTo: arrowLabel.trailingAnchor,
+                    constant: 12
+                ),
+                destinationKeyButton.topAnchor.constraint(
+                    equalTo: topAnchor
+                ),
+                destinationKeyButton.bottomAnchor.constraint(
+                    equalTo: bottomAnchor
+                ),
+
+                removeButton.leadingAnchor.constraint(
+                    equalTo:
+                        destinationKeyButton.trailingAnchor,
+                    constant: 12
+                ),
+                removeButton.trailingAnchor.constraint(
                     equalTo: trailingAnchor
                 ),
-                stackView.bottomAnchor.constraint(
+                removeButton.topAnchor.constraint(
+                    equalTo: topAnchor
+                ),
+                removeButton.bottomAnchor.constraint(
                     equalTo: bottomAnchor
                 ),
 
                 sourceKeyButton.widthAnchor.constraint(
-                    equalToConstant: 160
+                    equalTo:
+                        destinationKeyButton.widthAnchor
                 ),
+
+                sourceKeyButton.widthAnchor.constraint(
+                    greaterThanOrEqualToConstant: 140
+                ),
+
                 destinationKeyButton.widthAnchor.constraint(
-                    equalToConstant: 160
+                    greaterThanOrEqualToConstant: 140
                 ),
+
                 removeButton.widthAnchor.constraint(
-                    equalToConstant: 80
+                    equalToConstant: 90
+                ),
+
+                heightAnchor.constraint(
+                    equalToConstant: 32
                 )
             ]
         )

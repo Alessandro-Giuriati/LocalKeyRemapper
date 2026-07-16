@@ -31,6 +31,15 @@ private final class SettingsWindow: NSWindow {
     }
 }
 
+/// Keeps scrollable content anchored to the top-left corner.
+@MainActor
+private final class FlippedView: NSView {
+
+    override var isFlipped: Bool {
+        true
+    }
+}
+
 /// Manages the application settings window and its editable
 /// collection of remapping rules.
 @MainActor
@@ -42,7 +51,10 @@ final class SettingsWindowController:
     private let remappingController:
         RemappingSettingsControlling
 
+    private let rulesScrollView = NSScrollView()
+    private let rulesDocumentView = FlippedView()
     private let rulesStackView = NSStackView()
+
     private let addRuleButton = NSButton()
     private let saveButton = NSButton()
 
@@ -51,6 +63,9 @@ final class SettingsWindowController:
     )
 
     private var ruleRows: [RemappingRuleRowView] = []
+
+    /// Last rule collection successfully loaded or saved.
+    private var savedRules: [RemapRule] = []
 
     private var captureRow: RemappingRuleRowView?
     private var captureField:
@@ -65,8 +80,8 @@ final class SettingsWindowController:
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 650,
-                height: 420
+                width: 720,
+                height: 520
             ),
             styleMask: [
                 .titled,
@@ -81,9 +96,14 @@ final class SettingsWindowController:
         window.title = "LocalKeyRemapper Settings"
         window.isReleasedWhenClosed = false
 
-        window.minSize = NSSize(
-            width: 600,
-            height: 360
+        window.contentMinSize = NSSize(
+            width: 640,
+            height: 400
+        )
+
+        window.contentMaxSize = NSSize(
+            width: 820,
+            height: CGFloat.greatestFiniteMagnitude
         )
 
         window.center()
@@ -97,7 +117,6 @@ final class SettingsWindowController:
         }
 
         configureContent()
-        loadConfiguredRules()
     }
 
     required init?(coder: NSCoder) {
@@ -107,7 +126,9 @@ final class SettingsWindowController:
     }
 
     override func showWindow(_ sender: Any?) {
-        loadConfiguredRules()
+        if window?.isVisible == false {
+            loadConfiguredRules()
+        }
 
         super.showWindow(sender)
 
@@ -117,6 +138,50 @@ final class SettingsWindowController:
         NSApplication.shared.activate(
             ignoringOtherApps: true
         )
+    }
+
+    func windowShouldClose(
+        _ sender: NSWindow
+    ) -> Bool {
+        endKeyCapture()
+
+        guard hasUnsavedChanges else {
+            return true
+        }
+
+        let alert = NSAlert()
+
+        alert.messageText =
+            "Save changes before closing?"
+
+        alert.informativeText =
+            "Your remapping rules have been modified."
+
+        alert.alertStyle = .warning
+
+        alert.addButton(
+            withTitle: "Save"
+        )
+
+        alert.addButton(
+            withTitle: "Discard Changes"
+        )
+
+        alert.addButton(
+            withTitle: "Cancel"
+        )
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return persistRules()
+
+        case .alertSecondButtonReturn:
+            loadConfiguredRules()
+            return true
+
+        default:
+            return false
+        }
     }
 
     func windowWillClose(
@@ -147,6 +212,8 @@ final class SettingsWindowController:
         descriptionLabel.textColor =
             .secondaryLabelColor
 
+        let headerView = NSView()
+
         let sourceHeader = NSTextField(
             labelWithString: "Source key"
         )
@@ -158,6 +225,8 @@ final class SettingsWindowController:
 
         sourceHeader.textColor =
             .secondaryLabelColor
+
+        let arrowSpacer = NSView()
 
         let destinationHeader = NSTextField(
             labelWithString: "Destination key"
@@ -171,37 +240,78 @@ final class SettingsWindowController:
         destinationHeader.textColor =
             .secondaryLabelColor
 
-        let spacer = NSView()
+        let removeSpacer = NSView()
 
-        let headerStack = NSStackView(
-            views: [
-                sourceHeader,
-                spacer,
-                destinationHeader
+        let headerSubviews: [NSView] = [
+            sourceHeader,
+            arrowSpacer,
+            destinationHeader,
+            removeSpacer
+        ]
+
+        for view in headerSubviews {
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
+            headerView.addSubview(view)
+        }
+
+        NSLayoutConstraint.activate(
+            [
+                sourceHeader.leadingAnchor.constraint(
+                    equalTo: headerView.leadingAnchor
+                ),
+                sourceHeader.topAnchor.constraint(
+                    equalTo: headerView.topAnchor
+                ),
+                sourceHeader.bottomAnchor.constraint(
+                    equalTo: headerView.bottomAnchor
+                ),
+
+                arrowSpacer.leadingAnchor.constraint(
+                    equalTo: sourceHeader.trailingAnchor,
+                    constant: 12
+                ),
+                arrowSpacer.widthAnchor.constraint(
+                    equalToConstant: 18
+                ),
+
+                destinationHeader.leadingAnchor.constraint(
+                    equalTo: arrowSpacer.trailingAnchor,
+                    constant: 12
+                ),
+                destinationHeader.topAnchor.constraint(
+                    equalTo: headerView.topAnchor
+                ),
+                destinationHeader.bottomAnchor.constraint(
+                    equalTo: headerView.bottomAnchor
+                ),
+
+                removeSpacer.leadingAnchor.constraint(
+                    equalTo: destinationHeader.trailingAnchor,
+                    constant: 12
+                ),
+                removeSpacer.trailingAnchor.constraint(
+                    equalTo: headerView.trailingAnchor
+                ),
+                removeSpacer.widthAnchor.constraint(
+                    equalToConstant: 90
+                ),
+
+                sourceHeader.widthAnchor.constraint(
+                    equalTo: destinationHeader.widthAnchor
+                ),
+
+                headerView.heightAnchor.constraint(
+                    equalToConstant: 18
+                )
             ]
         )
 
-        headerStack.orientation = .horizontal
-        headerStack.alignment = .centerY
-        headerStack.spacing = 14
-
-        sourceHeader.widthAnchor.constraint(
-            equalToConstant: 160
-        ).isActive = true
-
-        spacer.widthAnchor.constraint(
-            equalToConstant: 18
-        ).isActive = true
-
-        destinationHeader.widthAnchor.constraint(
-            equalToConstant: 160
-        ).isActive = true
-
-        rulesStackView.orientation = .vertical
-        rulesStackView.alignment = .leading
-        rulesStackView.spacing = 10
+        configureRulesScrollView()
 
         addRuleButton.title = "Add Rule"
+
         addRuleButton.image = NSImage(
             systemSymbolName: "plus",
             accessibilityDescription: "Add Rule"
@@ -240,8 +350,8 @@ final class SettingsWindowController:
             views: [
                 titleLabel,
                 descriptionLabel,
-                headerStack,
-                rulesStackView,
+                headerView,
+                rulesScrollView,
                 actionsStack,
                 statusLabel
             ]
@@ -266,9 +376,94 @@ final class SettingsWindowController:
                     constant: 28
                 ),
                 mainStack.trailingAnchor.constraint(
-                    lessThanOrEqualTo:
-                        contentView.trailingAnchor,
+                    equalTo: contentView.trailingAnchor,
                     constant: -28
+                ),
+                mainStack.bottomAnchor.constraint(
+                    equalTo: contentView.bottomAnchor,
+                    constant: -28
+                ),
+
+                rulesScrollView.widthAnchor.constraint(
+                    equalTo: mainStack.widthAnchor
+                ),
+
+                headerView.widthAnchor.constraint(
+                    equalTo:
+                        rulesScrollView.contentView.widthAnchor,
+                    constant: -24
+                )
+            ]
+        )
+    }
+
+    private func configureRulesScrollView() {
+        rulesStackView.orientation = .vertical
+        rulesStackView.alignment = .leading
+        rulesStackView.distribution = .fill
+        rulesStackView.spacing = 10
+        rulesStackView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesDocumentView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesDocumentView.addSubview(
+            rulesStackView
+        )
+
+        rulesScrollView.hasVerticalScroller = true
+        rulesScrollView.autohidesScrollers = true
+        rulesScrollView.borderType = .bezelBorder
+        rulesScrollView.drawsBackground = false
+        rulesScrollView.documentView = rulesDocumentView
+        rulesScrollView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesScrollView.setContentHuggingPriority(
+            .defaultLow,
+            for: .vertical
+        )
+
+        rulesScrollView.setContentCompressionResistancePriority(
+            .defaultLow,
+            for: .vertical
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                rulesStackView.topAnchor.constraint(
+                    equalTo: rulesDocumentView.topAnchor,
+                    constant: 12
+                ),
+
+                rulesStackView.leadingAnchor.constraint(
+                    equalTo: rulesDocumentView.leadingAnchor,
+                    constant: 12
+                ),
+
+                rulesStackView.trailingAnchor.constraint(
+                    equalTo: rulesDocumentView.trailingAnchor,
+                    constant: -12
+                ),
+
+                rulesStackView.bottomAnchor.constraint(
+                    equalTo: rulesDocumentView.bottomAnchor,
+                    constant: -12
+                ),
+
+                rulesDocumentView.widthAnchor.constraint(
+                    equalTo:
+                        rulesScrollView.contentView.widthAnchor
+                ),
+
+                rulesDocumentView.heightAnchor.constraint(
+                    greaterThanOrEqualTo:
+                        rulesScrollView.contentView.heightAnchor
+                ),
+
+                rulesScrollView.heightAnchor.constraint(
+                    greaterThanOrEqualToConstant: 120
                 )
             ]
         )
@@ -283,21 +478,19 @@ final class SettingsWindowController:
                 try remappingController
                     .loadConfiguredRules()
 
+            savedRules = rules
+
             for rule in rules {
-                addRuleRow(rule: rule)
+                addRuleRow(
+                    rule: rule,
+                    scrollIntoView: false
+                )
             }
 
-            if rules.isEmpty {
-                statusLabel.stringValue =
-                    "No remapping rules are currently configured."
-            } else {
-                statusLabel.stringValue =
-                    "Changes are stored in memory until the app quits."
-            }
-
-            updateSaveButton()
-            resizeWindowToFitRows()
+            refreshChangeState()
         } catch {
+            savedRules = []
+
             statusLabel.stringValue =
                 "The configured rules could not be loaded."
 
@@ -306,7 +499,8 @@ final class SettingsWindowController:
     }
 
     private func addRuleRow(
-        rule: RemapRule? = nil
+        rule: RemapRule? = nil,
+        scrollIntoView: Bool = true
     ) {
         let row = RemappingRuleRowView(
             rule: rule
@@ -351,8 +545,34 @@ final class SettingsWindowController:
         ruleRows.append(row)
         rulesStackView.addArrangedSubview(row)
 
-        updateSaveButton()
-        resizeWindowToFitRows()
+        row.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        row.widthAnchor.constraint(
+            equalTo: rulesStackView.widthAnchor
+        ).isActive = true
+
+        refreshChangeState()
+
+        if scrollIntoView {
+            scrollToRuleRow(row)
+        }
+    }
+
+    private func scrollToRuleRow(
+        _ row: RemappingRuleRowView
+    ) {
+        rulesDocumentView.layoutSubtreeIfNeeded()
+        rulesStackView.layoutSubtreeIfNeeded()
+
+        let visibleRect = row.convert(
+            row.bounds,
+            to: rulesDocumentView
+        )
+
+        rulesDocumentView.scrollToVisible(
+            visibleRect
+        )
     }
 
     private func removeRuleRow(
@@ -372,11 +592,7 @@ final class SettingsWindowController:
         rulesStackView.removeArrangedSubview(row)
         row.removeFromSuperview()
 
-        updateSaveButton()
-        resizeWindowToFitRows()
-
-        statusLabel.stringValue =
-            "Rule removed. Save the rules to apply the change."
+        refreshChangeState()
     }
 
     private func removeAllRuleRows() {
@@ -444,10 +660,7 @@ final class SettingsWindowController:
         )
 
         endKeyCapture()
-        updateSaveButton()
-
-        statusLabel.stringValue =
-            "Key selected. Save the rules to apply the change."
+        refreshChangeState()
 
         return true
     }
@@ -465,24 +678,88 @@ final class SettingsWindowController:
         remappingController.endKeyCapture()
     }
 
-    private func updateSaveButton() {
-        saveButton.isEnabled =
-            ruleRows.allSatisfy {
-                $0.rule != nil
-            }
-    }
-
-    @objc
-    private func saveRules() {
+    /// Returns all current rules only when every row is complete.
+    private var completeCurrentRules: [RemapRule]? {
         let rules = ruleRows.compactMap {
             $0.rule
         }
 
         guard rules.count == ruleRows.count else {
+            return nil
+        }
+
+        return rules
+    }
+
+    /// Indicates whether the editor content differs from the
+    /// last successfully loaded or saved rule collection.
+    private var hasUnsavedChanges: Bool {
+        guard let currentRules = completeCurrentRules else {
+            return true
+        }
+
+        return normalizedRules(currentRules)
+            != normalizedRules(savedRules)
+    }
+
+    /// Sorts rules into a stable order before comparison.
+    ///
+    /// Rule order has no semantic meaning for the remapping engine.
+    private func normalizedRules(
+        _ rules: [RemapRule]
+    ) -> [RemapRule] {
+        rules.sorted {
+            if $0.sourceKeyCode == $1.sourceKeyCode {
+                return $0.destinationKeyCode
+                    < $1.destinationKeyCode
+            }
+
+            return $0.sourceKeyCode
+                < $1.sourceKeyCode
+        }
+    }
+
+    private func refreshChangeState() {
+        let rulesAreComplete =
+            completeCurrentRules != nil
+
+        saveButton.isEnabled =
+            rulesAreComplete
+            && hasUnsavedChanges
+
+        if !hasUnsavedChanges {
+            if savedRules.isEmpty {
+                statusLabel.stringValue =
+                    "No remapping rules are configured."
+            } else {
+                statusLabel.stringValue =
+                    "Rules are saved locally on this Mac."
+            }
+
+            return
+        }
+
+        if !rulesAreComplete {
+            statusLabel.stringValue =
+                "Complete every rule before saving."
+        } else {
+            statusLabel.stringValue =
+                "You have unsaved changes."
+        }
+    }
+
+    @objc
+    private func saveRules() {
+        _ = persistRules()
+    }
+
+    @discardableResult
+    private func persistRules() -> Bool {
+        guard let rules = completeCurrentRules else {
             statusLabel.stringValue =
                 "Complete every rule before saving."
 
-            return
+            return false
         }
 
         guard !containsDuplicateSourceKeys(
@@ -491,7 +768,7 @@ final class SettingsWindowController:
             statusLabel.stringValue =
                 "Each source key can appear only once."
 
-            return
+            return false
         }
 
         guard !containsIdentityRule(
@@ -500,29 +777,22 @@ final class SettingsWindowController:
             statusLabel.stringValue =
                 "A source and destination key cannot be identical."
 
-            return
+            return false
         }
 
         do {
             try remappingController
                 .replaceConfiguredRules(rules)
 
-            switch rules.count {
-            case 0:
-                statusLabel.stringValue =
-                    "All remapping rules were removed."
+            savedRules = rules
+            refreshChangeState()
 
-            case 1:
-                statusLabel.stringValue =
-                    "1 remapping rule applied."
-
-            default:
-                statusLabel.stringValue =
-                    "\(rules.count) remapping rules applied."
-            }
+            return true
         } catch {
             statusLabel.stringValue =
                 "The remapping rules could not be saved."
+
+            return false
         }
     }
 
@@ -544,44 +814,5 @@ final class SettingsWindowController:
             $0.sourceKeyCode
                 == $0.destinationKeyCode
         }
-    }
-
-    private func resizeWindowToFitRows() {
-        guard let window else {
-            return
-        }
-
-        let rowHeight: CGFloat = 42
-        let baseHeight: CGFloat = 350
-
-        let requestedHeight =
-            baseHeight
-            + CGFloat(ruleRows.count) * rowHeight
-
-        let maximumHeight =
-            window.screen?.visibleFrame.height
-            ?? 700
-
-        let newHeight = min(
-            max(requestedHeight, 380),
-            maximumHeight
-        )
-
-        guard abs(window.frame.height - newHeight) > 1 else {
-            return
-        }
-
-        var frame = window.frame
-
-        let currentTop = frame.maxY
-
-        frame.size.height = newHeight
-        frame.origin.y = currentTop - newHeight
-
-        window.setFrame(
-            frame,
-            display: true,
-            animate: window.isVisible
-        )
     }
 }
