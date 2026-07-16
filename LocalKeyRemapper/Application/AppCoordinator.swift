@@ -12,7 +12,7 @@ import AppKit
 final class AppCoordinator {
     
     private let permissionService: AccessibilityPermissionService
-    private let rulesStore: InMemoryRulesStore
+    private let rulesStore: UserDefaultsRulesStore
     private let remappingEngine: RemappingEngine
     private let eventTapManager: EventTapManager
     private let remappingController: RemappingController
@@ -25,7 +25,7 @@ final class AppCoordinator {
         AccessibilityPermissionService()
         
         let rulesStore =
-        InMemoryRulesStore()
+        UserDefaultsRulesStore()
         
         let remappingEngine =
         RemappingEngine()
