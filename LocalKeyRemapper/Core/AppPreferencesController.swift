@@ -16,8 +16,13 @@ protocol AppPreferencesControlling: AnyObject {
     /// Reloads preferences from local storage.
     func loadPreferences() throws
 
-    /// Updates whether remapping should be enabled at launch.
-    func setEnableRemappingAtLaunch(
+    /// Updates how remapping should behave at application launch.
+    func setLaunchBehavior(
+        _ launchBehavior: RemappingLaunchBehavior
+    ) throws
+
+    /// Updates the most recently observed enabled or disabled state.
+    func setLastRemappingEnabled(
         _ isEnabled: Bool
     ) throws
 }
@@ -47,20 +52,41 @@ final class AppPreferencesController:
         preferences = try store.loadPreferences()
     }
 
-    func setEnableRemappingAtLaunch(
+    func setLaunchBehavior(
+        _ launchBehavior: RemappingLaunchBehavior
+    ) throws {
+        guard
+            preferences.launchBehavior
+                != launchBehavior
+        else {
+            return
+        }
+
+        var updatedPreferences = preferences
+        updatedPreferences.launchBehavior = launchBehavior
+
+        try saveAndApply(updatedPreferences)
+    }
+
+    func setLastRemappingEnabled(
         _ isEnabled: Bool
     ) throws {
         guard
-            preferences.enableRemappingAtLaunch
+            preferences.lastRemappingEnabled
                 != isEnabled
         else {
             return
         }
 
         var updatedPreferences = preferences
-        updatedPreferences.enableRemappingAtLaunch =
-            isEnabled
+        updatedPreferences.lastRemappingEnabled = isEnabled
 
+        try saveAndApply(updatedPreferences)
+    }
+
+    private func saveAndApply(
+        _ updatedPreferences: AppPreferences
+    ) throws {
         try store.savePreferences(
             updatedPreferences
         )

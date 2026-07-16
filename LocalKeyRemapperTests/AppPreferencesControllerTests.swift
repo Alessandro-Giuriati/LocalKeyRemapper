@@ -1,6 +1,6 @@
 //
 //  AppPreferencesControllerTests.swift
-//  LocalKeyRemapper
+//  LocalKeyRemapperTests
 //
 //  Created by Alessandro Giuriati on 7/16/26.
 //
@@ -17,7 +17,8 @@ final class AppPreferencesControllerTests:
         throws
     {
         let expectedPreferences = AppPreferences(
-            enableRemappingAtLaunch: true
+            launchBehavior: .restoreLastState,
+            lastRemappingEnabled: true
         )
 
         let store = PreferencesMockStore(
@@ -41,7 +42,7 @@ final class AppPreferencesControllerTests:
         )
     }
 
-    func testSettingLaunchPreferenceSavesAndUpdatesState()
+    func testSettingLaunchBehaviorSavesAndUpdatesState()
         throws
     {
         let store = PreferencesMockStore(
@@ -52,20 +53,20 @@ final class AppPreferencesControllerTests:
             store: store
         )
 
-        try controller.loadPreferences()
+        try controller.setLaunchBehavior(
+            .alwaysOn
+        )
 
-        try controller
-            .setEnableRemappingAtLaunch(true)
-
-        XCTAssertTrue(
-            controller.preferences
-                .enableRemappingAtLaunch
+        XCTAssertEqual(
+            controller.preferences.launchBehavior,
+            .alwaysOn
         )
 
         XCTAssertEqual(
             store.savedPreferences,
             AppPreferences(
-                enableRemappingAtLaunch: true
+                launchBehavior: .alwaysOn,
+                lastRemappingEnabled: false
             )
         )
 
@@ -75,7 +76,57 @@ final class AppPreferencesControllerTests:
         )
     }
 
-    func testSaveFailureDoesNotUpdateCurrentPreferences() {
+    func testSettingLastRemappingStateSavesAndUpdatesState()
+        throws
+    {
+        let store = PreferencesMockStore(
+            preferences: .standard
+        )
+
+        let controller = AppPreferencesController(
+            store: store
+        )
+
+        try controller.setLastRemappingEnabled(
+            true
+        )
+
+        XCTAssertTrue(
+            controller.preferences
+                .lastRemappingEnabled
+        )
+
+        XCTAssertEqual(
+            store.savedPreferences,
+            AppPreferences(
+                launchBehavior: .alwaysOff,
+                lastRemappingEnabled: true
+            )
+        )
+    }
+
+    func testUnchangedLaunchBehaviorDoesNotSave()
+        throws
+    {
+        let store = PreferencesMockStore(
+            preferences: .standard
+        )
+
+        let controller = AppPreferencesController(
+            store: store
+        )
+
+        try controller.setLaunchBehavior(
+            .alwaysOff
+        )
+
+        XCTAssertEqual(
+            store.saveCallCount,
+            0
+        )
+    }
+
+    func testLaunchBehaviorSaveFailureDoesNotUpdateCurrentPreferences() {
         let store = PreferencesMockStore(
             preferences: .standard
         )
@@ -88,8 +139,47 @@ final class AppPreferencesControllerTests:
         )
 
         do {
-            try controller
-                .setEnableRemappingAtLaunch(true)
+            try controller.setLaunchBehavior(
+                .alwaysOn
+            )
+
+            XCTFail(
+                "Expected preference saving to fail."
+            )
+        } catch PreferencesTestError.expected {
+            // Expected error.
+        } catch {
+            XCTFail(
+                "Unexpected error: \(error)"
+            )
+        }
+
+        XCTAssertEqual(
+            controller.preferences,
+            .standard
+        )
+
+        XCTAssertNil(
+            store.savedPreferences
+        )
+    }
+
+    func testLastStateSaveFailureDoesNotUpdateCurrentPreferences() {
+        let store = PreferencesMockStore(
+            preferences: .standard
+        )
+
+        store.saveError =
+            PreferencesTestError.expected
+
+        let controller = AppPreferencesController(
+            store: store
+        )
+
+        do {
+            try controller.setLastRemappingEnabled(
+                true
+            )
 
             XCTFail(
                 "Expected preference saving to fail."
@@ -104,11 +194,7 @@ final class AppPreferencesControllerTests:
 
         XCTAssertFalse(
             controller.preferences
-                .enableRemappingAtLaunch
-        )
-
-        XCTAssertNil(
-            store.savedPreferences
+                .lastRemappingEnabled
         )
     }
 }
@@ -130,6 +216,7 @@ final class PreferencesMockStore:
 
     private(set) var loadCallCount = 0
     private(set) var saveCallCount = 0
+
     private(set) var savedPreferences:
         AppPreferences?
 

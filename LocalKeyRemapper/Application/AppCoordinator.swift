@@ -44,6 +44,10 @@ final class AppCoordinator {
     private var settingsWindowController:
         SettingsWindowController?
 
+    /// Prevents application shutdown from being stored as a
+    /// user-requested disabled state.
+    private var isStopping = false
+
     init() {
         let permissionService =
             AccessibilityPermissionService()
@@ -111,6 +115,7 @@ final class AppCoordinator {
 
     /// Starts the application user interface.
     func start() {
+        isStopping = false
         loadAppPreferences()
 
         applicationMenuController =
@@ -157,6 +162,13 @@ final class AppCoordinator {
                     [weak self] in
 
                     self?.resetTextSize()
+                },
+                remappingStateChangeHandler: {
+                    [weak self] state in
+
+                    self?.handleRemappingStateChange(
+                        state
+                    )
                 }
             )
 
@@ -179,6 +191,7 @@ final class AppCoordinator {
     /// Stops active system components before
     /// the application terminates.
     func stop() {
+        isStopping = true
         remappingController.disable()
 
         settingsWindowController?.close()
@@ -219,12 +232,44 @@ final class AppCoordinator {
         guard
             appPreferencesController
                 .preferences
-                .enableRemappingAtLaunch
+                .shouldEnableRemappingAtLaunch
         else {
             return
         }
 
         remappingController.enable()
+    }
+
+    private func handleRemappingStateChange(
+        _ state: RemappingState
+    ) {
+        guard !isStopping else {
+            return
+        }
+
+        let isEnabled: Bool
+
+        switch state {
+        case .enabled:
+            isEnabled = true
+
+        case .disabled:
+            isEnabled = false
+
+        case .enabling,
+             .permissionRequired,
+             .failed:
+            return
+        }
+
+        do {
+            try appPreferencesController
+                .setLastRemappingEnabled(
+                    isEnabled
+                )
+        } catch {
+            // A preference write failure must not interrupt remapping.
+        }
     }
 
     private func showSettings() {
@@ -261,3 +306,4 @@ final class AppCoordinator {
         controller.resetTextSize()
     }
 }
+

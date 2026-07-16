@@ -107,12 +107,27 @@ final class SettingsWindowController:
         labelWithString: "Destination key"
     )
 
-    private let launchRemappingCheckbox = NSButton(
-        checkboxWithTitle:
-            "Enable remapping when the app launches",
+    private let launchBehaviorTitleLabel = NSTextField(
+        labelWithString: "Remapping at launch"
+    )
+
+    private let launchBehaviorDescriptionLabel = NSTextField(
+        wrappingLabelWithString:
+            "Choose how remapping should behave when LocalKeyRemapper starts."
+    )
+
+    private let launchBehaviorControl = NSSegmentedControl(
+        labels: [
+            "Always Off",
+            "Restore Last State",
+            "Always On"
+        ],
+        trackingMode: .selectOne,
         target: nil,
         action: nil
     )
+
+    private let launchBehaviorStack = NSStackView()
 
     private let rulesScrollView = NSScrollView()
     private let rulesDocumentView = FlippedView()
@@ -164,8 +179,8 @@ final class SettingsWindowController:
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 740,
-                height: 540
+                width: 760,
+                height: 590
             ),
             styleMask: [
                 .titled,
@@ -181,8 +196,8 @@ final class SettingsWindowController:
         window.isReleasedWhenClosed = false
 
         window.contentMinSize = NSSize(
-            width: 660,
-            height: 420
+            width: 700,
+            height: 470
         )
 
         window.contentMaxSize = NSSize(
@@ -201,7 +216,7 @@ final class SettingsWindowController:
         }
 
         configureContent()
-        synchronizeLaunchPreference()
+        synchronizeLaunchBehavior()
         applyTextScale()
     }
 
@@ -213,7 +228,7 @@ final class SettingsWindowController:
 
     override func showWindow(_ sender: Any?) {
         if window?.isVisible == false {
-            synchronizeLaunchPreference()
+            synchronizeLaunchBehavior()
             loadConfiguredRules()
         }
 
@@ -312,8 +327,11 @@ final class SettingsWindowController:
         destinationHeader.textColor =
             .secondaryLabelColor
 
+        launchBehaviorDescriptionLabel.textColor =
+            .secondaryLabelColor
+
         configureHeaderView()
-        configureLaunchPreference()
+        configureLaunchBehavior()
         configureRulesScrollView()
         configureActionButtons()
 
@@ -332,7 +350,7 @@ final class SettingsWindowController:
             [
                 titleLabel,
                 descriptionLabel,
-                launchRemappingCheckbox,
+                launchBehaviorStack,
                 headerView,
                 rulesScrollView,
                 actionsStack,
@@ -368,6 +386,10 @@ final class SettingsWindowController:
                 ),
 
                 rulesScrollView.widthAnchor.constraint(
+                    equalTo: mainStack.widthAnchor
+                ),
+
+                launchBehaviorStack.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
 
@@ -453,50 +475,119 @@ final class SettingsWindowController:
         )
     }
 
-    private func configureLaunchPreference() {
-        launchRemappingCheckbox.allowsMixedState = false
-        launchRemappingCheckbox.target = self
-        launchRemappingCheckbox.action =
-            #selector(launchPreferenceChanged)
+    private func configureLaunchBehavior() {
+        launchBehaviorTitleLabel.setContentHuggingPriority(
+            .required,
+            for: .vertical
+        )
 
-        launchRemappingCheckbox.toolTip =
-            "Automatically attempts to enable remapping after the app launches."
+        launchBehaviorDescriptionLabel.setContentHuggingPriority(
+            .required,
+            for: .vertical
+        )
+
+        launchBehaviorControl.segmentStyle = .rounded
+        launchBehaviorControl.target = self
+        launchBehaviorControl.action =
+            #selector(launchBehaviorChanged)
+
+        launchBehaviorControl.toolTip =
+            "Choose whether remapping starts off, restores its last state, or starts on."
+
+        launchBehaviorStack.setViews(
+            [
+                launchBehaviorTitleLabel,
+                launchBehaviorDescriptionLabel,
+                launchBehaviorControl
+            ],
+            in: .leading
+        )
+
+        launchBehaviorStack.orientation = .vertical
+        launchBehaviorStack.alignment = .leading
+        launchBehaviorStack.spacing = 6
+
+        launchBehaviorControl.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        launchBehaviorControl.widthAnchor.constraint(
+            equalTo: launchBehaviorStack.widthAnchor
+        ).isActive = true
     }
 
-    private func synchronizeLaunchPreference() {
-        launchRemappingCheckbox.state =
-            appPreferencesController
-                .preferences
-                .enableRemappingAtLaunch
-                ? .on
-                : .off
+    private func synchronizeLaunchBehavior() {
+        launchBehaviorControl.selectedSegment =
+            segmentIndex(
+                for: appPreferencesController
+                    .preferences
+                    .launchBehavior
+            )
     }
 
     @objc
-    private func launchPreferenceChanged() {
-        let previousValue =
+    private func launchBehaviorChanged() {
+        let previousBehavior =
             appPreferencesController
                 .preferences
-                .enableRemappingAtLaunch
+                .launchBehavior
 
-        let requestedValue =
-            launchRemappingCheckbox.state == .on
+        guard let requestedBehavior = launchBehavior(
+            for: launchBehaviorControl.selectedSegment
+        ) else {
+            synchronizeLaunchBehavior()
+            return
+        }
 
         do {
             try appPreferencesController
-                .setEnableRemappingAtLaunch(
-                    requestedValue
+                .setLaunchBehavior(
+                    requestedBehavior
                 )
 
             refreshChangeState()
         } catch {
-            launchRemappingCheckbox.state =
-                previousValue ? .on : .off
+            launchBehaviorControl.selectedSegment =
+                segmentIndex(
+                    for: previousBehavior
+                )
 
             setStatus(
-                "The launch preference could not be saved.",
+                "The launch behavior could not be saved.",
                 isError: true
             )
+        }
+    }
+
+    private func segmentIndex(
+        for launchBehavior: RemappingLaunchBehavior
+    ) -> Int {
+        switch launchBehavior {
+        case .alwaysOff:
+            return 0
+
+        case .restoreLastState:
+            return 1
+
+        case .alwaysOn:
+            return 2
+        }
+    }
+
+    private func launchBehavior(
+        for segmentIndex: Int
+    ) -> RemappingLaunchBehavior? {
+        switch segmentIndex {
+        case 0:
+            return .alwaysOff
+
+        case 1:
+            return .restoreLastState
+
+        case 2:
+            return .alwaysOn
+
+        default:
+            return nil
         }
     }
 
@@ -1087,7 +1178,19 @@ final class SettingsWindowController:
             weight: .regular
         )
 
-        launchRemappingCheckbox.font = actionFont
+        launchBehaviorTitleLabel.font = NSFont.systemFont(
+            ofSize: 14 * textScale,
+            weight: .semibold
+        )
+
+        launchBehaviorDescriptionLabel.font = NSFont.systemFont(
+            ofSize: 13 * textScale,
+            weight: .regular
+        )
+
+        launchBehaviorControl.font = actionFont
+        launchBehaviorStack.spacing = 6 * textScale
+
         addRuleButton.font = actionFont
         saveButton.font = actionFont
 

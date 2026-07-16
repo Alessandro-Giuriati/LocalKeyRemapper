@@ -32,6 +32,9 @@ final class StatusBarController: NSObject {
     private let resetTextSizeHandler:
         () -> Void
 
+    private let remappingStateChangeHandler:
+        (RemappingState) -> Void
+
     private var stateMenuItem:
         NSMenuItem?
 
@@ -50,7 +53,9 @@ final class StatusBarController: NSObject {
         decreaseTextSizeHandler:
             @escaping () -> Void,
         resetTextSizeHandler:
-            @escaping () -> Void
+            @escaping () -> Void,
+        remappingStateChangeHandler:
+            @escaping (RemappingState) -> Void
     ) {
         self.remappingController =
             remappingController
@@ -69,6 +74,9 @@ final class StatusBarController: NSObject {
 
         self.resetTextSizeHandler =
             resetTextSizeHandler
+
+        self.remappingStateChangeHandler =
+            remappingStateChangeHandler
 
         statusItem =
             NSStatusBar.system.statusItem(
@@ -225,6 +233,7 @@ final class StatusBarController: NSObject {
             [weak self] state in
 
             self?.updateMenu(for: state)
+            self?.remappingStateChangeHandler(state)
         }
     }
 

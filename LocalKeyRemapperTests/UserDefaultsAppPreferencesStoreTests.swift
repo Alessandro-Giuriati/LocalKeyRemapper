@@ -1,6 +1,6 @@
 //
 //  UserDefaultsAppPreferencesStoreTests.swift
-//  LocalKeyRemapper
+//  LocalKeyRemapperTests
 //
 //  Created by Alessandro Giuriati on 7/16/26.
 //
@@ -17,44 +17,104 @@ final class UserDefaultsAppPreferencesStoreTests:
     func testLoadReturnsDefaultPreferencesWhenNothingIsStored()
         throws
     {
-        let suiteName =
-            "UserDefaultsAppPreferencesStoreTests." +
-            UUID().uuidString
-
-        let userDefaults = try XCTUnwrap(
-            UserDefaults(
-                suiteName: suiteName
-            )
-        )
-
-        defer {
-            userDefaults.removePersistentDomain(
-                forName: suiteName
-            )
-        }
+        let context = try makeTestContext()
+        defer { context.cleanUp() }
 
         let defaultPreferences = AppPreferences(
-            enableRemappingAtLaunch: false
+            launchBehavior: .alwaysOff,
+            lastRemappingEnabled: false
         )
 
-        let store =
-            UserDefaultsAppPreferencesStore(
-                userDefaults: userDefaults,
-                defaultPreferences:
-                    defaultPreferences
-            )
-
-        let loadedPreferences =
-            try store.loadPreferences()
+        let store = UserDefaultsAppPreferencesStore(
+            userDefaults: context.userDefaults,
+            defaultPreferences: defaultPreferences
+        )
 
         XCTAssertEqual(
-            loadedPreferences,
+            try store.loadPreferences(),
             defaultPreferences
         )
     }
 
     func testSavedPreferencesCanBeLoadedByAnotherStore()
         throws
+    {
+        let context = try makeTestContext()
+        defer { context.cleanUp() }
+
+        let expectedPreferences = AppPreferences(
+            launchBehavior: .restoreLastState,
+            lastRemappingEnabled: true
+        )
+
+        let savingStore = UserDefaultsAppPreferencesStore(
+            userDefaults: context.userDefaults
+        )
+
+        try savingStore.savePreferences(
+            expectedPreferences
+        )
+
+        let loadingStore = UserDefaultsAppPreferencesStore(
+            userDefaults: context.userDefaults
+        )
+
+        XCTAssertEqual(
+            try loadingStore.loadPreferences(),
+            expectedPreferences
+        )
+    }
+
+    func testLegacyEnabledPreferenceMigratesToAlwaysOn()
+        throws
+    {
+        let context = try makeTestContext()
+        defer { context.cleanUp() }
+
+        try storeLegacyPreference(
+            true,
+            in: context.userDefaults
+        )
+
+        let store = UserDefaultsAppPreferencesStore(
+            userDefaults: context.userDefaults
+        )
+
+        XCTAssertEqual(
+            try store.loadPreferences(),
+            AppPreferences(
+                launchBehavior: .alwaysOn,
+                lastRemappingEnabled: false
+            )
+        )
+    }
+
+    func testLegacyDisabledPreferenceMigratesToAlwaysOff()
+        throws
+    {
+        let context = try makeTestContext()
+        defer { context.cleanUp() }
+
+        try storeLegacyPreference(
+            false,
+            in: context.userDefaults
+        )
+
+        let store = UserDefaultsAppPreferencesStore(
+            userDefaults: context.userDefaults
+        )
+
+        XCTAssertEqual(
+            try store.loadPreferences(),
+            AppPreferences(
+                launchBehavior: .alwaysOff,
+                lastRemappingEnabled: false
+            )
+        )
+    }
+
+    private func makeTestContext() throws
+        -> PreferencesStoreTestContext
     {
         let suiteName =
             "UserDefaultsAppPreferencesStoreTests." +
@@ -66,36 +126,46 @@ final class UserDefaultsAppPreferencesStoreTests:
             )
         )
 
-        defer {
-            userDefaults.removePersistentDomain(
-                forName: suiteName
-            )
-        }
+        return PreferencesStoreTestContext(
+            suiteName: suiteName,
+            userDefaults: userDefaults
+        )
+    }
 
-        let expectedPreferences = AppPreferences(
-            enableRemappingAtLaunch: true
+    private func storeLegacyPreference(
+        _ enableRemappingAtLaunch: Bool,
+        in userDefaults: UserDefaults
+    ) throws {
+        let legacyPreferences =
+            LegacyAppPreferences(
+                enableRemappingAtLaunch:
+                    enableRemappingAtLaunch
+            )
+
+        let data = try JSONEncoder().encode(
+            legacyPreferences
         )
 
-        let savingStore =
-            UserDefaultsAppPreferencesStore(
-                userDefaults: userDefaults
-            )
-
-        try savingStore.savePreferences(
-            expectedPreferences
+        userDefaults.set(
+            data,
+            forKey: "appPreferences.v1"
         )
+    }
+}
 
-        let loadingStore =
-            UserDefaultsAppPreferencesStore(
-                userDefaults: userDefaults
-            )
+private nonisolated struct LegacyAppPreferences:
+    Codable
+{
+    let enableRemappingAtLaunch: Bool
+}
 
-        let loadedPreferences =
-            try loadingStore.loadPreferences()
+private struct PreferencesStoreTestContext {
+    let suiteName: String
+    let userDefaults: UserDefaults
 
-        XCTAssertEqual(
-            loadedPreferences,
-            expectedPreferences
+    func cleanUp() {
+        userDefaults.removePersistentDomain(
+            forName: suiteName
         )
     }
 }
