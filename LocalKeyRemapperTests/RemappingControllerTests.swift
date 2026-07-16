@@ -8,7 +8,6 @@
 import Testing
 @testable import LocalKeyRemapper
 
-
 @Suite("Remapping Controller")
 struct RemappingControllerTests {
 
@@ -180,9 +179,10 @@ private nonisolated final class FakePermissionService:
     }
 }
 
-private nonisolated struct FakeRulesStore: RulesStore {
+@MainActor
+private final class FakeRulesStore: RulesStore {
 
-    private let rules: [RemapRule]
+    private var rules: [RemapRule]
     private let error: Error?
 
     init(
@@ -199,6 +199,16 @@ private nonisolated struct FakeRulesStore: RulesStore {
         }
 
         return rules
+    }
+
+    func saveRules(
+        _ rules: [RemapRule]
+    ) throws {
+        if let error {
+            throw error
+        }
+
+        self.rules = rules
     }
 }
 

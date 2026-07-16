@@ -30,16 +30,6 @@
 		BD8B099230078F1700D42025 /* LocalKeyRemapper.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = LocalKeyRemapper.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		BD8B09AA3007970300D42025 /* Exceptions for "LocalKeyRemapperTests" folder in "Copy Bundle Resources" phase from "LocalKeyRemapperTests" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = BD3F1DB92FBB52D6002684D0 /* Resources */;
-			membershipExceptions = (
-				RemappingControllerTests.swift,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BD3F1DAD2FBB52D1002684D0 /* LocalKeyRemapper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -48,9 +38,6 @@
 		};
 		BD3F1DBE2FBB52D6002684D0 /* LocalKeyRemapperTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				BD8B09AA3007970300D42025 /* Exceptions for "LocalKeyRemapperTests" folder in "Copy Bundle Resources" phase from "LocalKeyRemapperTests" target */,
-			);
 			path = LocalKeyRemapperTests;
 			sourceTree = "<group>";
 		};
