@@ -159,6 +159,160 @@ struct RemappingControllerTests {
         #expect(eventTapManager.startCallCount == 1)
         #expect(eventTapManager.stopCallCount == 1)
     }
+
+    @Test("Loading configured rules returns the stored rules")
+    @MainActor
+    func loadingConfiguredRulesReturnsStoredRules() throws {
+        let expectedRules = [
+            RemapRule(
+                sourceKeyCode: KeyCode.v,
+                destinationKeyCode: KeyCode.w
+            )
+        ]
+
+        let rulesStore = FakeRulesStore(
+            rules: expectedRules
+        )
+
+        let controller = RemappingController(
+            permissionService: FakePermissionService(
+                isGranted: true
+            ),
+            rulesStore: rulesStore,
+            remappingEngine: RemappingEngine(),
+            eventTapManager: FakeEventTapManager()
+        )
+
+        let loadedRules = try controller.loadConfiguredRules()
+
+        #expect(loadedRules == expectedRules)
+    }
+
+    @Test("Replacing configured rules updates the store and engine")
+    @MainActor
+    func replacingConfiguredRulesUpdatesStoreAndEngine() throws {
+        let rulesStore = FakeRulesStore(
+            rules: [
+                RemapRule(
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
+                )
+            ]
+        )
+
+        let remappingEngine = RemappingEngine()
+
+        let controller = RemappingController(
+            permissionService: FakePermissionService(
+                isGranted: true
+            ),
+            rulesStore: rulesStore,
+            remappingEngine: remappingEngine,
+            eventTapManager: FakeEventTapManager()
+        )
+
+        let replacementRules = [
+            RemapRule(
+                sourceKeyCode: KeyCode.w,
+                destinationKeyCode: KeyCode.v
+            )
+        ]
+
+        try controller.replaceConfiguredRules(
+            replacementRules
+        )
+
+        let storedRules = try rulesStore.loadRules()
+
+        #expect(storedRules == replacementRules)
+
+        #expect(
+            remappingEngine.decision(for: KeyCode.w)
+                == .replaceKeyCode(KeyCode.v)
+        )
+
+        #expect(
+            remappingEngine.decision(for: KeyCode.v)
+                == .passThrough
+        )
+    }
+
+    @Test("Beginning key capture pauses an enabled event tap")
+    @MainActor
+    func beginningKeyCapturePausesEnabledEventTap() {
+        let eventTapManager = FakeEventTapManager()
+
+        let controller = RemappingController(
+            permissionService: FakePermissionService(
+                isGranted: true
+            ),
+            rulesStore: FakeRulesStore(rules: []),
+            remappingEngine: RemappingEngine(),
+            eventTapManager: eventTapManager
+        )
+
+        controller.enable()
+        controller.beginKeyCapture()
+
+        #expect(controller.state == .enabled)
+        #expect(eventTapManager.pauseCallCount == 1)
+
+        controller.beginKeyCapture()
+
+        #expect(eventTapManager.pauseCallCount == 1)
+    }
+
+    @Test("Ending key capture resumes an enabled event tap")
+    @MainActor
+    func endingKeyCaptureResumesEnabledEventTap() {
+        let eventTapManager = FakeEventTapManager()
+
+        let controller = RemappingController(
+            permissionService: FakePermissionService(
+                isGranted: true
+            ),
+            rulesStore: FakeRulesStore(rules: []),
+            remappingEngine: RemappingEngine(),
+            eventTapManager: eventTapManager
+        )
+
+        controller.enable()
+        controller.beginKeyCapture()
+        controller.endKeyCapture()
+
+        #expect(eventTapManager.pauseCallCount == 1)
+        #expect(eventTapManager.resumeCallCount == 1)
+
+        controller.endKeyCapture()
+
+        #expect(eventTapManager.resumeCallCount == 1)
+    }
+
+    @Test("Enabling while key capture is active starts and pauses the tap")
+    @MainActor
+    func enablingDuringKeyCaptureStartsAndPausesEventTap() {
+        let eventTapManager = FakeEventTapManager()
+
+        let controller = RemappingController(
+            permissionService: FakePermissionService(
+                isGranted: true
+            ),
+            rulesStore: FakeRulesStore(rules: []),
+            remappingEngine: RemappingEngine(),
+            eventTapManager: eventTapManager
+        )
+
+        controller.beginKeyCapture()
+        controller.enable()
+
+        #expect(controller.state == .enabled)
+        #expect(eventTapManager.startCallCount == 1)
+        #expect(eventTapManager.pauseCallCount == 1)
+
+        controller.endKeyCapture()
+
+        #expect(eventTapManager.resumeCallCount == 1)
+    }
 }
 
 private nonisolated final class FakePermissionService:
@@ -182,7 +336,7 @@ private nonisolated final class FakePermissionService:
 @MainActor
 private final class FakeRulesStore: RulesStore {
 
-    private var rules: [RemapRule]
+    private(set) var rules: [RemapRule]
     private let error: Error?
 
     init(
@@ -222,6 +376,8 @@ private final class FakeEventTapManager: EventTapManaging {
 
     private(set) var startCallCount = 0
     private(set) var stopCallCount = 0
+    private(set) var pauseCallCount = 0
+    private(set) var resumeCallCount = 0
 
     private let shouldFailWhenStarting: Bool
 
@@ -229,8 +385,11 @@ private final class FakeEventTapManager: EventTapManaging {
         startCallCount > stopCallCount
     }
 
-    init(shouldFailWhenStarting: Bool = false) {
-        self.shouldFailWhenStarting = shouldFailWhenStarting
+    init(
+        shouldFailWhenStarting: Bool = false
+    ) {
+        self.shouldFailWhenStarting =
+            shouldFailWhenStarting
     }
 
     func start() throws {
@@ -243,6 +402,14 @@ private final class FakeEventTapManager: EventTapManaging {
 
     func stop() {
         stopCallCount += 1
+    }
+
+    func pause() {
+        pauseCallCount += 1
+    }
+
+    func resume() {
+        resumeCallCount += 1
     }
 }
 

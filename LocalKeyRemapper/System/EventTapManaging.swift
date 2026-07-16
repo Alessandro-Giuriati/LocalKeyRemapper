@@ -18,4 +18,11 @@ protocol EventTapManaging: AnyObject {
 
     /// Disables and completely removes the keyboard event tap.
     func stop()
+
+    /// Temporarily disables the installed event tap
+    /// without removing it from the run loop.
+    func pause()
+
+    /// Re-enables a temporarily paused event tap.
+    func resume()
 }

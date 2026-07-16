@@ -19,7 +19,8 @@ nonisolated enum EventTapError: Error, Equatable {
     case runLoopSourceCreationFailed
 }
 
-/// Creates, installs, and removes the keyboard event tap.
+/// Creates, installs, pauses, resumes, and removes
+/// the keyboard event tap.
 ///
 /// The event tap listens only for key-down and key-up events.
 /// It does not store, log, or transmit keyboard input.
@@ -30,6 +31,7 @@ final class EventTapManager: EventTapManaging {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var isPaused = false
 
     var isRunning: Bool {
         eventTap != nil && runLoopSource != nil
@@ -74,6 +76,7 @@ final class EventTapManager: EventTapManaging {
 
         self.eventTap = eventTap
         self.runLoopSource = runLoopSource
+        isPaused = false
 
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
@@ -111,6 +114,33 @@ final class EventTapManager: EventTapManaging {
 
         runLoopSource = nil
         eventTap = nil
+        isPaused = false
+    }
+
+    func pause() {
+        guard let eventTap, isRunning, !isPaused else {
+            return
+        }
+
+        CGEvent.tapEnable(
+            tap: eventTap,
+            enable: false
+        )
+
+        isPaused = true
+    }
+
+    func resume() {
+        guard let eventTap, isRunning, isPaused else {
+            return
+        }
+
+        CGEvent.tapEnable(
+            tap: eventTap,
+            enable: true
+        )
+
+        isPaused = false
     }
 
     private static let eventTapCallback: CGEventTapCallBack = {
@@ -177,7 +207,11 @@ final class EventTapManager: EventTapManaging {
     }
 
     private func reenableAfterTimeout() {
-        guard let eventTap, isRunning else {
+        guard
+            let eventTap,
+            isRunning,
+            !isPaused
+        else {
             return
         }
 

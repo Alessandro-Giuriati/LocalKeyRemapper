@@ -39,6 +39,8 @@ final class RemappingController: RemappingControlling {
     private let remappingEngine: RemappingEngine
     private let eventTapManager: EventTapManaging
 
+    private var isKeyCaptureActive = false
+
     private(set) var state: RemappingState = .disabled
 
     var onStateChange: ((RemappingState) -> Void)?
@@ -92,6 +94,10 @@ final class RemappingController: RemappingControlling {
             return
         }
 
+        if isKeyCaptureActive {
+            eventTapManager.pause()
+        }
+
         updateState(.enabled)
     }
 
@@ -108,6 +114,54 @@ final class RemappingController: RemappingControlling {
         case .disabled, .permissionRequired, .failed:
             enable()
         }
+    }
+
+    /// Returns the rules currently stored by the application.
+    func loadConfiguredRules() throws -> [RemapRule] {
+        try rulesStore.loadRules()
+    }
+
+    /// Replaces all configured rules.
+    ///
+    /// The prepared dictionary inside RemappingEngine is updated
+    /// immediately without restarting the event tap.
+    func replaceConfiguredRules(
+        _ rules: [RemapRule]
+    ) throws {
+        try rulesStore.saveRules(rules)
+        remappingEngine.replaceRules(rules)
+    }
+
+    /// Temporarily suspends remapping while the Settings
+    /// window captures a physical keyboard key.
+    func beginKeyCapture() {
+        guard !isKeyCaptureActive else {
+            return
+        }
+
+        isKeyCaptureActive = true
+
+        guard state == .enabled else {
+            return
+        }
+
+        eventTapManager.pause()
+    }
+
+    /// Ends keyboard capture and restores remapping
+    /// when the backend is still enabled.
+    func endKeyCapture() {
+        guard isKeyCaptureActive else {
+            return
+        }
+
+        isKeyCaptureActive = false
+
+        guard state == .enabled else {
+            return
+        }
+
+        eventTapManager.resume()
     }
 
     private func updateState(_ newState: RemappingState) {
