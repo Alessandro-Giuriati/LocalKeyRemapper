@@ -9,7 +9,7 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 
-/// A settings window that can intercept a key press only while
+/// A settings window that intercepts a key press only while
 /// the user is explicitly selecting a remapping key.
 ///
 /// The handler receives events only from this window.
@@ -31,31 +31,30 @@ private final class SettingsWindow: NSWindow {
     }
 }
 
-/// Manages the application settings window.
+/// Manages the application settings window and its editable
+/// collection of remapping rules.
 @MainActor
 final class SettingsWindowController:
     NSWindowController,
     NSWindowDelegate
 {
 
-    private enum CaptureTarget {
-        case source
-        case destination
-    }
-
     private let remappingController:
         RemappingSettingsControlling
 
-    private let sourceKeyButton = NSButton()
-    private let destinationKeyButton = NSButton()
+    private let rulesStackView = NSStackView()
+    private let addRuleButton = NSButton()
     private let saveButton = NSButton()
+
     private let statusLabel = NSTextField(
         wrappingLabelWithString: ""
     )
 
-    private var sourceKeyCode: CGKeyCode?
-    private var destinationKeyCode: CGKeyCode?
-    private var captureTarget: CaptureTarget?
+    private var ruleRows: [RemappingRuleRowView] = []
+
+    private var captureRow: RemappingRuleRowView?
+    private var captureField:
+        RemappingRuleRowView.KeyField?
 
     init(
         remappingController: RemappingSettingsControlling
@@ -66,13 +65,14 @@ final class SettingsWindowController:
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 560,
-                height: 310
+                width: 650,
+                height: 420
             ),
             styleMask: [
                 .titled,
                 .closable,
-                .miniaturizable
+                .miniaturizable,
+                .resizable
             ],
             backing: .buffered,
             defer: false
@@ -80,6 +80,12 @@ final class SettingsWindowController:
 
         window.title = "LocalKeyRemapper Settings"
         window.isReleasedWhenClosed = false
+
+        window.minSize = NSSize(
+            width: 600,
+            height: 360
+        )
+
         window.center()
 
         super.init(window: window)
@@ -91,7 +97,7 @@ final class SettingsWindowController:
         }
 
         configureContent()
-        loadConfiguredRule()
+        loadConfiguredRules()
     }
 
     required init?(coder: NSCoder) {
@@ -101,7 +107,7 @@ final class SettingsWindowController:
     }
 
     override func showWindow(_ sender: Any?) {
-        loadConfiguredRule()
+        loadConfiguredRules()
 
         super.showWindow(sender)
 
@@ -135,78 +141,82 @@ final class SettingsWindowController:
 
         let descriptionLabel = NSTextField(
             wrappingLabelWithString:
-                "Choose the physical source key and the key that macOS should receive."
+                "Choose the physical source keys and the keys that macOS should receive."
         )
 
         descriptionLabel.textColor =
             .secondaryLabelColor
 
-        let sourceLabel = NSTextField(
+        let sourceHeader = NSTextField(
             labelWithString: "Source key"
         )
 
-        let destinationLabel = NSTextField(
+        sourceHeader.font = NSFont.systemFont(
+            ofSize: 12,
+            weight: .medium
+        )
+
+        sourceHeader.textColor =
+            .secondaryLabelColor
+
+        let destinationHeader = NSTextField(
             labelWithString: "Destination key"
         )
 
-        configureKeyButton(
-            sourceKeyButton,
-            action: #selector(captureSourceKey)
+        destinationHeader.font = NSFont.systemFont(
+            ofSize: 12,
+            weight: .medium
         )
 
-        configureKeyButton(
-            destinationKeyButton,
-            action: #selector(captureDestinationKey)
-        )
+        destinationHeader.textColor =
+            .secondaryLabelColor
 
-        let sourceStack = NSStackView(
+        let spacer = NSView()
+
+        let headerStack = NSStackView(
             views: [
-                sourceLabel,
-                sourceKeyButton
+                sourceHeader,
+                spacer,
+                destinationHeader
             ]
         )
 
-        sourceStack.orientation = .vertical
-        sourceStack.alignment = .leading
-        sourceStack.spacing = 8
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .centerY
+        headerStack.spacing = 14
 
-        let destinationStack = NSStackView(
-            views: [
-                destinationLabel,
-                destinationKeyButton
-            ]
+        sourceHeader.widthAnchor.constraint(
+            equalToConstant: 160
+        ).isActive = true
+
+        spacer.widthAnchor.constraint(
+            equalToConstant: 18
+        ).isActive = true
+
+        destinationHeader.widthAnchor.constraint(
+            equalToConstant: 160
+        ).isActive = true
+
+        rulesStackView.orientation = .vertical
+        rulesStackView.alignment = .leading
+        rulesStackView.spacing = 10
+
+        addRuleButton.title = "Add Rule"
+        addRuleButton.image = NSImage(
+            systemSymbolName: "plus",
+            accessibilityDescription: "Add Rule"
         )
 
-        destinationStack.orientation = .vertical
-        destinationStack.alignment = .leading
-        destinationStack.spacing = 8
+        addRuleButton.imagePosition = .imageLeading
+        addRuleButton.bezelStyle = .rounded
+        addRuleButton.target = self
+        addRuleButton.action = #selector(addEmptyRule)
 
-        let arrowLabel = NSTextField(
-            labelWithString: "→"
-        )
-
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 24,
-            weight: .regular
-        )
-
-        let ruleStack = NSStackView(
-            views: [
-                sourceStack,
-                arrowLabel,
-                destinationStack
-            ]
-        )
-
-        ruleStack.orientation = .horizontal
-        ruleStack.alignment = .centerY
-        ruleStack.spacing = 18
-
-        saveButton.title = "Save Rule"
+        saveButton.title = "Save Rules"
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"
         saveButton.target = self
-        saveButton.action = #selector(saveRule)
+        saveButton.action = #selector(saveRules)
 
         statusLabel.textColor =
             .secondaryLabelColor
@@ -215,12 +225,24 @@ final class SettingsWindowController:
             ofSize: 12
         )
 
+        let actionsStack = NSStackView(
+            views: [
+                addRuleButton,
+                saveButton
+            ]
+        )
+
+        actionsStack.orientation = .horizontal
+        actionsStack.alignment = .centerY
+        actionsStack.spacing = 12
+
         let mainStack = NSStackView(
             views: [
                 titleLabel,
                 descriptionLabel,
-                ruleStack,
-                saveButton,
+                headerStack,
+                rulesStackView,
+                actionsStack,
                 statusLabel
             ]
         )
@@ -247,91 +269,149 @@ final class SettingsWindowController:
                     lessThanOrEqualTo:
                         contentView.trailingAnchor,
                     constant: -28
-                ),
-                sourceKeyButton.widthAnchor.constraint(
-                    equalToConstant: 170
-                ),
-                destinationKeyButton.widthAnchor.constraint(
-                    equalToConstant: 170
                 )
             ]
         )
     }
 
-    private func configureKeyButton(
-        _ button: NSButton,
-        action: Selector
-    ) {
-        button.title = "Choose Key…"
-        button.bezelStyle = .rounded
-        button.target = self
-        button.action = action
-    }
+    private func loadConfiguredRules() {
+        endKeyCapture()
+        removeAllRuleRows()
 
-    private func loadConfiguredRule() {
         do {
             let rules =
                 try remappingController
                     .loadConfiguredRules()
 
-            guard let rule = rules.first else {
-                sourceKeyCode = nil
-                destinationKeyCode = nil
-
-                updateButtonTitles()
-                updateSaveButton()
-
-                statusLabel.stringValue =
-                    "No remapping rule is currently configured."
-
-                return
+            for rule in rules {
+                addRuleRow(rule: rule)
             }
 
-            sourceKeyCode = rule.sourceKeyCode
-            destinationKeyCode =
-                rule.destinationKeyCode
+            if rules.isEmpty {
+                statusLabel.stringValue =
+                    "No remapping rules are currently configured."
+            } else {
+                statusLabel.stringValue =
+                    "Changes are stored in memory until the app quits."
+            }
 
-            updateButtonTitles()
             updateSaveButton()
-
-            statusLabel.stringValue =
-                "Changes are stored in memory until the app quits."
+            resizeWindowToFitRows()
         } catch {
             statusLabel.stringValue =
-                "The configured rule could not be loaded."
+                "The configured rules could not be loaded."
 
             saveButton.isEnabled = false
         }
     }
 
-    @objc
-    private func captureSourceKey() {
-        beginKeyCapture(for: .source)
-    }
-
-    @objc
-    private func captureDestinationKey() {
-        beginKeyCapture(for: .destination)
-    }
-
-    private func beginKeyCapture(
-        for target: CaptureTarget
+    private func addRuleRow(
+        rule: RemapRule? = nil
     ) {
-        if captureTarget != nil {
+        let row = RemappingRuleRowView(
+            rule: rule
+        )
+
+        row.onSourceKeyRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?.beginKeyCapture(
+                in: row,
+                field: .source
+            )
+        }
+
+        row.onDestinationKeyRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?.beginKeyCapture(
+                in: row,
+                field: .destination
+            )
+        }
+
+        row.onRemoveRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?.removeRuleRow(row)
+        }
+
+        ruleRows.append(row)
+        rulesStackView.addArrangedSubview(row)
+
+        updateSaveButton()
+        resizeWindowToFitRows()
+    }
+
+    private func removeRuleRow(
+        _ row: RemappingRuleRowView
+    ) {
+        if captureRow === row {
             endKeyCapture()
         }
 
-        captureTarget = target
+        guard let index = ruleRows.firstIndex(
+            where: { $0 === row }
+        ) else {
+            return
+        }
+
+        ruleRows.remove(at: index)
+        rulesStackView.removeArrangedSubview(row)
+        row.removeFromSuperview()
+
+        updateSaveButton()
+        resizeWindowToFitRows()
+
+        statusLabel.stringValue =
+            "Rule removed. Save the rules to apply the change."
+    }
+
+    private func removeAllRuleRows() {
+        for row in ruleRows {
+            rulesStackView.removeArrangedSubview(row)
+            row.removeFromSuperview()
+        }
+
+        ruleRows.removeAll()
+    }
+
+    @objc
+    private func addEmptyRule() {
+        addRuleRow()
+
+        statusLabel.stringValue =
+            "Choose both keys for the new rule."
+    }
+
+    private func beginKeyCapture(
+        in row: RemappingRuleRowView,
+        field: RemappingRuleRowView.KeyField
+    ) {
+        if captureRow != nil {
+            endKeyCapture()
+        }
+
+        captureRow = row
+        captureField = field
+
         remappingController.beginKeyCapture()
 
-        switch target {
-        case .source:
-            sourceKeyButton.title = "Press a key…"
-
-        case .destination:
-            destinationKeyButton.title =
-                "Press a key…"
-        }
+        row.showCapturePrompt(
+            for: field
+        )
 
         statusLabel.stringValue =
             "Press a key. Press Escape to cancel."
@@ -340,7 +420,10 @@ final class SettingsWindowController:
     private func handleKeyDown(
         _ event: NSEvent
     ) -> Bool {
-        guard let captureTarget else {
+        guard
+            let captureRow,
+            let captureField
+        else {
             return false
         }
 
@@ -355,96 +438,150 @@ final class SettingsWindowController:
             return true
         }
 
-        switch captureTarget {
-        case .source:
-            sourceKeyCode = keyCode
-
-        case .destination:
-            destinationKeyCode = keyCode
-        }
+        captureRow.setKeyCode(
+            keyCode,
+            for: captureField
+        )
 
         endKeyCapture()
-        updateButtonTitles()
         updateSaveButton()
 
         statusLabel.stringValue =
-            "Key selected. Save the rule to apply it."
+            "Key selected. Save the rules to apply the change."
 
         return true
     }
 
     private func endKeyCapture() {
-        guard captureTarget != nil else {
+        guard captureRow != nil else {
             return
         }
 
-        captureTarget = nil
+        captureRow?.restoreButtonTitles()
+
+        captureRow = nil
+        captureField = nil
+
         remappingController.endKeyCapture()
-
-        updateButtonTitles()
-    }
-
-    private func updateButtonTitles() {
-        if let sourceKeyCode {
-            sourceKeyButton.title =
-                KeyCodeDisplayName.name(
-                    for: sourceKeyCode
-                )
-        } else {
-            sourceKeyButton.title = "Choose Key…"
-        }
-
-        if let destinationKeyCode {
-            destinationKeyButton.title =
-                KeyCodeDisplayName.name(
-                    for: destinationKeyCode
-                )
-        } else {
-            destinationKeyButton.title =
-                "Choose Key…"
-        }
     }
 
     private func updateSaveButton() {
         saveButton.isEnabled =
-            sourceKeyCode != nil
-            && destinationKeyCode != nil
+            ruleRows.allSatisfy {
+                $0.rule != nil
+            }
     }
 
     @objc
-    private func saveRule() {
-        guard
-            let sourceKeyCode,
-            let destinationKeyCode
-        else {
+    private func saveRules() {
+        let rules = ruleRows.compactMap {
+            $0.rule
+        }
+
+        guard rules.count == ruleRows.count else {
+            statusLabel.stringValue =
+                "Complete every rule before saving."
+
             return
         }
 
-        let rule = RemapRule(
-            sourceKeyCode: sourceKeyCode,
-            destinationKeyCode:
-                destinationKeyCode
-        )
+        guard !containsDuplicateSourceKeys(
+            in: rules
+        ) else {
+            statusLabel.stringValue =
+                "Each source key can appear only once."
+
+            return
+        }
+
+        guard !containsIdentityRule(
+            in: rules
+        ) else {
+            statusLabel.stringValue =
+                "A source and destination key cannot be identical."
+
+            return
+        }
 
         do {
             try remappingController
-                .replaceConfiguredRules([rule])
+                .replaceConfiguredRules(rules)
 
-            let sourceName =
-                KeyCodeDisplayName.name(
-                    for: sourceKeyCode
-                )
+            switch rules.count {
+            case 0:
+                statusLabel.stringValue =
+                    "All remapping rules were removed."
 
-            let destinationName =
-                KeyCodeDisplayName.name(
-                    for: destinationKeyCode
-                )
+            case 1:
+                statusLabel.stringValue =
+                    "1 remapping rule applied."
 
-            statusLabel.stringValue =
-                "Rule applied: \(sourceName) → \(destinationName)"
+            default:
+                statusLabel.stringValue =
+                    "\(rules.count) remapping rules applied."
+            }
         } catch {
             statusLabel.stringValue =
-                "The remapping rule could not be saved."
+                "The remapping rules could not be saved."
         }
+    }
+
+    private func containsDuplicateSourceKeys(
+        in rules: [RemapRule]
+    ) -> Bool {
+        let sourceKeyCodes = rules.map {
+            $0.sourceKeyCode
+        }
+
+        return Set(sourceKeyCodes).count
+            != sourceKeyCodes.count
+    }
+
+    private func containsIdentityRule(
+        in rules: [RemapRule]
+    ) -> Bool {
+        rules.contains {
+            $0.sourceKeyCode
+                == $0.destinationKeyCode
+        }
+    }
+
+    private func resizeWindowToFitRows() {
+        guard let window else {
+            return
+        }
+
+        let rowHeight: CGFloat = 42
+        let baseHeight: CGFloat = 350
+
+        let requestedHeight =
+            baseHeight
+            + CGFloat(ruleRows.count) * rowHeight
+
+        let maximumHeight =
+            window.screen?.visibleFrame.height
+            ?? 700
+
+        let newHeight = min(
+            max(requestedHeight, 380),
+            maximumHeight
+        )
+
+        guard abs(window.frame.height - newHeight) > 1 else {
+            return
+        }
+
+        var frame = window.frame
+
+        let currentTop = frame.maxY
+
+        frame.size.height = newHeight
+        frame.origin.y = currentTop - newHeight
+
+        window.setFrame(
+            frame,
+            display: true,
+            animate: window.isVisible
+        )
     }
 }
