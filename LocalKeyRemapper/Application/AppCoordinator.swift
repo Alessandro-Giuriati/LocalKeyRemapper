@@ -45,8 +45,19 @@ final class AppCoordinator {
     /// Starts the application user interface.
     func start() {
         statusBarController = StatusBarController(
-            remappingController: remappingController
+            remappingController: remappingController,
+            accessibilitySettingsOpener: permissionService
         )
+    }
+
+    /// Checks whether Accessibility permission was granted
+    /// after the application becomes active again.
+    func applicationDidBecomeActive() {
+        guard remappingController.state == .permissionRequired else {
+            return
+        }
+
+        remappingController.enable()
     }
 
     /// Stops active system components before the application terminates.

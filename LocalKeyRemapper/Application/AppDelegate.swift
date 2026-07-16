@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appCoordinator.start()
     }
 
+    func applicationDidBecomeActive(
+        _ notification: Notification
+    ) {
+        appCoordinator?.applicationDidBecomeActive()
+    }
+
     func applicationWillTerminate(
         _ notification: Notification
     ) {

@@ -13,12 +13,17 @@ final class StatusBarController: NSObject {
 
     private let statusItem: NSStatusItem
     private let remappingController: RemappingControlling
+    private let accessibilitySettingsOpener: AccessibilitySettingsOpening
 
     private var stateMenuItem: NSMenuItem?
     private var toggleMenuItem: NSMenuItem?
 
-    init(remappingController: RemappingControlling) {
+    init(
+        remappingController: RemappingControlling,
+        accessibilitySettingsOpener: AccessibilitySettingsOpening
+    ) {
         self.remappingController = remappingController
+        self.accessibilitySettingsOpener = accessibilitySettingsOpener
 
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.squareLength
@@ -67,7 +72,7 @@ final class StatusBarController: NSObject {
 
         let toggleMenuItem = NSMenuItem(
             title: "Enable Remapping",
-            action: #selector(toggleRemapping),
+            action: #selector(performPrimaryAction),
             keyEquivalent: ""
         )
 
@@ -117,7 +122,7 @@ final class StatusBarController: NSObject {
 
         case .permissionRequired:
             stateMenuItem?.title = "Accessibility Permission Required"
-            toggleMenuItem?.title = "Check Permission and Enable"
+            toggleMenuItem?.title = "Open Accessibility Settings…"
             toggleMenuItem?.isEnabled = true
 
         case .failed(let failure):
@@ -139,8 +144,23 @@ final class StatusBarController: NSObject {
     }
 
     @objc
-    private func toggleRemapping() {
+    private func performPrimaryAction() {
+        if remappingController.state == .permissionRequired {
+            checkPermissionOrOpenSettings()
+            return
+        }
+
         remappingController.toggle()
+    }
+
+    private func checkPermissionOrOpenSettings() {
+        remappingController.enable()
+
+        guard remappingController.state == .permissionRequired else {
+            return
+        }
+
+        accessibilitySettingsOpener.openAccessibilitySettings()
     }
 
     @objc

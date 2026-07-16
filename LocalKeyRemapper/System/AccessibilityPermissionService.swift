@@ -5,6 +5,7 @@
 //  Created by Alessandro Giuriati on 7/15/26.
 //
 
+import AppKit
 import ApplicationServices
 import CoreFoundation
 
@@ -24,13 +25,23 @@ nonisolated protocol AccessibilityPermissionChecking {
     func requestAccess() -> Bool
 }
 
+/// Defines the operation required to open the Accessibility
+/// section of System Settings.
+@MainActor
+protocol AccessibilitySettingsOpening: AnyObject {
+
+    /// Opens the Accessibility privacy settings in macOS.
+    func openAccessibilitySettings()
+}
+
 /// Checks and requests the Accessibility permission required
 /// by the keyboard remapping system.
 ///
 /// This service does not intercept keyboard events and does not
 /// collect, store, or log keyboard input.
 nonisolated final class AccessibilityPermissionService:
-    AccessibilityPermissionChecking {
+    AccessibilityPermissionChecking,
+    AccessibilitySettingsOpening {
 
     var isGranted: Bool {
         AXIsProcessTrustedWithOptions(nil)
@@ -43,5 +54,19 @@ nonisolated final class AccessibilityPermissionService:
         ] as CFDictionary
 
         return AXIsProcessTrustedWithOptions(options)
+    }
+
+    @MainActor
+    func openAccessibilitySettings() {
+        guard let settingsURL = URL(
+            string:
+                "x-apple.systempreferences:" +
+                "com.apple.preference.security?" +
+                "Privacy_Accessibility"
+        ) else {
+            return
+        }
+
+        NSWorkspace.shared.open(settingsURL)
     }
 }
