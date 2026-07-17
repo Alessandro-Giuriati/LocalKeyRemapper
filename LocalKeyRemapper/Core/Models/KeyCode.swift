@@ -10,10 +10,22 @@ import CoreGraphics
 
 /// Physical key codes used by the application.
 ///
-/// Readable names such as `.v` and `.w` prevent unexplained
-/// numeric values from being scattered throughout the project.
+/// Readable names prevent unexplained numeric values from being
+/// scattered throughout the project.
 nonisolated enum KeyCode {
 
-    static let v = CGKeyCode(kVK_ANSI_V)
-    static let w = CGKeyCode(kVK_ANSI_W)
+    static let b =
+        CGKeyCode(kVK_ANSI_B)
+
+    static let j =
+        CGKeyCode(kVK_ANSI_J)
+
+    static let n =
+        CGKeyCode(kVK_ANSI_N)
+
+    static let v =
+        CGKeyCode(kVK_ANSI_V)
+
+    static let w =
+        CGKeyCode(kVK_ANSI_W)
 }

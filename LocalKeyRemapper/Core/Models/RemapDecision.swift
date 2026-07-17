@@ -9,11 +9,24 @@ import CoreGraphics
 
 /// Represents the decision made by the remapping engine
 /// for a specific keyboard event.
-nonisolated enum RemapDecision: Equatable {
-
-    /// The key does not match any rule and must remain unchanged.
+nonisolated enum RemapDecision:
+    Equatable
+{
+    /// The keyboard event must remain unchanged.
     case passThrough
 
-    /// The original key code must be replaced.
-    case replaceKeyCode(CGKeyCode)
+    /// The source must be replaced by a complete key combination.
+    case replaceWith(KeyCombination)
+
+    /// Compatibility helper for tests and code that only work with
+    /// unmodified key codes.
+    static func replaceKeyCode(
+        _ keyCode: CGKeyCode
+    ) -> RemapDecision {
+        .replaceWith(
+            KeyCombination(
+                keyCode: keyCode
+            )
+        )
+    }
 }

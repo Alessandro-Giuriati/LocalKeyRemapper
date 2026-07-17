@@ -5,6 +5,7 @@
 //  Created by Alessandro Giuriati on 7/16/26.
 //
 
+import CoreGraphics
 import Foundation
 import XCTest
 @testable import LocalKeyRemapper
@@ -13,24 +14,14 @@ import XCTest
 final class UserDefaultsRulesStoreTests:
     XCTestCase
 {
-
     func testLoadReturnsDefaultRulesWhenNothingIsStored()
         throws
     {
-        let suiteName =
-            "UserDefaultsRulesStoreTests." +
-            UUID().uuidString
-
-        let userDefaults = try XCTUnwrap(
-            UserDefaults(
-                suiteName: suiteName
-            )
-        )
+        let context =
+            try makeContext()
 
         defer {
-            userDefaults.removePersistentDomain(
-                forName: suiteName
-            )
+            context.cleanUp()
         }
 
         let defaultRules = [
@@ -45,58 +36,83 @@ final class UserDefaultsRulesStoreTests:
         let store =
             UserDefaultsRulesStore(
                 userDefaults:
-                    userDefaults,
+                    context.userDefaults,
                 defaultRules:
                     defaultRules
             )
 
-        let loadedRules =
-            try store.loadRules()
-
         XCTAssertEqual(
-            loadedRules,
+            try store.loadRules(),
             defaultRules
         )
     }
 
-    func testSavedRulesCanBeLoadedByAnotherStore()
+    func testAdvancedRulesCanBeSavedAndLoaded()
         throws
     {
-        let suiteName =
-            "UserDefaultsRulesStoreTests." +
-            UUID().uuidString
-
-        let userDefaults = try XCTUnwrap(
-            UserDefaults(
-                suiteName: suiteName
-            )
-        )
+        let context =
+            try makeContext()
 
         defer {
-            userDefaults.removePersistentDomain(
-                forName: suiteName
-            )
+            context.cleanUp()
         }
 
         let expectedRules = [
             RemapRule(
-                sourceKeyCode:
-                    KeyCode.v,
-                destinationKeyCode:
-                    KeyCode.w
+                source:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.v
+                    ),
+                destination:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.w
+                    ),
+                matchingMode:
+                    .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source:
+                            KeyCombination(
+                                keyCode:
+                                    KeyCode.v,
+                                modifiers:
+                                    [.command]
+                            ),
+                        action:
+                            .passThrough
+                    )
+                ]
             ),
             RemapRule(
-                sourceKeyCode:
-                    KeyCode.w,
-                destinationKeyCode:
-                    KeyCode.v
+                source:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.n,
+                        modifiers:
+                            [
+                                .control,
+                                .option
+                            ]
+                    ),
+                destination:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.j,
+                        modifiers:
+                            [
+                                .control,
+                                .command
+                            ]
+                    )
             )
         ]
 
         let savingStore =
             UserDefaultsRulesStore(
                 userDefaults:
-                    userDefaults,
+                    context.userDefaults,
                 defaultRules: []
             )
 
@@ -107,40 +123,28 @@ final class UserDefaultsRulesStoreTests:
         let loadingStore =
             UserDefaultsRulesStore(
                 userDefaults:
-                    userDefaults,
+                    context.userDefaults,
                 defaultRules: []
             )
 
-        let loadedRules =
-            try loadingStore.loadRules()
-
         XCTAssertEqual(
-            loadedRules,
+            try loadingStore.loadRules(),
             expectedRules
         )
     }
 
-    func testEmptyRuleCollectionIsPersisted()
+    func testLegacyStoredRulesAreMigratedToExactRules()
         throws
     {
-        let suiteName =
-            "UserDefaultsRulesStoreTests." +
-            UUID().uuidString
-
-        let userDefaults = try XCTUnwrap(
-            UserDefaults(
-                suiteName: suiteName
-            )
-        )
+        let context =
+            try makeContext()
 
         defer {
-            userDefaults.removePersistentDomain(
-                forName: suiteName
-            )
+            context.cleanUp()
         }
 
-        let defaultRules = [
-            RemapRule(
+        let legacyRules = [
+            LegacyRemapRule(
                 sourceKeyCode:
                     KeyCode.v,
                 destinationKeyCode:
@@ -148,22 +152,108 @@ final class UserDefaultsRulesStoreTests:
             )
         ]
 
+        let data = try JSONEncoder()
+            .encode(legacyRules)
+
+        context.userDefaults.set(
+            data,
+            forKey:
+                "remappingRules.v1"
+        )
+
         let store =
             UserDefaultsRulesStore(
                 userDefaults:
-                    userDefaults,
-                defaultRules:
-                    defaultRules
+                    context.userDefaults,
+                defaultRules: []
+            )
+
+        XCTAssertEqual(
+            try store.loadRules(),
+            [
+                RemapRule(
+                    sourceKeyCode:
+                        KeyCode.v,
+                    destinationKeyCode:
+                        KeyCode.w
+                )
+            ]
+        )
+    }
+
+    func testEmptyRuleCollectionIsPersisted()
+        throws
+    {
+        let context =
+            try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let store =
+            UserDefaultsRulesStore(
+                userDefaults:
+                    context.userDefaults,
+                defaultRules: [
+                    RemapRule(
+                        sourceKeyCode:
+                            KeyCode.v,
+                        destinationKeyCode:
+                            KeyCode.w
+                    )
+                ]
             )
 
         try store.saveRules([])
 
-        let loadedRules =
-            try store.loadRules()
-
         XCTAssertEqual(
-            loadedRules,
+            try store.loadRules(),
             []
+        )
+    }
+
+    private func makeContext()
+        throws -> TestUserDefaultsContext
+    {
+        let suiteName =
+            "UserDefaultsRulesStoreTests." +
+            UUID().uuidString
+
+        let userDefaults =
+            try XCTUnwrap(
+                UserDefaults(
+                    suiteName:
+                        suiteName
+                )
+            )
+
+        return TestUserDefaultsContext(
+            suiteName:
+                suiteName,
+            userDefaults:
+                userDefaults
+        )
+    }
+}
+
+private nonisolated struct LegacyRemapRule:
+    Codable
+{
+    let sourceKeyCode:
+        CGKeyCode
+
+    let destinationKeyCode:
+        CGKeyCode
+}
+
+private struct TestUserDefaultsContext {
+    let suiteName: String
+    let userDefaults: UserDefaults
+
+    func cleanUp() {
+        userDefaults.removePersistentDomain(
+            forName: suiteName
         )
     }
 }
