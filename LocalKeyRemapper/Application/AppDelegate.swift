@@ -15,17 +15,37 @@ final class AppDelegate:
     private var appCoordinator:
         AppCoordinator?
 
+    /// Unit tests are injected into the application process.
+    ///
+    /// The application interface and system integrations are not started
+    /// while that process is acting only as an XCTest host.
+    private var isRunningUnitTests:
+        Bool
+    {
+        ProcessInfo
+            .processInfo
+            .environment[
+                "XCTestConfigurationFilePath"
+            ] != nil
+    }
+
     func applicationDidFinishLaunching(
         _ notification:
             Notification
     ) {
-        // LocalKeyRemapper is now a regular windowed macOS application.
-        //
-        // A regular activation policy keeps the application visible
-        // in the Dock and provides the standard application menu bar.
-        NSApplication.shared.setActivationPolicy(
-            .regular
-        )
+        guard !isRunningUnitTests else {
+            NSApplication.shared
+                .setActivationPolicy(
+                    .prohibited
+                )
+
+            return
+        }
+
+        NSApplication.shared
+            .setActivationPolicy(
+                .regular
+            )
 
         let appCoordinator =
             AppCoordinator()
