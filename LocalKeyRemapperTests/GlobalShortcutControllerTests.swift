@@ -1,6 +1,6 @@
 //
 //  GlobalShortcutControllerTests.swift
-//  LocalKeyRemapper
+//  LocalKeyRemapperTests
 //
 //  Created by Alessandro Giuriati on 7/17/26.
 //
@@ -9,416 +9,738 @@ import XCTest
 @testable import LocalKeyRemapper
 
 @MainActor
-final class GlobalShortcutControllerTests:
+final class GlobalShortcutConfigurationControllerTests:
     XCTestCase
 {
-    func testStartRegistersStoredShortcut()
+    func testStartRegistersStoredToggleConfiguration()
         throws
     {
         let shortcut =
-            makeShortcut()
+            makeToggleShortcut()
 
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    shortcut
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        shortcut
+                    )
             )
 
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {}
-            )
-
-        try controller.start()
+        try context.controller.start()
 
         XCTAssertEqual(
-            shortcutManager
-                .registeredShortcut,
-            shortcut
-        )
-
-        XCTAssertEqual(
-            shortcutManager
-                .registerCallCount,
-            1
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            [
+                GlobalShortcutRegistration(
+                    action:
+                        .toggle,
+                    shortcut:
+                        shortcut
+                )
+            ]
         )
     }
 
-    func testStartWithoutShortcutRemovesRegistration()
+    func testStartRegistersSeparateConfiguration()
         throws
     {
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    nil
+        let enableShortcut =
+            makeEnableShortcut()
+
+        let disableShortcut =
+            makeDisableShortcut()
+
+        let configuration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        enableShortcut,
+                    disable:
+                        disableShortcut
+                )
+
+        let context =
+            makeContext(
+                configuration:
+                    configuration
             )
 
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {}
-            )
-
-        try controller.start()
-
-        XCTAssertNil(
-            shortcutManager
-                .registeredShortcut
-        )
+        try context.controller.start()
 
         XCTAssertEqual(
-            shortcutManager
-                .unregisterCallCount,
-            1
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            configuration.registrations
         )
     }
-    
-    func testRegisteredShortcutPerformsAction()
+
+    func testDisabledConfigurationRemovesRegistrations()
         throws
     {
-        var actionCallCount = 0
-
-        let shortcut =
-            makeShortcut()
-
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    shortcut
+        let context =
+            makeContext(
+                configuration:
+                    .disabled
             )
 
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {
-                    actionCallCount += 1
+        try context
+            .shortcutManager
+            .register(
+                [
+                    GlobalShortcutRegistration(
+                        action:
+                            .toggle,
+                        shortcut:
+                            makeToggleShortcut()
+                    )
+                ],
+                actionHandler: {
+                    _ in
                 }
             )
 
-        try controller.start()
+        try context.controller.start()
 
-        shortcutManager
-            .performRegisteredAction()
-
-        XCTAssertEqual(
-            actionCallCount,
-            1
+        XCTAssertTrue(
+            context
+                .shortcutManager
+                .registeredRegistrations
+                .isEmpty
         )
     }
 
-    func testSettingShortcutRegistersAndPersistsIt()
+    func testRegisteredActionsAreForwarded()
         throws
     {
-        let shortcut =
-            makeShortcut()
+        var receivedActions:
+            [GlobalShortcutAction] = []
 
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    .standard
+        let context =
+            makeContext(
+                configuration:
+                    .separate(
+                        enable:
+                            makeEnableShortcut(),
+                        disable:
+                            makeDisableShortcut()
+                    ),
+                actionHandler: {
+                    action in
+
+                    receivedActions.append(
+                        action
+                    )
+                }
             )
 
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore
+        try context.controller.start()
+
+        context
+            .shortcutManager
+            .perform(
+                .enable
             )
 
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {}
+        context
+            .shortcutManager
+            .perform(
+                .disable
             )
 
-        try controller.setShortcut(
-            shortcut
+        XCTAssertEqual(
+            receivedActions,
+            [
+                .enable,
+                .disable
+            ]
+        )
+    }
+
+    func testSetConfigurationRegistersAndPersistsIt()
+        throws
+    {
+        let newConfiguration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        makeEnableShortcut(),
+                    disable:
+                        makeDisableShortcut()
+                )
+
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        makeToggleShortcut()
+                    )
+            )
+
+        try context.controller.setConfiguration(
+            newConfiguration
         )
 
         XCTAssertEqual(
-            shortcutManager
-                .registeredShortcut,
-            shortcut
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            newConfiguration.registrations
         )
 
         XCTAssertEqual(
-            preferencesController
+            context
+                .preferencesController
                 .preferences
-                .toggleShortcut,
-            shortcut
+                .shortcutConfiguration,
+            newConfiguration
         )
 
         XCTAssertEqual(
-            preferencesStore
+            context
+                .preferencesStore
                 .saveCallCount,
             1
         )
     }
 
-    func testClearingShortcutUnregistersAndPersistsNil()
+    func testIdenticalEnableAndDisableShortcutsAreRejected()
         throws
     {
-        let shortcut =
-            makeShortcut()
+        let sharedShortcut =
+            makeEnableShortcut()
 
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    shortcut
-            )
-
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        try shortcutManager.register(
-            shortcut,
-            action: {}
-        )
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {}
-            )
-
-        try controller.setShortcut(
-            nil
-        )
-
-        XCTAssertNil(
-            shortcutManager
-                .registeredShortcut
-        )
-
-        XCTAssertNil(
-            preferencesController
-                .preferences
-                .toggleShortcut
-        )
-    }
-
-    func testRegistrationFailureKeepsPreviousPreference()
-        throws
-    {
-        let previousShortcut =
-            makeShortcut()
-
-        let newShortcut =
-            KeyCombination(
-                keyCode:
-                    KeyCode.w,
-                modifiers: [
-                    .control,
-                    .command
-                ]
-            )
-
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    previousShortcut
-            )
-
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        try shortcutManager.register(
-            previousShortcut,
-            action: {}
-        )
-
-        shortcutManager
-            .nextRegistrationError =
-                GlobalShortcutTestError
-                    .expected
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                action: {}
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        makeToggleShortcut()
+                    )
             )
 
         XCTAssertThrowsError(
-            try controller.setShortcut(
-                newShortcut
+            try context.controller
+                .setConfiguration(
+                    .separate(
+                        enable:
+                            sharedShortcut,
+                        disable:
+                            sharedShortcut
+                    )
+                )
+        ) {
+            error in
+
+            XCTAssertEqual(
+                error as?
+                    GlobalShortcutConfigurationError,
+                .duplicateShortcut
             )
+        }
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registerCallCount,
+            0
         )
 
         XCTAssertEqual(
-            preferencesController
-                .preferences
-                .toggleShortcut,
-            previousShortcut
-        )
-
-        XCTAssertEqual(
-            shortcutManager
-                .registeredShortcut,
-            previousShortcut
-        )
-
-        XCTAssertEqual(
-            preferencesStore
+            context
+                .preferencesStore
                 .saveCallCount,
             0
         )
     }
 
-    func testPersistenceFailureRestoresPreviousRegistration()
+    func testShortcutWithOneModifierIsAccepted()
         throws
     {
-        let previousShortcut =
-            makeShortcut()
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        makeToggleShortcut()
+                    )
+            )
 
-        let newShortcut =
+        let shortcut =
             KeyCombination(
                 keyCode:
-                    KeyCode.w,
-                modifiers: [
-                    .option,
-                    .command
+                    KeyCode.r,
+                modifiers:
+                    [
+                        .command
+                    ]
+            )
+
+        try context.controller
+            .setConfiguration(
+                .toggle(
+                    shortcut
+                )
+            )
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            [
+                GlobalShortcutRegistration(
+                    action:
+                        .toggle,
+                    shortcut:
+                        shortcut
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            context
+                .preferencesStore
+                .saveCallCount,
+            1
+        )
+    }
+
+    func testShortcutWithoutModifiersIsRejected()
+        throws
+    {
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        makeToggleShortcut()
+                    )
+            )
+
+        let unsafeShortcut =
+            KeyCombination(
+                keyCode:
+                    KeyCode.r
+            )
+
+        XCTAssertThrowsError(
+            try context.controller
+                .setConfiguration(
+                    .toggle(
+                        unsafeShortcut
+                    )
+                )
+        ) {
+            error in
+
+            XCTAssertEqual(
+                error as?
+                    GlobalShortcutConfigurationError,
+                .insufficientModifiers(
+                    .toggle
+                )
+            )
+        }
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registerCallCount,
+            0
+        )
+
+        XCTAssertEqual(
+            context
+                .preferencesStore
+                .saveCallCount,
+            0
+        )
+    }
+
+    func testRegistrationFailureRestoresPreviousConfiguration()
+        throws
+    {
+        let previousConfiguration =
+            RemappingShortcutConfiguration
+                .toggle(
+                    makeToggleShortcut()
+                )
+
+        let newConfiguration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        makeEnableShortcut(),
+                    disable:
+                        makeDisableShortcut()
+                )
+
+        let context =
+            makeContext(
+                configuration:
+                    previousConfiguration
+            )
+
+        try context.controller.start()
+
+        context
+            .shortcutManager
+            .registrationErrors =
+                [
+                    GlobalShortcutTestError
+                        .expected
+                ]
+
+        XCTAssertThrowsError(
+            try context.controller
+                .setConfiguration(
+                    newConfiguration
+                )
+        )
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            previousConfiguration
+                .registrations
+        )
+
+        XCTAssertEqual(
+            context
+                .preferencesController
+                .preferences
+                .shortcutConfiguration,
+            previousConfiguration
+        )
+
+        XCTAssertEqual(
+            context
+                .preferencesStore
+                .saveCallCount,
+            0
+        )
+    }
+
+    func testPersistenceFailureRestoresPreviousConfiguration()
+        throws
+    {
+        let previousConfiguration =
+            RemappingShortcutConfiguration
+                .toggle(
+                    makeToggleShortcut()
+                )
+
+        let newConfiguration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        makeEnableShortcut(),
+                    disable:
+                        makeDisableShortcut()
+                )
+
+        let context =
+            makeContext(
+                configuration:
+                    previousConfiguration
+            )
+
+        try context.controller.start()
+
+        context
+            .preferencesStore
+            .saveError =
+                GlobalShortcutTestError
+                    .expected
+
+        XCTAssertThrowsError(
+            try context.controller
+                .setConfiguration(
+                    newConfiguration
+                )
+        )
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            previousConfiguration
+                .registrations
+        )
+
+        XCTAssertEqual(
+            context
+                .preferencesController
+                .preferences
+                .shortcutConfiguration,
+            previousConfiguration
+        )
+    }
+
+    func testSeparateConfigurationProtectsBothShortcutSources()
+        throws
+    {
+        let enableShortcut =
+            makeEnableShortcut()
+
+        let disableShortcut =
+            makeDisableShortcut()
+
+        let engine =
+            RemappingEngine(
+                rules: [
+                    RemapRule(
+                        source:
+                            enableShortcut,
+                        destination:
+                            makeDestinationShortcut()
+                    ),
+                    RemapRule(
+                        source:
+                            disableShortcut,
+                        destination:
+                            makeDestinationShortcut()
+                    )
                 ]
             )
 
+        let context =
+            makeContext(
+                configuration:
+                    .separate(
+                        enable:
+                            enableShortcut,
+                        disable:
+                            disableShortcut
+                    ),
+                remappingEngine:
+                    engine
+            )
+
+        try context.controller.start()
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    enableShortcut
+            ),
+            .passThrough
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    disableShortcut
+            ),
+            .passThrough
+        )
+    }
+
+    func testDisablingShortcutsRemovesRemappingProtection()
+        throws
+    {
+        let shortcut =
+            makeToggleShortcut()
+
+        let destination =
+            makeDestinationShortcut()
+
+        let engine =
+            RemappingEngine(
+                rules: [
+                    RemapRule(
+                        source:
+                            shortcut,
+                        destination:
+                            destination
+                    )
+                ]
+            )
+
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        shortcut
+                    ),
+                remappingEngine:
+                    engine
+            )
+
+        try context.controller.start()
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    shortcut
+            ),
+            .passThrough
+        )
+
+        try context.controller.setConfiguration(
+            .disabled
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    shortcut
+            ),
+            .replaceWith(
+                destination
+            )
+        )
+    }
+
+    func testShortcutCaptureTemporarilyRemovesAndRestoresRegistrations()
+        throws
+    {
+        let configuration =
+            RemappingShortcutConfiguration
+                .toggle(
+                    makeToggleShortcut()
+                )
+
+        let context =
+            makeContext(
+                configuration:
+                    configuration
+            )
+
+        try context.controller.start()
+
+        context.controller.beginShortcutCapture()
+
+        XCTAssertTrue(
+            context
+                .shortcutManager
+                .registeredRegistrations
+                .isEmpty
+        )
+
+        try context.controller.endShortcutCapture()
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registeredRegistrations,
+            configuration.registrations
+        )
+    }
+
+    func testRepeatedShortcutCaptureSuspensionIsIdempotent()
+        throws
+    {
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        makeToggleShortcut()
+                    )
+            )
+
+        try context.controller.start()
+
+        context.controller.beginShortcutCapture()
+        context.controller.beginShortcutCapture()
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .unregisterCallCount,
+            1
+        )
+
+        try context.controller.endShortcutCapture()
+        try context.controller.endShortcutCapture()
+
+        XCTAssertEqual(
+            context
+                .shortcutManager
+                .registerCallCount,
+            2
+        )
+    }
+
+    func testStopRemovesRegistrationsAndReservations()
+        throws
+    {
+        let shortcut =
+            makeToggleShortcut()
+
+        let destination =
+            makeDestinationShortcut()
+
+        let engine =
+            RemappingEngine(
+                rules: [
+                    RemapRule(
+                        source:
+                            shortcut,
+                        destination:
+                            destination
+                    )
+                ]
+            )
+
+        let context =
+            makeContext(
+                configuration:
+                    .toggle(
+                        shortcut
+                    ),
+                remappingEngine:
+                    engine
+            )
+
+        try context.controller.start()
+        context.controller.stop()
+
+        XCTAssertTrue(
+            context
+                .shortcutManager
+                .registeredRegistrations
+                .isEmpty
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    shortcut
+            ),
+            .replaceWith(
+                destination
+            )
+        )
+    }
+
+    private func makeContext(
+        configuration:
+            RemappingShortcutConfiguration,
+        remappingEngine:
+            RemappingEngine = RemappingEngine(),
+        actionHandler:
+            @escaping (
+                GlobalShortcutAction
+            ) -> Void = {
+                _ in
+            }
+    ) -> GlobalShortcutTestContext {
         let preferences =
             AppPreferences(
                 launchBehavior:
                     .alwaysOff,
                 lastRemappingEnabled:
                     false,
-                toggleShortcut:
-                    previousShortcut
+                shortcutConfiguration:
+                    configuration
             )
 
         let preferencesStore =
-            PreferencesMockStore(
+            GlobalShortcutPreferencesMockStore(
                 preferences:
                     preferences
             )
-
-        preferencesStore.saveError =
-            GlobalShortcutTestError
-                .expected
 
         let preferencesController =
             AppPreferencesController(
@@ -431,46 +753,36 @@ final class GlobalShortcutControllerTests:
         let shortcutManager =
             GlobalShortcutMockManager()
 
-        try shortcutManager.register(
-            previousShortcut,
-            action: {}
-        )
-
         let controller =
             GlobalShortcutController(
                 shortcutManager:
                     shortcutManager,
                 appPreferencesController:
                     preferencesController,
-                action: {}
+                remappingEngine:
+                    remappingEngine,
+                actionHandler:
+                    actionHandler
             )
 
-        XCTAssertThrowsError(
-            try controller.setShortcut(
-                newShortcut
-            )
-        )
-
-        XCTAssertEqual(
-            shortcutManager
-                .registeredShortcut,
-            previousShortcut
-        )
-
-        XCTAssertEqual(
-            preferencesController
-                .preferences
-                .toggleShortcut,
-            previousShortcut
+        return GlobalShortcutTestContext(
+            controller:
+                controller,
+            shortcutManager:
+                shortcutManager,
+            preferencesController:
+                preferencesController,
+            preferencesStore:
+                preferencesStore
         )
     }
 
-    private func makeShortcut()
+    private func makeToggleShortcut()
         -> KeyCombination
     {
         KeyCombination(
             keyCode:
-                KeyCode.v,
+                KeyCode.r,
             modifiers: [
                 .control,
                 .option,
@@ -478,163 +790,63 @@ final class GlobalShortcutControllerTests:
             ]
         )
     }
-    
-    func testStartProtectsStoredShortcutFromRemapping()
-        throws
+
+    private func makeEnableShortcut()
+        -> KeyCombination
     {
-        let source =
-            makeShortcut()
-
-        let destination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.w,
-                modifiers: [
-                    .control,
-                    .option,
-                    .command
-                ]
-            )
-
-        let engine =
-            RemappingEngine(
-                rules: [
-                    RemapRule(
-                        source:
-                            source,
-                        destination:
-                            destination
-                    )
-                ]
-            )
-
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    source
-            )
-
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                remappingEngine:
-                    engine,
-                action: {}
-            )
-
-        try controller.start()
-
-        XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
-            .passThrough
+        KeyCombination(
+            keyCode:
+                KeyCode.e,
+            modifiers: [
+                .control,
+                .option,
+                .command
+            ]
         )
     }
 
-    func testClearingShortcutRemovesRemappingProtection()
-        throws
+    private func makeDisableShortcut()
+        -> KeyCombination
     {
-        let source =
-            makeShortcut()
-
-        let destination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.w,
-                modifiers: [
-                    .control,
-                    .option,
-                    .command
-                ]
-            )
-
-        let engine =
-            RemappingEngine(
-                rules: [
-                    RemapRule(
-                        source:
-                            source,
-                        destination:
-                            destination
-                    )
-                ]
-            )
-
-        let preferences =
-            AppPreferences(
-                launchBehavior:
-                    .alwaysOff,
-                lastRemappingEnabled:
-                    false,
-                toggleShortcut:
-                    source
-            )
-
-        let preferencesStore =
-            PreferencesMockStore(
-                preferences:
-                    preferences
-            )
-
-        let preferencesController =
-            AppPreferencesController(
-                store:
-                    preferencesStore,
-                initialPreferences:
-                    preferences
-            )
-
-        let shortcutManager =
-            GlobalShortcutMockManager()
-
-        let controller =
-            GlobalShortcutController(
-                shortcutManager:
-                    shortcutManager,
-                appPreferencesController:
-                    preferencesController,
-                remappingEngine:
-                    engine,
-                action: {}
-            )
-
-        try controller.start()
-        try controller.setShortcut(nil)
-
-        XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
-            .replaceWith(
-                destination
-            )
+        KeyCombination(
+            keyCode:
+                KeyCode.d,
+            modifiers: [
+                .control,
+                .option,
+                .command
+            ]
         )
     }
+
+    private func makeDestinationShortcut()
+        -> KeyCombination
+    {
+        KeyCombination(
+            keyCode:
+                KeyCode.w,
+            modifiers: [
+                .control,
+                .option,
+                .command
+            ]
+        )
+    }
+}
+
+@MainActor
+private struct GlobalShortcutTestContext {
+    let controller:
+        GlobalShortcutController
+
+    let shortcutManager:
+        GlobalShortcutMockManager
+
+    let preferencesController:
+        AppPreferencesController
+
+    let preferencesStore:
+        GlobalShortcutPreferencesMockStore
 }
 
 private nonisolated enum GlobalShortcutTestError:
@@ -647,49 +859,51 @@ private nonisolated enum GlobalShortcutTestError:
 private final class GlobalShortcutMockManager:
     GlobalShortcutRegistering
 {
-    private(set) var registeredShortcut:
-        KeyCombination?
+    private(set) var registeredRegistrations:
+        [GlobalShortcutRegistration] = []
 
     private(set) var registerCallCount = 0
     private(set) var unregisterCallCount = 0
     private(set) var stopCallCount = 0
 
-    var nextRegistrationError:
-        Error?
+    var registrationErrors:
+        [Error] = []
 
-    private var registeredAction:
-        (() -> Void)?
+    private var registeredActionHandler:
+        ((
+            GlobalShortcutAction
+        ) -> Void)?
 
     func register(
-        _ shortcut:
-            KeyCombination,
-        action:
-            @escaping () -> Void
+        _ registrations:
+            [GlobalShortcutRegistration],
+        actionHandler:
+            @escaping (
+                GlobalShortcutAction
+            ) -> Void
     ) throws {
         registerCallCount += 1
 
-        if let nextRegistrationError {
-            self.nextRegistrationError =
-                nil
+        registeredRegistrations.removeAll()
+        registeredActionHandler = nil
 
-            throw nextRegistrationError
+        if !registrationErrors.isEmpty {
+            throw registrationErrors
+                .removeFirst()
         }
 
-        registeredShortcut =
-            shortcut
+        registeredRegistrations =
+            registrations
 
-        registeredAction =
-            action
+        registeredActionHandler =
+            actionHandler
     }
 
     func unregister() {
         unregisterCallCount += 1
 
-        registeredShortcut =
-            nil
-
-        registeredAction =
-            nil
+        registeredRegistrations.removeAll()
+        registeredActionHandler = nil
     }
 
     func stop() {
@@ -697,7 +911,64 @@ private final class GlobalShortcutMockManager:
         unregister()
     }
 
-    func performRegisteredAction() {
-        registeredAction?()
+    func perform(
+        _ action:
+            GlobalShortcutAction
+    ) {
+        guard
+            registeredRegistrations
+                .contains(
+                    where: {
+                        $0.action == action
+                    }
+                )
+        else {
+            return
+        }
+
+        registeredActionHandler?(
+            action
+        )
+    }
+}
+
+@MainActor
+private final class GlobalShortcutPreferencesMockStore:
+    AppPreferencesStore
+{
+    private var preferences:
+        AppPreferences
+
+    private(set) var saveCallCount = 0
+
+    var saveError:
+        Error?
+
+    init(
+        preferences:
+            AppPreferences
+    ) {
+        self.preferences =
+            preferences
+    }
+
+    func loadPreferences()
+        throws -> AppPreferences
+    {
+        preferences
+    }
+
+    func savePreferences(
+        _ preferences:
+            AppPreferences
+    ) throws {
+        saveCallCount += 1
+
+        if let saveError {
+            throw saveError
+        }
+
+        self.preferences =
+            preferences
     }
 }

@@ -8,7 +8,7 @@
 import Carbon.HIToolbox
 
 /// Represents a failure that can occur while registering
-/// or managing the application's global shortcut.
+/// or managing the application's global shortcuts.
 nonisolated enum GlobalShortcutError:
     Error,
     Equatable
@@ -22,49 +22,66 @@ nonisolated enum GlobalShortcutError:
     /// an event-handler reference.
     case missingEventHandlerReference
 
+    /// More than one registration uses the same application action.
+    case duplicateAction(
+        GlobalShortcutAction
+    )
+
+    /// More than one registration uses the same key combination.
+    case duplicateShortcut
+
     /// The requested keyboard shortcut could not be registered.
     ///
     /// This commonly happens when another application or macOS
     /// already owns the same combination.
     case registrationFailed(
-        OSStatus
+        action:
+            GlobalShortcutAction,
+        status:
+            OSStatus
     )
 
     /// Carbon reported success but did not return
     /// a hot-key reference.
-    case missingHotKeyReference
+    case missingHotKeyReference(
+        GlobalShortcutAction
+    )
 }
 
-/// Defines the operations required to manage one global shortcut.
+/// Defines the operations required to manage the application's
+/// global shortcut registrations.
 @MainActor
 protocol GlobalShortcutRegistering:
     AnyObject
 {
-    /// The shortcut currently registered with macOS.
-    var registeredShortcut:
-        KeyCombination?
+    /// The registrations currently active with macOS.
+    var registeredRegistrations:
+        [GlobalShortcutRegistration]
     {
         get
     }
 
-    /// Registers a global shortcut and associates it with an action.
+    /// Atomically replaces all global shortcut registrations.
     ///
-    /// Registering a new shortcut replaces the existing registration.
+    /// If one registration fails, every registration created by
+    /// this call is removed before the error is returned.
     func register(
-        _ shortcut:
-            KeyCombination,
-        action:
-            @escaping () -> Void
+        _ registrations:
+            [GlobalShortcutRegistration],
+        actionHandler:
+            @escaping (
+                GlobalShortcutAction
+            ) -> Void
     ) throws
 
-    /// Removes the current global shortcut registration.
+    /// Removes every current global shortcut registration.
     func unregister()
 
-    /// Removes both the hot key and the Carbon event handler.
+    /// Removes every hot key and the Carbon event handler.
     func stop()
 }
 
-/// Registers one specific keyboard shortcut with macOS.
+/// Registers the application's specific keyboard shortcuts with macOS.
 ///
 /// This manager does not use a global keyboard monitor, does not receive
 /// normal typing events, and does not store or log keyboard input.
@@ -76,28 +93,24 @@ final class GlobalShortcutManager:
     private static let hotKeySignature:
         OSType = 0x4C4B524D
 
-    private static let hotKeyNumericID:
-        UInt32 = 1
-
-    private static let hotKeyIdentifier =
-        EventHotKeyID(
-            signature:
-                hotKeySignature,
-            id:
-                hotKeyNumericID
-        )
-
     private var eventHandlerReference:
         EventHandlerRef?
 
-    private var hotKeyReference:
-        EventHotKeyRef?
+    private var hotKeyReferences:
+        [GlobalShortcutAction: EventHotKeyRef] = [:]
 
-    private var action:
-        (() -> Void)?
+    private var actionHandler:
+        ((
+            GlobalShortcutAction
+        ) -> Void)?
 
-    private(set) var registeredShortcut:
-        KeyCombination?
+    /// Tracks pressed actions so one physical press performs
+    /// one application command.
+    private var pressedActions:
+        Set<GlobalShortcutAction> = []
+
+    private(set) var registeredRegistrations:
+        [GlobalShortcutRegistration] = []
 
     /// Receives only Carbon hot-key events delivered
     /// specifically to this application.
@@ -150,24 +163,38 @@ final class GlobalShortcutManager:
             receivedIdentifier.signature
                 == GlobalShortcutManager
                     .hotKeySignature,
-            receivedIdentifier.id
-                == GlobalShortcutManager
-                    .hotKeyNumericID
+            let action =
+                GlobalShortcutAction(
+                    rawValue:
+                        receivedIdentifier.id
+                )
         else {
             return OSStatus(
                 eventNotHandledErr
             )
         }
 
+        let eventKind =
+            GetEventKind(
+                event
+            )
+
         let manager =
             Unmanaged<
                 GlobalShortcutManager
             >
-            .fromOpaque(userData)
+            .fromOpaque(
+                userData
+            )
             .takeUnretainedValue()
 
         Task { @MainActor in
-            manager.performRegisteredAction()
+            manager.handleHotKeyEvent(
+                action:
+                    action,
+                eventKind:
+                    eventKind
+            )
         }
 
         return OSStatus(
@@ -176,73 +203,61 @@ final class GlobalShortcutManager:
     }
 
     func register(
-        _ shortcut:
-            KeyCombination,
-        action:
-            @escaping () -> Void
+        _ registrations:
+            [GlobalShortcutRegistration],
+        actionHandler:
+            @escaping (
+                GlobalShortcutAction
+            ) -> Void
     ) throws {
+        try validateRegistrations(
+            registrations
+        )
+
         unregister()
+
+        guard !registrations.isEmpty else {
+            return
+        }
 
         try installEventHandlerIfNeeded()
 
-        self.action =
-            action
+        self.actionHandler =
+            actionHandler
 
-        var newHotKeyReference:
-            EventHotKeyRef?
+        do {
+            for registration in registrations {
+                let hotKeyReference =
+                    try registerHotKey(
+                        registration
+                    )
 
-        let registrationStatus =
-            RegisterEventHotKey(
-                UInt32(
-                    shortcut.keyCode
-                ),
-                GlobalShortcutManager
-                    .carbonModifiers(
-                        for:
-                            shortcut.modifiers
-                    ),
-                GlobalShortcutManager
-                    .hotKeyIdentifier,
-                GetApplicationEventTarget(),
-                0,
-                &newHotKeyReference
-            )
+                hotKeyReferences[
+                    registration.action
+                ] = hotKeyReference
+            }
 
-        guard
-            registrationStatus == noErr
-        else {
-            self.action = nil
-
-            throw GlobalShortcutError
-                .registrationFailed(
-                    registrationStatus
-                )
+            registeredRegistrations =
+                registrations
+        } catch {
+            unregister()
+            throw error
         }
-
-        guard let newHotKeyReference else {
-            self.action = nil
-
-            throw GlobalShortcutError
-                .missingHotKeyReference
-        }
-
-        hotKeyReference =
-            newHotKeyReference
-
-        registeredShortcut =
-            shortcut
     }
 
     func unregister() {
-        if let hotKeyReference {
+        for hotKeyReference in
+            hotKeyReferences.values
+        {
             UnregisterEventHotKey(
                 hotKeyReference
             )
         }
 
-        hotKeyReference = nil
-        registeredShortcut = nil
-        action = nil
+        hotKeyReferences.removeAll()
+        registeredRegistrations.removeAll()
+        pressedActions.removeAll()
+        actionHandler = nil
     }
 
     func stop() {
@@ -257,6 +272,103 @@ final class GlobalShortcutManager:
         eventHandlerReference = nil
     }
 
+    private func validateRegistrations(
+        _ registrations:
+            [GlobalShortcutRegistration]
+    ) throws {
+        var seenActions:
+            Set<GlobalShortcutAction> = []
+
+        var seenShortcuts:
+            Set<KeyCombination> = []
+
+        for registration in registrations {
+            guard
+                seenActions
+                    .insert(
+                        registration.action
+                    )
+                    .inserted
+            else {
+                throw GlobalShortcutError
+                    .duplicateAction(
+                        registration.action
+                    )
+            }
+
+            guard
+                seenShortcuts
+                    .insert(
+                        registration.shortcut
+                    )
+                    .inserted
+            else {
+                throw GlobalShortcutError
+                    .duplicateShortcut
+            }
+        }
+    }
+
+    private func registerHotKey(
+        _ registration:
+            GlobalShortcutRegistration
+    ) throws -> EventHotKeyRef {
+        var newHotKeyReference:
+            EventHotKeyRef?
+
+        let identifier =
+            EventHotKeyID(
+                signature:
+                    GlobalShortcutManager
+                        .hotKeySignature,
+                id:
+                    registration
+                        .action
+                        .rawValue
+            )
+
+        let registrationStatus =
+            RegisterEventHotKey(
+                UInt32(
+                    registration
+                        .shortcut
+                        .keyCode
+                ),
+                GlobalShortcutManager
+                    .carbonModifiers(
+                        for:
+                            registration
+                                .shortcut
+                                .modifiers
+                    ),
+                identifier,
+                GetApplicationEventTarget(),
+                0,
+                &newHotKeyReference
+            )
+
+        guard
+            registrationStatus == noErr
+        else {
+            throw GlobalShortcutError
+                .registrationFailed(
+                    action:
+                        registration.action,
+                    status:
+                        registrationStatus
+                )
+        }
+
+        guard let newHotKeyReference else {
+            throw GlobalShortcutError
+                .missingHotKeyReference(
+                    registration.action
+                )
+        }
+
+        return newHotKeyReference
+    }
+
     private func installEventHandlerIfNeeded()
         throws
     {
@@ -266,36 +378,54 @@ final class GlobalShortcutManager:
             return
         }
 
-        var eventType =
-            EventTypeSpec(
-                eventClass:
-                    OSType(
-                        kEventClassKeyboard
-                    ),
-                eventKind:
-                    UInt32(
-                        kEventHotKeyPressed
-                    )
-            )
+        let eventTypes =
+            [
+                EventTypeSpec(
+                    eventClass:
+                        OSType(
+                            kEventClassKeyboard
+                        ),
+                    eventKind:
+                        UInt32(
+                            kEventHotKeyPressed
+                        )
+                ),
+                EventTypeSpec(
+                    eventClass:
+                        OSType(
+                            kEventClassKeyboard
+                        ),
+                    eventKind:
+                        UInt32(
+                            kEventHotKeyReleased
+                        )
+                )
+            ]
 
         let userData =
             Unmanaged
-                .passUnretained(self)
+                .passUnretained(
+                    self
+                )
                 .toOpaque()
 
         var newEventHandlerReference:
             EventHandlerRef?
 
         let installationStatus =
-            InstallEventHandler(
-                GetApplicationEventTarget(),
-                GlobalShortcutManager
-                    .carbonEventHandler,
-                1,
-                &eventType,
-                userData,
-                &newEventHandlerReference
-            )
+            eventTypes.withUnsafeBufferPointer {
+                eventTypesBuffer in
+
+                InstallEventHandler(
+                    GetApplicationEventTarget(),
+                    GlobalShortcutManager
+                        .carbonEventHandler,
+                    eventTypesBuffer.count,
+                    eventTypesBuffer.baseAddress,
+                    userData,
+                    &newEventHandlerReference
+                )
+            }
 
         guard
             installationStatus == noErr
@@ -317,8 +447,46 @@ final class GlobalShortcutManager:
             newEventHandlerReference
     }
 
-    private func performRegisteredAction() {
-        action?()
+    private func handleHotKeyEvent(
+        action:
+            GlobalShortcutAction,
+        eventKind:
+            UInt32
+    ) {
+        guard
+            hotKeyReferences[action] != nil
+        else {
+            return
+        }
+
+        switch eventKind {
+        case UInt32(
+            kEventHotKeyPressed
+        ):
+            guard
+                pressedActions
+                    .insert(
+                        action
+                    )
+                    .inserted
+            else {
+                return
+            }
+
+            actionHandler?(
+                action
+            )
+
+        case UInt32(
+            kEventHotKeyReleased
+        ):
+            pressedActions.remove(
+                action
+            )
+
+        default:
+            return
+        }
     }
 
     /// Converts the application's modifier representation
@@ -330,24 +498,40 @@ final class GlobalShortcutManager:
         var carbonFlags:
             UInt32 = 0
 
-        if modifiers.contains(.shift) {
+        if modifiers.contains(
+            .shift
+        ) {
             carbonFlags |=
-                UInt32(shiftKey)
+                UInt32(
+                    shiftKey
+                )
         }
 
-        if modifiers.contains(.control) {
+        if modifiers.contains(
+            .control
+        ) {
             carbonFlags |=
-                UInt32(controlKey)
+                UInt32(
+                    controlKey
+                )
         }
 
-        if modifiers.contains(.option) {
+        if modifiers.contains(
+            .option
+        ) {
             carbonFlags |=
-                UInt32(optionKey)
+                UInt32(
+                    optionKey
+                )
         }
 
-        if modifiers.contains(.command) {
+        if modifiers.contains(
+            .command
+        ) {
             carbonFlags |=
-                UInt32(cmdKey)
+                UInt32(
+                    cmdKey
+                )
         }
 
         return carbonFlags

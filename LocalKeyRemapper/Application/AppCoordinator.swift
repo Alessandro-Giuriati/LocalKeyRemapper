@@ -107,11 +107,29 @@ final class AppCoordinator {
                     appPreferencesController,
                 remappingEngine:
                     remappingEngine,
-                action: {
-                    [weak remappingController] in
+                actionHandler: {
+                    [weak remappingController]
+                    action in
 
-                    remappingController?
-                        .toggle()
+                    guard
+                        let remappingController
+                    else {
+                        return
+                    }
+
+                    switch action {
+                    case .toggle:
+                        remappingController
+                            .toggle()
+
+                    case .enable:
+                        remappingController
+                            .enable()
+
+                    case .disable:
+                        remappingController
+                            .disable()
+                    }
                 }
             )
 
@@ -147,7 +165,7 @@ final class AppCoordinator {
     }
 
     /// Starts the application user interface and registers
-    /// the configured global shortcut.
+    /// the configured global shortcuts.
     func start() {
         isStopping = false
 
@@ -199,15 +217,17 @@ final class AppCoordinator {
                     self?.resetTextSize()
                 },
                 remappingStateChangeHandler: {
-                    [weak self] state in
+                    [weak self]
+                    state in
 
-                    self?.handleRemappingStateChange(
-                        state
-                    )
+                    self?
+                        .handleRemappingStateChange(
+                            state
+                        )
                 }
             )
 
-        startGlobalShortcut()
+        startGlobalShortcuts()
         enableRemappingAtLaunchIfRequested()
     }
 
@@ -229,11 +249,13 @@ final class AppCoordinator {
     func stop() {
         isStopping = true
 
+        settingsWindowController?
+            .prepareForApplicationTermination()
+
+        settingsWindowController = nil
+
         globalShortcutController.stop()
         remappingController.disable()
-
-        settingsWindowController?.close()
-        settingsWindowController = nil
 
         statusBarController = nil
         applicationMenuController = nil
@@ -251,7 +273,9 @@ final class AppCoordinator {
                 remappingController:
                     remappingController,
                 appPreferencesController:
-                    appPreferencesController
+                    appPreferencesController,
+                globalShortcutController:
+                    globalShortcutController
             )
 
         settingsWindowController =
@@ -269,13 +293,13 @@ final class AppCoordinator {
         }
     }
 
-    private func startGlobalShortcut() {
+    private func startGlobalShortcuts() {
         do {
             try globalShortcutController
                 .start()
         } catch {
-            // A shortcut conflict or registration failure must not
-            // prevent the application from launching.
+            // A shortcut conflict, invalid configuration, or registration
+            // failure must not prevent the application from launching.
             //
             // No keyboard input or error details are logged.
         }
@@ -329,7 +353,9 @@ final class AppCoordinator {
 
     private func showSettings() {
         settingsController()
-            .showWindow(nil)
+            .showWindow(
+                nil
+            )
     }
 
     private func increaseTextSize() {
@@ -339,7 +365,9 @@ final class AppCoordinator {
         if controller.window?.isVisible
             != true
         {
-            controller.showWindow(nil)
+            controller.showWindow(
+                nil
+            )
         }
 
         controller.increaseTextSize()
@@ -352,7 +380,9 @@ final class AppCoordinator {
         if controller.window?.isVisible
             != true
         {
-            controller.showWindow(nil)
+            controller.showWindow(
+                nil
+            )
         }
 
         controller.decreaseTextSize()
@@ -365,7 +395,9 @@ final class AppCoordinator {
         if controller.window?.isVisible
             != true
         {
-            controller.showWindow(nil)
+            controller.showWindow(
+                nil
+            )
         }
 
         controller.resetTextSize()

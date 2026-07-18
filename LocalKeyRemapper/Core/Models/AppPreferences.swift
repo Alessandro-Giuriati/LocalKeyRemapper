@@ -35,13 +35,21 @@ nonisolated struct AppPreferences:
     /// from preference formats that did not contain a shortcut setting.
     static let defaultToggleShortcut =
         KeyCombination(
-            keyCode: KeyCode.r,
+            keyCode:
+                KeyCode.r,
             modifiers: [
                 .control,
                 .option,
                 .command
             ]
         )
+
+    /// The complete default shortcut configuration.
+    static let defaultShortcutConfiguration =
+        RemappingShortcutConfiguration
+            .toggle(
+                defaultToggleShortcut
+            )
 
     /// Defines how remapping should behave at application launch.
     var launchBehavior:
@@ -52,11 +60,41 @@ nonisolated struct AppPreferences:
     var lastRemappingEnabled:
         Bool
 
-    /// Stores the configured global shortcut used to toggle remapping.
+    /// Stores the complete global shortcut configuration.
+    var shortcutConfiguration:
+        RemappingShortcutConfiguration
+
+    /// Temporary compatibility property used by the existing
+    /// single-shortcut controller.
     ///
-    /// A nil value explicitly means that the global shortcut is disabled.
+    /// This property can be removed after the controller and interface
+    /// have been migrated to RemappingShortcutConfiguration.
     var toggleShortcut:
         KeyCombination?
+    {
+        get {
+            guard
+                case .toggle(let shortcut) =
+                    shortcutConfiguration
+            else {
+                return nil
+            }
+
+            return shortcut
+        }
+
+        set {
+            if let newValue {
+                shortcutConfiguration =
+                    .toggle(
+                        newValue
+                    )
+            } else {
+                shortcutConfiguration =
+                    .disabled
+            }
+        }
+    }
 
     /// Safe preferences used when nothing has been stored yet.
     static let standard =
@@ -65,8 +103,8 @@ nonisolated struct AppPreferences:
                 .alwaysOff,
             lastRemappingEnabled:
                 false,
-            toggleShortcut:
-                defaultToggleShortcut
+            shortcutConfiguration:
+                defaultShortcutConfiguration
         )
 
     /// Indicates whether remapping should be enabled for the
@@ -91,10 +129,10 @@ nonisolated struct AppPreferences:
             RemappingLaunchBehavior,
         lastRemappingEnabled:
             Bool,
-        toggleShortcut:
-            KeyCombination? =
+        shortcutConfiguration:
+            RemappingShortcutConfiguration =
                 AppPreferences
-                    .defaultToggleShortcut
+                    .defaultShortcutConfiguration
     ) {
         self.launchBehavior =
             launchBehavior
@@ -102,8 +140,41 @@ nonisolated struct AppPreferences:
         self.lastRemappingEnabled =
             lastRemappingEnabled
 
-        self.toggleShortcut =
-            toggleShortcut
+        self.shortcutConfiguration =
+            shortcutConfiguration
+    }
+
+    /// Compatibility initializer for code and tests that still use
+    /// the previous optional toggle-shortcut representation.
+    init(
+        launchBehavior:
+            RemappingLaunchBehavior,
+        lastRemappingEnabled:
+            Bool,
+        toggleShortcut:
+            KeyCombination?
+    ) {
+        let shortcutConfiguration:
+            RemappingShortcutConfiguration
+
+        if let toggleShortcut {
+            shortcutConfiguration =
+                .toggle(
+                    toggleShortcut
+                )
+        } else {
+            shortcutConfiguration =
+                .disabled
+        }
+
+        self.init(
+            launchBehavior:
+                launchBehavior,
+            lastRemappingEnabled:
+                lastRemappingEnabled,
+            shortcutConfiguration:
+                shortcutConfiguration
+        )
     }
 
     private enum CodingKeys:
@@ -112,9 +183,12 @@ nonisolated struct AppPreferences:
     {
         case launchBehavior
         case lastRemappingEnabled
+        case shortcutConfiguration
+
+        /// Legacy shortcut key used before multiple shortcut modes.
         case toggleShortcut
 
-        /// Legacy key used by the previous two-state preference.
+        /// Legacy key used by the previous two-state launch preference.
         case enableRemappingAtLaunch
     }
 
@@ -158,19 +232,38 @@ nonisolated struct AppPreferences:
             ) ?? false
 
         if container.contains(
+            .shortcutConfiguration
+        ) {
+            shortcutConfiguration =
+                try container.decode(
+                    RemappingShortcutConfiguration.self,
+                    forKey:
+                        .shortcutConfiguration
+                )
+        } else if container.contains(
             .toggleShortcut
         ) {
-            toggleShortcut =
+            let legacyToggleShortcut =
                 try container.decodeIfPresent(
                     KeyCombination.self,
                     forKey:
                         .toggleShortcut
                 )
+
+            if let legacyToggleShortcut {
+                shortcutConfiguration =
+                    .toggle(
+                        legacyToggleShortcut
+                    )
+            } else {
+                shortcutConfiguration =
+                    .disabled
+            }
         } else {
             /// The stored data predates global shortcut support.
-            toggleShortcut =
+            shortcutConfiguration =
                 AppPreferences
-                    .defaultToggleShortcut
+                    .defaultShortcutConfiguration
         }
     }
 
@@ -195,20 +288,10 @@ nonisolated struct AppPreferences:
                 .lastRemappingEnabled
         )
 
-        if let toggleShortcut {
-            try container.encode(
-                toggleShortcut,
-                forKey:
-                    .toggleShortcut
-            )
-        } else {
-            /// Encoding null distinguishes an intentionally disabled
-            /// shortcut from an older preference format where the
-            /// property did not exist at all.
-            try container.encodeNil(
-                forKey:
-                    .toggleShortcut
-            )
-        }
+        try container.encode(
+            shortcutConfiguration,
+            forKey:
+                .shortcutConfiguration
+        )
     }
 }

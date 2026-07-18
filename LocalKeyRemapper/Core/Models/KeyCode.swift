@@ -15,20 +15,42 @@ import CoreGraphics
 nonisolated enum KeyCode {
 
     static let b =
-        CGKeyCode(kVK_ANSI_B)
+        CGKeyCode(
+            kVK_ANSI_B
+        )
+
+    static let d =
+        CGKeyCode(
+            kVK_ANSI_D
+        )
+
+    static let e =
+        CGKeyCode(
+            kVK_ANSI_E
+        )
 
     static let j =
-        CGKeyCode(kVK_ANSI_J)
+        CGKeyCode(
+            kVK_ANSI_J
+        )
 
     static let n =
-        CGKeyCode(kVK_ANSI_N)
-    
+        CGKeyCode(
+            kVK_ANSI_N
+        )
+
     static let r =
-        CGKeyCode(kVK_ANSI_R)
+        CGKeyCode(
+            kVK_ANSI_R
+        )
 
     static let v =
-        CGKeyCode(kVK_ANSI_V)
+        CGKeyCode(
+            kVK_ANSI_V
+        )
 
     static let w =
-        CGKeyCode(kVK_ANSI_W)
+        CGKeyCode(
+            kVK_ANSI_W
+        )
 }

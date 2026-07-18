@@ -9,34 +9,50 @@
 nonisolated enum KeyCombinationDisplayName {
 
     static func name(
-        for combination: KeyCombination
+        for combination:
+            KeyCombination
     ) -> String {
         modifierPrefix(
-            for: combination.modifiers
-        ) + KeyCodeDisplayName.name(
-            for: combination.keyCode
+            for:
+                combination.modifiers
+        ) + KeyboardLayoutKeyName.name(
+            for:
+                combination.keyCode
         )
     }
 
     static func modifierPrefix(
-        for modifiers: KeyModifiers
+        for modifiers:
+            KeyModifiers
     ) -> String {
         var result = ""
 
-        if modifiers.contains(.control) {
-            result += "⌃"
+        if modifiers.contains(
+            .control
+        ) {
+            result +=
+                "⌃"
         }
 
-        if modifiers.contains(.option) {
-            result += "⌥"
+        if modifiers.contains(
+            .option
+        ) {
+            result +=
+                "⌥"
         }
 
-        if modifiers.contains(.shift) {
-            result += "⇧"
+        if modifiers.contains(
+            .shift
+        ) {
+            result +=
+                "⇧"
         }
 
-        if modifiers.contains(.command) {
-            result += "⌘"
+        if modifiers.contains(
+            .command
+        ) {
+            result +=
+                "⌘"
         }
 
         return result

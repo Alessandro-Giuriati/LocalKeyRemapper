@@ -6,9 +6,9 @@
 //
 
 /// Coordinates global shortcut registration, local persistence,
-/// and protection from normal remapping rules.
+/// validation, and protection from normal remapping rules.
 ///
-/// This controller stores only the configured shortcut.
+/// This controller stores only configured shortcuts.
 /// It never receives, records, or logs normal keyboard input.
 @MainActor
 final class GlobalShortcutController {
@@ -22,14 +22,23 @@ final class GlobalShortcutController {
     private let remappingEngine:
         RemappingEngine
 
-    private let action:
-        () -> Void
+    private let actionHandler:
+        (
+            GlobalShortcutAction
+        ) -> Void
 
-    /// The shortcut currently stored in the application preferences.
-    var configuredShortcut: KeyCombination? {
+    /// Indicates that active global registrations are temporarily
+    /// suspended while the Settings window records a shortcut.
+    private var isCaptureSuspended = false
+
+    /// The shortcut configuration currently stored
+    /// in local application preferences.
+    var configuredConfiguration:
+        RemappingShortcutConfiguration
+    {
         appPreferencesController
             .preferences
-            .toggleShortcut
+            .shortcutConfiguration
     }
 
     init(
@@ -39,8 +48,10 @@ final class GlobalShortcutController {
             AppPreferencesControlling,
         remappingEngine:
             RemappingEngine = RemappingEngine(),
-        action:
-            @escaping () -> Void
+        actionHandler:
+            @escaping (
+                GlobalShortcutAction
+            ) -> Void
     ) {
         self.shortcutManager =
             shortcutManager
@@ -51,69 +62,82 @@ final class GlobalShortcutController {
         self.remappingEngine =
             remappingEngine
 
-        self.action =
-            action
+        self.actionHandler =
+            actionHandler
     }
 
-    /// Registers and protects the shortcut currently stored
+    /// Registers and protects the configuration currently stored
     /// in local preferences.
-    ///
-    /// If no shortcut is configured, any existing registration
-    /// and reservation are removed.
     func start() throws {
-        let shortcut =
-            configuredShortcut
+        isCaptureSuspended = false
+
+        let configuration =
+            configuredConfiguration
 
         do {
             try applyRegistration(
-                for: shortcut
+                for:
+                    configuration
             )
 
             applyReservation(
-                for: shortcut
+                for:
+                    configuration
             )
         } catch {
             shortcutManager.unregister()
 
             applyReservation(
-                for: nil
+                for:
+                    .disabled
             )
 
             throw error
         }
     }
 
-    /// Replaces or disables the configured global shortcut.
+    /// Atomically replaces the complete shortcut configuration.
     ///
-    /// Passing nil disables the global shortcut.
+    /// Invalid configurations are rejected before any active
+    /// registration or reservation is changed.
     ///
-    /// If registration or persistence fails, the previous
-    /// registration and reservation are restored whenever possible.
-    func setShortcut(
-        _ newShortcut:
-            KeyCombination?
+    /// If registration or persistence fails, the previous registration
+    /// and reservation are restored whenever possible.
+    func setConfiguration(
+        _ newConfiguration:
+            RemappingShortcutConfiguration
     ) throws {
-        let previousShortcut =
-            configuredShortcut
+        let previousConfiguration =
+            configuredConfiguration
 
         guard
-            previousShortcut
-                != newShortcut
+            previousConfiguration
+                != newConfiguration
         else {
             return
         }
 
+        /// Validate before touching the currently active shortcuts.
+        ///
+        /// This avoids unnecessary unregister/register cycles when
+        /// the proposed configuration is invalid.
+        try validate(
+            newConfiguration
+        )
+
         do {
-            try applyRegistration(
-                for: newShortcut
+            try register(
+                newConfiguration
             )
 
             applyReservation(
-                for: newShortcut
+                for:
+                    newConfiguration
             )
         } catch {
             restoreRegistrationAndReservation(
-                for: previousShortcut
+                for:
+                    previousConfiguration
             )
 
             throw error
@@ -121,79 +145,161 @@ final class GlobalShortcutController {
 
         do {
             try appPreferencesController
-                .setToggleShortcut(
-                    newShortcut
+                .setShortcutConfiguration(
+                    newConfiguration
                 )
         } catch {
             restoreRegistrationAndReservation(
-                for: previousShortcut
+                for:
+                    previousConfiguration
             )
 
             throw error
         }
     }
 
-    /// Removes the shortcut registration, Carbon event handler,
-    /// and protected remapping combination.
-    func stop() {
-        shortcutManager.stop()
-
-        applyReservation(
-            for: nil
-        )
-    }
-
-    private func applyRegistration(
-        for shortcut:
+    /// Compatibility operation for code that still edits
+    /// one optional toggle shortcut.
+    func setShortcut(
+        _ newShortcut:
             KeyCombination?
     ) throws {
-        guard let shortcut else {
-            shortcutManager.unregister()
-            return
+        let configuration:
+            RemappingShortcutConfiguration
+
+        if let newShortcut {
+            configuration =
+                .toggle(
+                    newShortcut
+                )
+        } else {
+            configuration =
+                .disabled
         }
 
-        try shortcutManager.register(
-            shortcut,
-            action: action
+        try setConfiguration(
+            configuration
         )
     }
 
-    private func applyReservation(
-        for shortcut:
-            KeyCombination?
-    ) {
-        guard let shortcut else {
-            remappingEngine
-                .replaceReservedCombinations(
-                    []
-                )
-
+    /// Temporarily removes active Carbon registrations while
+    /// the Settings window records a new shortcut.
+    func beginShortcutCapture() {
+        guard !isCaptureSuspended else {
             return
         }
 
-        remappingEngine
-            .replaceReservedCombinations(
-                [shortcut]
-            )
+        isCaptureSuspended = true
+        shortcutManager.unregister()
     }
 
-    private func restoreRegistrationAndReservation(
-        for shortcut:
-            KeyCombination?
-    ) {
+    /// Restores the stored shortcut configuration after capture ends.
+    func endShortcutCapture() throws {
+        guard isCaptureSuspended else {
+            return
+        }
+
+        isCaptureSuspended = false
+
         do {
             try applyRegistration(
-                for: shortcut
+                for:
+                    configuredConfiguration
             )
 
             applyReservation(
-                for: shortcut
+                for:
+                    configuredConfiguration
             )
         } catch {
             shortcutManager.unregister()
 
             applyReservation(
-                for: nil
+                for:
+                    .disabled
+            )
+
+            throw error
+        }
+    }
+
+    /// Removes all shortcut registrations, the Carbon event handler,
+    /// and every protected application combination.
+    func stop() {
+        isCaptureSuspended = false
+        shortcutManager.stop()
+
+        applyReservation(
+            for:
+                .disabled
+        )
+    }
+
+    private func applyRegistration(
+        for configuration:
+            RemappingShortcutConfiguration
+    ) throws {
+        try validate(
+            configuration
+        )
+
+        try register(
+            configuration
+        )
+    }
+
+    private func register(
+        _ configuration:
+            RemappingShortcutConfiguration
+    ) throws {
+        try shortcutManager.register(
+            configuration.registrations,
+            actionHandler:
+                actionHandler
+        )
+    }
+
+    private func validate(
+        _ configuration:
+            RemappingShortcutConfiguration
+    ) throws {
+        try GlobalShortcutConfigurationPolicy
+            .validate(
+                configuration
+            )
+    }
+
+    private func applyReservation(
+        for configuration:
+            RemappingShortcutConfiguration
+    ) {
+        remappingEngine
+            .replaceReservedCombinations(
+                configuration
+                    .reservedCombinations
+            )
+    }
+
+    private func restoreRegistrationAndReservation(
+        for configuration:
+            RemappingShortcutConfiguration
+    ) {
+        do {
+            try applyRegistration(
+                for:
+                    configuration
+            )
+
+            applyReservation(
+                for:
+                    configuration
+            )
+        } catch {
+            shortcutManager.unregister()
+
+            applyReservation(
+                for:
+                    .disabled
             )
         }
     }

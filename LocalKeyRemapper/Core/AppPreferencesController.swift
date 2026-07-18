@@ -29,12 +29,20 @@ protocol AppPreferencesControlling:
 
     /// Updates the most recently observed enabled or disabled state.
     func setLastRemappingEnabled(
-        _ isEnabled: Bool
+        _ isEnabled:
+            Bool
     ) throws
 
-    /// Updates or disables the global shortcut used to toggle remapping.
+    /// Updates the complete global shortcut configuration.
+    func setShortcutConfiguration(
+        _ configuration:
+            RemappingShortcutConfiguration
+    ) throws
+
+    /// Compatibility operation for the existing single-shortcut
+    /// controller.
     ///
-    /// Passing nil disables the configured shortcut.
+    /// Passing nil disables global keyboard control.
     func setToggleShortcut(
         _ shortcut:
             KeyCombination?
@@ -96,7 +104,8 @@ final class AppPreferencesController:
     }
 
     func setLastRemappingEnabled(
-        _ isEnabled: Bool
+        _ isEnabled:
+            Bool
     ) throws {
         guard
             preferences.lastRemappingEnabled
@@ -116,13 +125,13 @@ final class AppPreferencesController:
         )
     }
 
-    func setToggleShortcut(
-        _ shortcut:
-            KeyCombination?
+    func setShortcutConfiguration(
+        _ configuration:
+            RemappingShortcutConfiguration
     ) throws {
         guard
-            preferences.toggleShortcut
-                != shortcut
+            preferences.shortcutConfiguration
+                != configuration
         else {
             return
         }
@@ -130,11 +139,33 @@ final class AppPreferencesController:
         var updatedPreferences =
             preferences
 
-        updatedPreferences.toggleShortcut =
-            shortcut
+        updatedPreferences.shortcutConfiguration =
+            configuration
 
         try saveAndApply(
             updatedPreferences
+        )
+    }
+
+    func setToggleShortcut(
+        _ shortcut:
+            KeyCombination?
+    ) throws {
+        let configuration:
+            RemappingShortcutConfiguration
+
+        if let shortcut {
+            configuration =
+                .toggle(
+                    shortcut
+                )
+        } else {
+            configuration =
+                .disabled
+        }
+
+        try setShortcutConfiguration(
+            configuration
         )
     }
 

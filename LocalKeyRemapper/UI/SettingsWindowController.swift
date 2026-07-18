@@ -10,52 +10,72 @@ import Carbon.HIToolbox
 import CoreGraphics
 
 /// A settings window that intercepts a key press only while
-/// the user is explicitly selecting a remapping key.
+/// the user is explicitly selecting a key or global shortcut.
 ///
 /// The handler receives events only from this window.
 /// It is not a global keyboard monitor.
 @MainActor
-private final class SettingsWindow: NSWindow {
+private final class SettingsWindow:
+    NSWindow
+{
+    var keyDownHandler:
+        ((
+            NSEvent
+        ) -> Bool)?
 
-    var keyDownHandler: ((NSEvent) -> Bool)?
-
-    override func sendEvent(_ event: NSEvent) {
+    override func sendEvent(
+        _ event:
+            NSEvent
+    ) {
         if
             event.type == .keyDown,
-            keyDownHandler?(event) == true
+            keyDownHandler?(
+                event
+            ) == true
         {
             return
         }
 
-        super.sendEvent(event)
+        super.sendEvent(
+            event
+        )
     }
 }
 
-/// Keeps scrollable content anchored to the top-left corner.
+/// Keeps scrollable rule content anchored to the top-left corner.
 @MainActor
-private final class FlippedView: NSView {
-
-    override var isFlipped: Bool {
+private final class FlippedView:
+    NSView
+{
+    override var isFlipped:
+        Bool
+    {
         true
     }
 }
 
-/// Manages the application settings window and its editable
-/// collection of remapping rules.
+/// Manages application settings, remapping rules, launch behavior,
+/// and global shortcut configuration.
 @MainActor
 final class SettingsWindowController:
     NSWindowController,
     NSWindowDelegate
 {
-
     private enum TextSizePreference {
         static let storageKey =
             "settingsTextScale.v1"
 
-        static let defaultScale: CGFloat = 1.0
-        static let minimumScale: CGFloat = 0.8
-        static let maximumScale: CGFloat = 1.4
-        static let step: CGFloat = 0.1
+        static let defaultScale:
+            CGFloat = 1.0
+
+        static let minimumScale:
+            CGFloat = 0.8
+
+        static let maximumScale:
+            CGFloat = 1.4
+
+        static let step:
+            CGFloat = 0.1
     }
 
     private enum EditorValidationIssue {
@@ -63,7 +83,9 @@ final class SettingsWindowController:
         case duplicateSource
         case identicalSourceAndDestination
 
-        var message: String {
+        var message:
+            String
+        {
             switch self {
             case .incompleteRule:
                 return "Complete every highlighted rule before saving."
@@ -78,8 +100,11 @@ final class SettingsWindowController:
     }
 
     private struct ValidationSnapshot {
-        let issue: EditorValidationIssue?
-        let invalidRows: Set<ObjectIdentifier>
+        let issue:
+            EditorValidationIssue?
+
+        let invalidRows:
+            Set<ObjectIdentifier>
     }
 
     private let remappingController:
@@ -88,227 +113,426 @@ final class SettingsWindowController:
     private let appPreferencesController:
         AppPreferencesControlling
 
-    private let titleLabel = NSTextField(
-        labelWithString: "Remapping Rules"
-    )
+    private let globalShortcutController:
+        GlobalShortcutController
 
-    private let descriptionLabel = NSTextField(
-        wrappingLabelWithString:
-            "Record complete combinations, choose how modifiers behave, and add exact exceptions when needed."
-    )
+    private let globalShortcutSettingsView:
+        GlobalShortcutSettingsView
 
-    private let sourceHeader = NSTextField(
-        labelWithString: "Source"
-    )
+    private let titleLabel =
+        NSTextField(
+            labelWithString:
+                "Remapping Rules"
+        )
 
-    private let destinationHeader = NSTextField(
-        labelWithString: "Destination"
-    )
+    private let descriptionLabel =
+        NSTextField(
+            wrappingLabelWithString:
+                "Record complete combinations, choose how modifiers behave, and add exact exceptions when needed."
+        )
 
-    private let behaviorHeader = NSTextField(
-        labelWithString: "Modifier behavior"
-    )
+    private let sourceHeader =
+        NSTextField(
+            labelWithString:
+                "Source"
+        )
 
-    private let exceptionsHeader = NSTextField(
-        labelWithString: "Exceptions"
-    )
+    private let destinationHeader =
+        NSTextField(
+            labelWithString:
+                "Destination"
+        )
 
-    private let launchBehaviorTitleLabel = NSTextField(
-        labelWithString: "Remapping at launch"
-    )
+    private let behaviorHeader =
+        NSTextField(
+            labelWithString:
+                "Modifier behavior"
+        )
 
-    private let launchBehaviorDescriptionLabel = NSTextField(
-        wrappingLabelWithString:
-            "Choose how remapping should behave when LocalKeyRemapper starts."
-    )
+    private let exceptionsHeader =
+        NSTextField(
+            labelWithString:
+                "Exceptions"
+        )
 
-    private let launchBehaviorControl = NSSegmentedControl(
-        labels: [
-            "Always Off",
-            "Restore Last State",
-            "Always On"
-        ],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
+    private let launchBehaviorTitleLabel =
+        NSTextField(
+            labelWithString:
+                "Remapping at launch"
+        )
 
-    private let launchBehaviorStack = NSStackView()
+    private let launchBehaviorDescriptionLabel =
+        NSTextField(
+            wrappingLabelWithString:
+                "Choose how remapping should behave when LocalKeyRemapper starts."
+        )
 
-    private let rulesScrollView = NSScrollView()
-    private let rulesDocumentView = FlippedView()
-    private let rulesStackView = NSStackView()
+    private let launchBehaviorControl =
+        NSSegmentedControl(
+            labels: [
+                "Always Off",
+                "Restore Last State",
+                "Always On"
+            ],
+            trackingMode:
+                .selectOne,
+            target:
+                nil,
+            action:
+                nil
+        )
 
-    private let addRuleButton = NSButton()
-    private let saveButton = NSButton()
+    private let launchBehaviorStack =
+        NSStackView()
 
-    private let actionsStack = NSStackView()
-    private let mainStack = NSStackView()
+    private let rulesScrollView =
+        NSScrollView()
 
-    private let statusLabel = NSTextField(
-        wrappingLabelWithString: ""
-    )
+    private let rulesDocumentView =
+        FlippedView()
 
-    private var ruleRows: [RemappingRuleRowView] = []
+    private let rulesStackView =
+        NSStackView()
+
+    private let addRuleButton =
+        NSButton()
+
+    private let saveButton =
+        NSButton()
+
+    private let actionsStack =
+        NSStackView()
+
+    private let mainStack =
+        NSStackView()
+
+    private let statusLabel =
+        NSTextField(
+            wrappingLabelWithString:
+                ""
+        )
+
+    private var ruleRows:
+        [RemappingRuleRowView] = []
 
     /// Last rule collection successfully loaded or saved.
-    private var savedRules: [RemapRule] = []
+    private var savedRules:
+        [RemapRule] = []
 
-    private var captureRow: RemappingRuleRowView?
+    private var captureRow:
+        RemappingRuleRowView?
+
     private var captureField:
         RemappingRuleRowView.KeyField?
+
+    private var shortcutCaptureField:
+        GlobalShortcutSettingsView.CaptureField?
 
     private var exceptionsWindowController:
         RemapOverridesWindowController?
 
-    private var textScale: CGFloat
+    private var textScale:
+        CGFloat
 
     init(
-        remappingController: RemappingSettingsControlling,
+        remappingController:
+            RemappingSettingsControlling,
         appPreferencesController:
-            AppPreferencesControlling
+            AppPreferencesControlling,
+        globalShortcutController:
+            GlobalShortcutController
     ) {
-        self.remappingController = remappingController
+        self.remappingController =
+            remappingController
+
         self.appPreferencesController =
             appPreferencesController
 
-        let storedScale = UserDefaults.standard.double(
-            forKey: TextSizePreference.storageKey
-        )
+        self.globalShortcutController =
+            globalShortcutController
+
+        globalShortcutSettingsView =
+            GlobalShortcutSettingsView(
+                configuration:
+                    appPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+            )
+
+        let storedScale =
+            UserDefaults.standard.double(
+                forKey:
+                    TextSizePreference
+                        .storageKey
+            )
 
         if storedScale == 0 {
-            textScale = TextSizePreference.defaultScale
+            textScale =
+                TextSizePreference
+                    .defaultScale
         } else {
-            textScale = Self.clampedTextScale(
-                CGFloat(storedScale)
-            )
+            textScale =
+                Self.clampedTextScale(
+                    CGFloat(
+                        storedScale
+                    )
+                )
         }
 
-        let window = SettingsWindow(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: 1080,
-                height: 630
-            ),
-            styleMask: [
-                .titled,
-                .closable,
-                .miniaturizable,
-                .resizable
-            ],
-            backing: .buffered,
-            defer: false
-        )
+        let window =
+            SettingsWindow(
+                contentRect:
+                    NSRect(
+                        x:
+                            0,
+                        y:
+                            0,
+                        width:
+                            1080,
+                        height:
+                            780
+                    ),
+                styleMask: [
+                    .titled,
+                    .closable,
+                    .miniaturizable,
+                    .resizable
+                ],
+                backing:
+                    .buffered,
+                defer:
+                    false
+            )
 
-        window.title = "LocalKeyRemapper Settings"
-        window.isReleasedWhenClosed = false
+        window.title =
+            "LocalKeyRemapper Settings"
 
-        window.contentMinSize = NSSize(
-            width: 960,
-            height: 500
-        )
+        window.isReleasedWhenClosed =
+            false
 
-        window.contentMaxSize = NSSize(
-            width: 1280,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        window.contentMinSize =
+            NSSize(
+                width:
+                    960,
+                height:
+                    680
+            )
+
+        window.contentMaxSize =
+            NSSize(
+                width:
+                    1280,
+                height:
+                    CGFloat
+                        .greatestFiniteMagnitude
+            )
 
         window.center()
 
-        super.init(window: window)
+        super.init(
+            window:
+                window
+        )
 
-        window.delegate = self
+        window.delegate =
+            self
 
-        window.keyDownHandler = { [weak self] event in
-            self?.handleKeyDown(event) ?? false
+        window.keyDownHandler = {
+            [weak self]
+            event in
+
+            self?
+                .handleKeyDown(
+                    event
+                ) ?? false
         }
 
+        configureShortcutSettingsCallbacks()
         configureContent()
         synchronizeLaunchBehavior()
         applyTextScale()
     }
 
-    required init?(coder: NSCoder) {
+    required init?(
+        coder:
+            NSCoder
+    ) {
         fatalError(
             "init(coder:) has not been implemented"
         )
     }
 
-    override func showWindow(_ sender: Any?) {
+    override func showWindow(
+        _ sender:
+            Any?
+    ) {
         if window?.isVisible == false {
             synchronizeLaunchBehavior()
+
+            globalShortcutSettingsView
+                .load(
+                    configuration:
+                        appPreferencesController
+                            .preferences
+                            .shortcutConfiguration
+                )
+
             loadConfiguredRules()
         }
 
-        super.showWindow(sender)
+        super.showWindow(
+            sender
+        )
 
         window?.center()
-        window?.makeKeyAndOrderFront(sender)
+
+        window?
+            .makeKeyAndOrderFront(
+                sender
+            )
 
         NSApplication.shared.activate(
-            ignoringOtherApps: true
+            ignoringOtherApps:
+                true
         )
+    }
+
+    /// Ends local capture before application-level system components stop.
+    func prepareForApplicationTermination() {
+        endKeyCapture()
+
+        exceptionsWindowController?
+            .close()
+
+        exceptionsWindowController =
+            nil
     }
 
     /// Increases the Settings interface text size.
     func increaseTextSize() {
         setTextScale(
-            textScale + TextSizePreference.step
+            textScale
+                + TextSizePreference.step
         )
     }
 
     /// Decreases the Settings interface text size.
     func decreaseTextSize() {
         setTextScale(
-            textScale - TextSizePreference.step
+            textScale
+                - TextSizePreference.step
         )
     }
 
     /// Restores the default Settings interface text size.
     func resetTextSize() {
         setTextScale(
-            TextSizePreference.defaultScale
+            TextSizePreference
+                .defaultScale
         )
     }
 
     func windowShouldClose(
-        _ sender: NSWindow
+        _ sender:
+            NSWindow
     ) -> Bool {
         endKeyCapture()
 
-        guard hasUnsavedChanges else {
+        let hasRuleChanges =
+            hasUnsavedRuleChanges
+
+        let hasShortcutChanges =
+            globalShortcutSettingsView
+                .hasUnsavedChanges
+
+        guard
+            hasRuleChanges
+                || hasShortcutChanges
+        else {
             return true
         }
 
-        let alert = NSAlert()
+        let alert =
+            NSAlert()
 
         alert.messageText =
             "Save changes before closing?"
 
-        alert.informativeText =
-            "Your remapping rules have been modified."
+        switch (
+            hasRuleChanges,
+            hasShortcutChanges
+        ) {
+        case (
+            true,
+            true
+        ):
+            alert.informativeText =
+                "Your remapping rules and global shortcut settings have been modified."
 
-        alert.alertStyle = .warning
+        case (
+            true,
+            false
+        ):
+            alert.informativeText =
+                "Your remapping rules have been modified."
+
+        case (
+            false,
+            true
+        ):
+            alert.informativeText =
+                "Your global shortcut settings have been modified."
+
+        case (
+            false,
+            false
+        ):
+            alert.informativeText =
+                ""
+        }
+
+        alert.alertStyle =
+            .warning
 
         alert.addButton(
-            withTitle: "Save"
+            withTitle:
+                "Save"
         )
 
         alert.addButton(
-            withTitle: "Discard Changes"
+            withTitle:
+                "Discard Changes"
         )
 
         alert.addButton(
-            withTitle: "Cancel"
+            withTitle:
+                "Cancel"
         )
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            return persistRules()
+            let rulesSaved =
+                !hasRuleChanges
+                    || persistRules()
+
+            let shortcutsSaved =
+                !hasShortcutChanges
+                    || globalShortcutSettingsView
+                        .persistConfiguration()
+
+            return rulesSaved
+                && shortcutsSaved
 
         case .alertSecondButtonReturn:
-            loadConfiguredRules()
+            if hasRuleChanges {
+                loadConfiguredRules()
+            }
+
+            if hasShortcutChanges {
+                globalShortcutSettingsView
+                    .discardChanges()
+            }
+
             return true
 
         default:
@@ -317,23 +541,82 @@ final class SettingsWindowController:
     }
 
     func windowWillClose(
-        _ notification: Notification
+        _ notification:
+            Notification
     ) {
         endKeyCapture()
-        exceptionsWindowController = nil
+
+        exceptionsWindowController =
+            nil
+    }
+
+    private func configureShortcutSettingsCallbacks() {
+        globalShortcutSettingsView
+            .onCaptureRequested =
+        {
+            [weak self]
+            field in
+
+            self?
+                .beginShortcutCapture(
+                    field
+                )
+        }
+
+        globalShortcutSettingsView
+            .onCaptureCancellationRequested =
+        {
+            [weak self] in
+
+            self?
+                .endKeyCapture()
+        }
+
+        globalShortcutSettingsView
+            .onSaveRequested =
+        {
+            [weak self]
+            configuration in
+
+            guard let self else {
+                return
+            }
+
+            try self
+                .globalShortcutController
+                .setConfiguration(
+                    configuration
+                )
+        }
     }
 
     private func configureContent() {
-        guard let contentView = window?.contentView else {
+        guard
+            let contentView =
+                window?
+                    .contentView
+        else {
             return
         }
 
-        descriptionLabel.textColor = .secondaryLabelColor
-        sourceHeader.textColor = .secondaryLabelColor
-        destinationHeader.textColor = .secondaryLabelColor
-        behaviorHeader.textColor = .secondaryLabelColor
-        exceptionsHeader.textColor = .secondaryLabelColor
-        launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
+        descriptionLabel.textColor =
+            .secondaryLabelColor
+
+        sourceHeader.textColor =
+            .secondaryLabelColor
+
+        destinationHeader.textColor =
+            .secondaryLabelColor
+
+        behaviorHeader.textColor =
+            .secondaryLabelColor
+
+        exceptionsHeader.textColor =
+            .secondaryLabelColor
+
+        launchBehaviorDescriptionLabel
+            .textColor =
+                .secondaryLabelColor
 
         configureLaunchBehavior()
         configureRulesScrollView()
@@ -344,10 +627,16 @@ final class SettingsWindowController:
                 addRuleButton,
                 saveButton
             ],
-            in: .leading
+            in:
+                .leading
         )
-        actionsStack.orientation = .horizontal
-        actionsStack.alignment = .centerY
+
+        actionsStack.orientation =
+            .horizontal
+
+        actionsStack.alignment =
+            .centerY
+
         let rulesHeaderView =
             makeRulesHeaderView()
 
@@ -356,18 +645,32 @@ final class SettingsWindowController:
                 titleLabel,
                 descriptionLabel,
                 launchBehaviorStack,
+                globalShortcutSettingsView,
                 rulesHeaderView,
                 rulesScrollView,
                 actionsStack,
                 statusLabel
             ],
-            in: .leading
+            in:
+                .leading
         )
-        mainStack.orientation = .vertical
-        mainStack.alignment = .leading
-        mainStack.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(mainStack)
+        mainStack.orientation =
+            .vertical
+
+        mainStack.alignment =
+            .leading
+
+        mainStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        globalShortcutSettingsView
+            .translatesAutoresizingMaskIntoConstraints =
+                false
+
+        contentView.addSubview(
+            mainStack
+        )
 
         NSLayoutConstraint.activate(
             [
@@ -412,17 +715,33 @@ final class SettingsWindowController:
                 launchBehaviorStack.widthAnchor.constraint(
                     equalTo:
                         mainStack.widthAnchor
-                )
+                ),
+
+                globalShortcutSettingsView
+                    .widthAnchor
+                    .constraint(
+                        equalTo:
+                            mainStack.widthAnchor
+                    )
             ]
         )
     }
 
-    private func makeRulesHeaderView() -> NSView {
-        let headerView = NSView()
-        let arrowSpacer = NSView()
-        let removeSpacer = NSView()
+    private func makeRulesHeaderView()
+        -> NSView
+    {
+        let headerView =
+            NSView()
 
-        let views: [NSView] = [
+        let arrowSpacer =
+            NSView()
+
+        let removeSpacer =
+            NSView()
+
+        let views:
+            [NSView] =
+        [
             sourceHeader,
             arrowSpacer,
             destinationHeader,
@@ -432,92 +751,141 @@ final class SettingsWindowController:
         ]
 
         for view in views {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            headerView.addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
+            headerView.addSubview(
+                view
+            )
         }
 
-        headerView.translatesAutoresizingMaskIntoConstraints = false
+        headerView.translatesAutoresizingMaskIntoConstraints =
+            false
 
         NSLayoutConstraint.activate(
             [
                 sourceHeader.leadingAnchor.constraint(
-                    equalTo: headerView.leadingAnchor,
-                    constant: 18
+                    equalTo:
+                        headerView.leadingAnchor,
+                    constant:
+                        18
                 ),
+
                 sourceHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+                    equalTo:
+                        headerView.topAnchor
                 ),
+
                 sourceHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+                    equalTo:
+                        headerView.bottomAnchor
                 ),
 
                 arrowSpacer.leadingAnchor.constraint(
-                    equalTo: sourceHeader.trailingAnchor,
-                    constant: 10
+                    equalTo:
+                        sourceHeader.trailingAnchor,
+                    constant:
+                        10
                 ),
+
                 arrowSpacer.widthAnchor.constraint(
-                    equalToConstant: 18
+                    equalToConstant:
+                        18
                 ),
 
                 destinationHeader.leadingAnchor.constraint(
-                    equalTo: arrowSpacer.trailingAnchor,
-                    constant: 10
+                    equalTo:
+                        arrowSpacer.trailingAnchor,
+                    constant:
+                        10
                 ),
+
                 destinationHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+                    equalTo:
+                        headerView.topAnchor
                 ),
+
                 destinationHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+                    equalTo:
+                        headerView.bottomAnchor
                 ),
 
                 behaviorHeader.leadingAnchor.constraint(
-                    equalTo: destinationHeader.trailingAnchor,
-                    constant: 10
+                    equalTo:
+                        destinationHeader.trailingAnchor,
+                    constant:
+                        10
                 ),
+
                 behaviorHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+                    equalTo:
+                        headerView.topAnchor
                 ),
+
                 behaviorHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+                    equalTo:
+                        headerView.bottomAnchor
                 ),
+
                 behaviorHeader.widthAnchor.constraint(
-                    equalToConstant: 168
+                    equalToConstant:
+                        168
                 ),
 
                 exceptionsHeader.leadingAnchor.constraint(
-                    equalTo: behaviorHeader.trailingAnchor,
-                    constant: 10
+                    equalTo:
+                        behaviorHeader.trailingAnchor,
+                    constant:
+                        10
                 ),
+
                 exceptionsHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+                    equalTo:
+                        headerView.topAnchor
                 ),
+
                 exceptionsHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+                    equalTo:
+                        headerView.bottomAnchor
                 ),
+
                 exceptionsHeader.widthAnchor.constraint(
-                    equalToConstant: 116
+                    equalToConstant:
+                        116
                 ),
 
                 removeSpacer.leadingAnchor.constraint(
-                    equalTo: exceptionsHeader.trailingAnchor,
-                    constant: 10
+                    equalTo:
+                        exceptionsHeader.trailingAnchor,
+                    constant:
+                        10
                 ),
+
                 removeSpacer.trailingAnchor.constraint(
-                    equalTo: headerView.trailingAnchor,
-                    constant: -18
+                    equalTo:
+                        headerView.trailingAnchor,
+                    constant:
+                        -18
                 ),
+
                 removeSpacer.widthAnchor.constraint(
-                    equalToConstant: 82
+                    equalToConstant:
+                        82
                 ),
 
                 sourceHeader.widthAnchor.constraint(
-                    equalTo: destinationHeader.widthAnchor
+                    equalTo:
+                        destinationHeader.widthAnchor
                 ),
+
                 sourceHeader.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
+                    greaterThanOrEqualToConstant:
+                        120
                 ),
+
                 headerView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 20
+                    greaterThanOrEqualToConstant:
+                        20
                 )
             ]
         )
@@ -526,20 +894,30 @@ final class SettingsWindowController:
     }
 
     private func configureLaunchBehavior() {
-        launchBehaviorTitleLabel.setContentHuggingPriority(
-            .required,
-            for: .vertical
-        )
+        launchBehaviorTitleLabel
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .vertical
+            )
 
-        launchBehaviorDescriptionLabel.setContentHuggingPriority(
-            .required,
-            for: .vertical
-        )
+        launchBehaviorDescriptionLabel
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .vertical
+            )
 
-        launchBehaviorControl.segmentStyle = .rounded
-        launchBehaviorControl.target = self
+        launchBehaviorControl.segmentStyle =
+            .rounded
+
+        launchBehaviorControl.target =
+            self
+
         launchBehaviorControl.action =
-            #selector(launchBehaviorChanged)
+            #selector(
+                launchBehaviorChanged
+            )
 
         launchBehaviorControl.toolTip =
             "Choose whether remapping starts off, restores its last state, or starts on."
@@ -550,27 +928,40 @@ final class SettingsWindowController:
                 launchBehaviorDescriptionLabel,
                 launchBehaviorControl
             ],
-            in: .leading
+            in:
+                .leading
         )
 
-        launchBehaviorStack.orientation = .vertical
-        launchBehaviorStack.alignment = .leading
-        launchBehaviorStack.spacing = 6
+        launchBehaviorStack.orientation =
+            .vertical
 
-        launchBehaviorControl.translatesAutoresizingMaskIntoConstraints =
-            false
+        launchBehaviorStack.alignment =
+            .leading
 
-        launchBehaviorControl.widthAnchor.constraint(
-            equalTo: launchBehaviorStack.widthAnchor
-        ).isActive = true
+        launchBehaviorStack.spacing =
+            6
+
+        launchBehaviorControl
+            .translatesAutoresizingMaskIntoConstraints =
+                false
+
+        launchBehaviorControl
+            .widthAnchor
+            .constraint(
+                equalTo:
+                    launchBehaviorStack.widthAnchor
+            )
+            .isActive =
+                true
     }
 
     private func synchronizeLaunchBehavior() {
         launchBehaviorControl.selectedSegment =
             segmentIndex(
-                for: appPreferencesController
-                    .preferences
-                    .launchBehavior
+                for:
+                    appPreferencesController
+                        .preferences
+                        .launchBehavior
             )
     }
 
@@ -581,9 +972,14 @@ final class SettingsWindowController:
                 .preferences
                 .launchBehavior
 
-        guard let requestedBehavior = launchBehavior(
-            for: launchBehaviorControl.selectedSegment
-        ) else {
+        guard
+            let requestedBehavior =
+                launchBehavior(
+                    for:
+                        launchBehaviorControl
+                            .selectedSegment
+                )
+        else {
             synchronizeLaunchBehavior()
             return
         }
@@ -598,18 +994,21 @@ final class SettingsWindowController:
         } catch {
             launchBehaviorControl.selectedSegment =
                 segmentIndex(
-                    for: previousBehavior
+                    for:
+                        previousBehavior
                 )
 
             setStatus(
                 "The launch behavior could not be saved.",
-                isError: true
+                isError:
+                    true
             )
         }
     }
 
     private func segmentIndex(
-        for launchBehavior: RemappingLaunchBehavior
+        for launchBehavior:
+            RemappingLaunchBehavior
     ) -> Int {
         switch launchBehavior {
         case .alwaysOff:
@@ -624,7 +1023,8 @@ final class SettingsWindowController:
     }
 
     private func launchBehavior(
-        for segmentIndex: Int
+        for segmentIndex:
+            Int
     ) -> RemappingLaunchBehavior? {
         switch segmentIndex {
         case 0:
@@ -642,29 +1042,59 @@ final class SettingsWindowController:
     }
 
     private func configureActionButtons() {
-        addRuleButton.title = "Add Rule"
+        addRuleButton.title =
+            "Add Rule"
 
-        addRuleButton.image = NSImage(
-            systemSymbolName: "plus",
-            accessibilityDescription: "Add Rule"
-        )
+        addRuleButton.image =
+            NSImage(
+                systemSymbolName:
+                    "plus",
+                accessibilityDescription:
+                    "Add Rule"
+            )
 
-        addRuleButton.imagePosition = .imageLeading
-        addRuleButton.bezelStyle = .rounded
-        addRuleButton.target = self
-        addRuleButton.action = #selector(addEmptyRule)
+        addRuleButton.imagePosition =
+            .imageLeading
 
-        saveButton.title = "Save Rules"
-        saveButton.bezelStyle = .rounded
-        saveButton.keyEquivalent = "\r"
-        saveButton.target = self
-        saveButton.action = #selector(saveRules)
+        addRuleButton.bezelStyle =
+            .rounded
+
+        addRuleButton.target =
+            self
+
+        addRuleButton.action =
+            #selector(
+                addEmptyRule
+            )
+
+        saveButton.title =
+            "Save Rules"
+
+        saveButton.bezelStyle =
+            .rounded
+
+        saveButton.keyEquivalent =
+            "\r"
+
+        saveButton.target =
+            self
+
+        saveButton.action =
+            #selector(
+                saveRules
+            )
     }
 
     private func configureRulesScrollView() {
-        rulesStackView.orientation = .vertical
-        rulesStackView.alignment = .leading
-        rulesStackView.distribution = .fill
+        rulesStackView.orientation =
+            .vertical
+
+        rulesStackView.alignment =
+            .leading
+
+        rulesStackView.distribution =
+            .fill
+
         rulesStackView.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -675,58 +1105,84 @@ final class SettingsWindowController:
             rulesStackView
         )
 
-        rulesScrollView.hasVerticalScroller = true
-        rulesScrollView.autohidesScrollers = true
-        rulesScrollView.borderType = .bezelBorder
-        rulesScrollView.drawsBackground = false
-        rulesScrollView.documentView = rulesDocumentView
+        rulesScrollView.hasVerticalScroller =
+            true
+
+        rulesScrollView.autohidesScrollers =
+            true
+
+        rulesScrollView.borderType =
+            .bezelBorder
+
+        rulesScrollView.drawsBackground =
+            false
+
+        rulesScrollView.documentView =
+            rulesDocumentView
+
         rulesScrollView.translatesAutoresizingMaskIntoConstraints =
             false
 
         rulesScrollView.setContentHuggingPriority(
             .defaultLow,
-            for: .vertical
+            for:
+                .vertical
         )
 
-        rulesScrollView.setContentCompressionResistancePriority(
-            .defaultLow,
-            for: .vertical
-        )
+        rulesScrollView
+            .setContentCompressionResistancePriority(
+                .defaultLow,
+                for:
+                    .vertical
+            )
 
         NSLayoutConstraint.activate(
             [
                 rulesStackView.topAnchor.constraint(
-                    equalTo: rulesDocumentView.topAnchor,
-                    constant: 12
+                    equalTo:
+                        rulesDocumentView.topAnchor,
+                    constant:
+                        12
                 ),
 
                 rulesStackView.leadingAnchor.constraint(
-                    equalTo: rulesDocumentView.leadingAnchor,
-                    constant: 12
+                    equalTo:
+                        rulesDocumentView.leadingAnchor,
+                    constant:
+                        12
                 ),
 
                 rulesStackView.trailingAnchor.constraint(
-                    equalTo: rulesDocumentView.trailingAnchor,
-                    constant: -12
+                    equalTo:
+                        rulesDocumentView.trailingAnchor,
+                    constant:
+                        -12
                 ),
 
                 rulesStackView.bottomAnchor.constraint(
-                    equalTo: rulesDocumentView.bottomAnchor,
-                    constant: -12
+                    equalTo:
+                        rulesDocumentView.bottomAnchor,
+                    constant:
+                        -12
                 ),
 
                 rulesDocumentView.widthAnchor.constraint(
                     equalTo:
-                        rulesScrollView.contentView.widthAnchor
+                        rulesScrollView
+                            .contentView
+                            .widthAnchor
                 ),
 
                 rulesDocumentView.heightAnchor.constraint(
                     greaterThanOrEqualTo:
-                        rulesScrollView.contentView.heightAnchor
+                        rulesScrollView
+                            .contentView
+                            .heightAnchor
                 ),
 
                 rulesScrollView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 140
+                    greaterThanOrEqualToConstant:
+                        140
                 )
             ]
         )
@@ -741,154 +1197,250 @@ final class SettingsWindowController:
                 try remappingController
                     .loadConfiguredRules()
 
-            savedRules = rules
+            savedRules =
+                rules
 
             for rule in rules {
                 addRuleRow(
-                    rule: rule,
-                    scrollIntoView: false
+                    rule:
+                        rule,
+                    scrollIntoView:
+                        false
                 )
             }
 
             refreshChangeState()
         } catch {
-            savedRules = []
+            savedRules =
+                []
 
             setStatus(
                 "The configured rules could not be loaded.",
-                isError: true
+                isError:
+                    true
             )
 
-            saveButton.isEnabled = false
+            saveButton.isEnabled =
+                false
         }
     }
 
     private func addRuleRow(
-        rule: RemapRule? = nil,
-        scrollIntoView: Bool = true
+        rule:
+            RemapRule? = nil,
+        scrollIntoView:
+            Bool = true
     ) {
-        let row = RemappingRuleRowView(rule: rule)
-        row.applyTextScale(textScale)
-
-        row.onSourceKeyRequested = { [weak self, weak row] in
-            guard let row else {
-                return
-            }
-
-            self?.beginKeyCapture(
-                in: row,
-                field: .source
+        let row =
+            RemappingRuleRowView(
+                rule:
+                    rule
             )
-        }
 
-        row.onDestinationKeyRequested = { [weak self, weak row] in
+        row.applyTextScale(
+            textScale
+        )
+
+        row.onSourceKeyRequested = {
+            [weak self, weak row] in
+
             guard let row else {
                 return
             }
 
-            self?.beginKeyCapture(
-                in: row,
-                field: .destination
+            self?
+                .beginRuleKeyCapture(
+                    in:
+                        row,
+                    field:
+                        .source
+                )
+        }
+
+        row.onDestinationKeyRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?
+                .beginRuleKeyCapture(
+                    in:
+                        row,
+                    field:
+                        .destination
+                )
+        }
+
+        row.onExceptionsRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?
+                .showExceptions(
+                    for:
+                        row
+                )
+        }
+
+        row.onRemoveRequested = {
+            [weak self, weak row] in
+
+            guard let row else {
+                return
+            }
+
+            self?
+                .removeRuleRow(
+                    row
+                )
+        }
+
+        row.onRuleChanged = {
+            [weak self] in
+
+            self?
+                .refreshChangeState()
+        }
+
+        ruleRows.append(
+            row
+        )
+
+        rulesStackView
+            .addArrangedSubview(
+                row
             )
-        }
 
-        row.onExceptionsRequested = { [weak self, weak row] in
-            guard let row else {
-                return
-            }
+        row.translatesAutoresizingMaskIntoConstraints =
+            false
 
-            self?.showExceptions(for: row)
-        }
-
-        row.onRemoveRequested = { [weak self, weak row] in
-            guard let row else {
-                return
-            }
-
-            self?.removeRuleRow(row)
-        }
-
-        row.onRuleChanged = { [weak self] in
-            self?.refreshChangeState()
-        }
-
-        ruleRows.append(row)
-        rulesStackView.addArrangedSubview(row)
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.widthAnchor.constraint(
-            equalTo: rulesStackView.widthAnchor
-        ).isActive = true
+            equalTo:
+                rulesStackView.widthAnchor
+        ).isActive =
+            true
 
         refreshChangeState()
 
         if scrollIntoView {
-            scrollToRuleRow(row)
+            scrollToRuleRow(
+                row
+            )
         }
     }
 
     private func showExceptions(
-        for row: RemappingRuleRowView
+        for row:
+            RemappingRuleRowView
     ) {
         endKeyCapture()
 
         guard
             exceptionsWindowController == nil,
-            let parentWindow = window,
-            let rule = row.rule,
-            rule.matchingMode == .preserveModifiers
+            let parentWindow =
+                window,
+            let rule =
+                row.rule,
+            rule.matchingMode
+                == .preserveModifiers
         else {
             return
         }
 
-        let controller = RemapOverridesWindowController(
-            parentWindow: parentWindow,
-            rule: rule,
-            remappingController: remappingController,
-            textScale: textScale,
-            onSave: { [weak self, weak row] overrides in
-                row?.setOverrides(overrides)
-                self?.refreshChangeState()
-            },
-            onClose: { [weak self] in
-                self?.exceptionsWindowController = nil
-            }
-        )
+        let controller =
+            RemapOverridesWindowController(
+                parentWindow:
+                    parentWindow,
+                rule:
+                    rule,
+                remappingController:
+                    remappingController,
+                textScale:
+                    textScale,
+                onSave: {
+                    [weak self, weak row]
+                    overrides in
 
-        exceptionsWindowController = controller
+                    row?
+                        .setOverrides(
+                            overrides
+                        )
+
+                    self?
+                        .refreshChangeState()
+                },
+                onClose: {
+                    [weak self] in
+
+                    self?
+                        .exceptionsWindowController =
+                            nil
+                }
+            )
+
+        exceptionsWindowController =
+            controller
+
         controller.showAsSheet()
     }
 
     private func scrollToRuleRow(
-        _ row: RemappingRuleRowView
+        _ row:
+            RemappingRuleRowView
     ) {
-        rulesDocumentView.layoutSubtreeIfNeeded()
-        rulesStackView.layoutSubtreeIfNeeded()
+        rulesDocumentView
+            .layoutSubtreeIfNeeded()
 
-        let visibleRect = row.convert(
-            row.bounds,
-            to: rulesDocumentView
-        )
+        rulesStackView
+            .layoutSubtreeIfNeeded()
 
-        rulesDocumentView.scrollToVisible(
-            visibleRect
-        )
+        let visibleRect =
+            row.convert(
+                row.bounds,
+                to:
+                    rulesDocumentView
+            )
+
+        rulesDocumentView
+            .scrollToVisible(
+                visibleRect
+            )
     }
 
     private func removeRuleRow(
-        _ row: RemappingRuleRowView
+        _ row:
+            RemappingRuleRowView
     ) {
         if captureRow === row {
             endKeyCapture()
         }
 
-        guard let index = ruleRows.firstIndex(
-            where: { $0 === row }
-        ) else {
+        guard
+            let index =
+                ruleRows.firstIndex(
+                    where: {
+                        $0 === row
+                    }
+                )
+        else {
             return
         }
 
-        ruleRows.remove(at: index)
-        rulesStackView.removeArrangedSubview(row)
+        ruleRows.remove(
+            at:
+                index
+        )
+
+        rulesStackView
+            .removeArrangedSubview(
+                row
+            )
+
         row.removeFromSuperview()
 
         refreshChangeState()
@@ -896,7 +1448,11 @@ final class SettingsWindowController:
 
     private func removeAllRuleRows() {
         for row in ruleRows {
-            rulesStackView.removeArrangedSubview(row)
+            rulesStackView
+                .removeArrangedSubview(
+                    row
+                )
+
             row.removeFromSuperview()
         }
 
@@ -908,9 +1464,11 @@ final class SettingsWindowController:
         addRuleRow()
     }
 
-    private func beginKeyCapture(
-        in row: RemappingRuleRowView,
-        field: RemappingRuleRowView.KeyField
+    private func beginRuleKeyCapture(
+        in row:
+            RemappingRuleRowView,
+        field:
+            RemappingRuleRowView.KeyField
     ) {
         if
             captureRow === row,
@@ -921,31 +1479,100 @@ final class SettingsWindowController:
             return
         }
 
-        if captureRow != nil {
-            endKeyCapture()
-        }
+        endKeyCapture()
 
-        captureRow = row
-        captureField = field
-        remappingController.beginKeyCapture()
-        row.showCapturePrompt(for: field)
+        captureRow =
+            row
 
-        if row.matchingMode == .preserveModifiers {
+        captureField =
+            field
+
+        beginCaptureSession()
+
+        row.showCapturePrompt(
+            for:
+                field
+        )
+
+        if row.matchingMode
+            == .preserveModifiers
+        {
             setStatus(
                 "Press a physical key. Modifiers are ignored in Preserve Modifiers mode. Click the same field again to cancel.",
-                isError: false
+                isError:
+                    false
             )
         } else {
             setStatus(
                 "Press a key combination. Click the same field again to cancel.",
-                isError: false
+                isError:
+                    false
             )
         }
     }
 
+    private func beginShortcutCapture(
+        _ field:
+            GlobalShortcutSettingsView.CaptureField
+    ) {
+        if shortcutCaptureField == field {
+            endKeyCapture()
+            return
+        }
+
+        endKeyCapture()
+
+        shortcutCaptureField =
+            field
+
+        beginCaptureSession()
+
+        globalShortcutSettingsView
+            .beginCapturePrompt(
+                for:
+                    field
+            )
+    }
+
+    private func beginCaptureSession() {
+        remappingController
+            .beginKeyCapture()
+
+        globalShortcutController
+            .beginShortcutCapture()
+    }
+
     private func handleKeyDown(
-        _ event: NSEvent
+        _ event:
+            NSEvent
     ) -> Bool {
+        if let shortcutCaptureField {
+            if event.keyCode
+                == UInt16(
+                    kVK_Escape
+                )
+            {
+                endKeyCapture()
+                return true
+            }
+
+            let combination =
+                keyCombination(
+                    from:
+                        event
+                )
+
+            globalShortcutSettingsView
+                .setCapturedShortcut(
+                    combination,
+                    for:
+                        shortcutCaptureField
+                )
+
+            endKeyCapture()
+            return true
+        }
+
         guard
             let captureRow,
             let captureField
@@ -953,16 +1580,16 @@ final class SettingsWindowController:
             return false
         }
 
-        let combination = KeyCombination(
-            keyCode: CGKeyCode(event.keyCode),
-            modifiers: KeyModifiers(
-                appKitFlags: event.modifierFlags
+        let combination =
+            keyCombination(
+                from:
+                    event
             )
-        )
 
         captureRow.setCombination(
             combination,
-            for: captureField
+            for:
+                captureField
         )
 
         endKeyCapture()
@@ -970,76 +1597,156 @@ final class SettingsWindowController:
         return true
     }
 
+    private func keyCombination(
+        from event:
+            NSEvent
+    ) -> KeyCombination {
+        KeyCombination(
+            keyCode:
+                CGKeyCode(
+                    event.keyCode
+                ),
+            modifiers:
+                KeyModifiers(
+                    appKitFlags:
+                        event.modifierFlags
+                )
+        )
+    }
+
     private func endKeyCapture() {
-        guard captureRow != nil else {
+        let hadActiveCapture =
+            captureRow != nil
+                || shortcutCaptureField != nil
+
+        guard hadActiveCapture else {
             return
         }
 
-        captureRow?.restoreButtonTitles()
+        captureRow?
+            .restoreButtonTitles()
 
-        captureRow = nil
-        captureField = nil
+        globalShortcutSettingsView
+            .endCapturePrompt()
 
-        remappingController.endKeyCapture()
+        captureRow =
+            nil
+
+        captureField =
+            nil
+
+        shortcutCaptureField =
+            nil
+
+        do {
+            try globalShortcutController
+                .endShortcutCapture()
+        } catch {
+            globalShortcutSettingsView
+                .showCaptureRestorationFailure()
+
+            setStatus(
+                "The previous global shortcut could not be restored after key capture.",
+                isError:
+                    true
+            )
+        }
+
+        remappingController
+            .endKeyCapture()
     }
 
     /// Returns all current rules only when every row is complete.
-    private var completeCurrentRules: [RemapRule]? {
-        let rules = ruleRows.compactMap {
-            $0.rule
-        }
+    private var completeCurrentRules:
+        [RemapRule]?
+    {
+        let rules =
+            ruleRows.compactMap {
+                $0.rule
+            }
 
-        guard rules.count == ruleRows.count else {
+        guard
+            rules.count
+                == ruleRows.count
+        else {
             return nil
         }
 
         return rules
     }
 
-    /// Indicates whether the editor content differs from the
-    /// last successfully loaded or saved rule collection.
-    private var hasUnsavedChanges: Bool {
-        guard let currentRules = completeCurrentRules else {
+    /// Indicates whether the rule editor differs from the last
+    /// successfully loaded or saved rule collection.
+    private var hasUnsavedRuleChanges:
+        Bool
+    {
+        guard
+            let currentRules =
+                completeCurrentRules
+        else {
             return true
         }
 
-        return normalizedRules(currentRules)
-            != normalizedRules(savedRules)
+        return normalizedRules(
+            currentRules
+        ) != normalizedRules(
+            savedRules
+        )
     }
 
     /// Sorts rules and their exceptions into a stable order.
     private func normalizedRules(
-        _ rules: [RemapRule]
+        _ rules:
+            [RemapRule]
     ) -> [RemapRule] {
-        let normalizedRules = rules.map { rule in
-            RemapRule(
-                source: rule.source,
-                destination: rule.destination,
-                matchingMode: rule.matchingMode,
-                overrides: normalizedOverrides(rule.overrides)
-            )
-        }
+        let normalizedRules =
+            rules.map {
+                rule in
 
-        return normalizedRules.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
-                return first.source.keyCode < second.source.keyCode
+                RemapRule(
+                    source:
+                        rule.source,
+                    destination:
+                        rule.destination,
+                    matchingMode:
+                        rule.matchingMode,
+                    overrides:
+                        normalizedOverrides(
+                            rule.overrides
+                        )
+                )
             }
 
-            if
-                first.source.modifiers.rawValue
-                    != second.source.modifiers.rawValue
+        return normalizedRules.sorted {
+            first,
+            second in
+
+            if first.source.keyCode
+                != second.source.keyCode
+            {
+                return first.source.keyCode
+                    < second.source.keyCode
+            }
+
+            if first.source.modifiers.rawValue
+                != second.source.modifiers.rawValue
             {
                 return first.source.modifiers.rawValue
                     < second.source.modifiers.rawValue
             }
 
-            if first.matchingMode.rawValue != second.matchingMode.rawValue {
+            if first.matchingMode.rawValue
+                != second.matchingMode.rawValue
+            {
                 return first.matchingMode.rawValue
                     < second.matchingMode.rawValue
             }
 
-            if first.destination.keyCode != second.destination.keyCode {
-                return first.destination.keyCode < second.destination.keyCode
+            if first.destination.keyCode
+                != second.destination.keyCode
+            {
+                return first.destination.keyCode
+                    < second.destination.keyCode
             }
 
             return first.destination.modifiers.rawValue
@@ -1048,49 +1755,91 @@ final class SettingsWindowController:
     }
 
     private func normalizedOverrides(
-        _ overrides: [RemapOverride]
+        _ overrides:
+            [RemapOverride]
     ) -> [RemapOverride] {
-        overrides.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
-                return first.source.keyCode < second.source.keyCode
+        overrides.sorted {
+            first,
+            second in
+
+            if first.source.keyCode
+                != second.source.keyCode
+            {
+                return first.source.keyCode
+                    < second.source.keyCode
             }
 
-            if
-                first.source.modifiers.rawValue
-                    != second.source.modifiers.rawValue
+            if first.source.modifiers.rawValue
+                != second.source.modifiers.rawValue
             {
                 return first.source.modifiers.rawValue
                     < second.source.modifiers.rawValue
             }
 
-            return actionSortKey(first.action)
-                < actionSortKey(second.action)
+            return actionSortKey(
+                first.action
+            ) < actionSortKey(
+                second.action
+            )
         }
     }
 
-    private func actionSortKey(_ action: RemapAction) -> String {
+    private func actionSortKey(
+        _ action:
+            RemapAction
+    ) -> String {
         switch action {
         case .passThrough:
             return "0"
 
-        case .replaceWith(let destination):
+        case .replaceWith(
+            let destination
+        ):
             return "1-\(destination.keyCode)-\(destination.modifiers.rawValue)"
         }
     }
 
-    private func validationSnapshot() -> ValidationSnapshot {
-        var invalidRows = Set<ObjectIdentifier>()
-        var exactOwners: [KeyCombination: [RemappingRuleRowView]] = [:]
-        var preservingOwners: [CGKeyCode: [RemappingRuleRowView]] = [:]
+    private func validationSnapshot()
+        -> ValidationSnapshot
+    {
+        var invalidRows =
+            Set<ObjectIdentifier>()
 
-        var hasIncompleteRule = false
-        var hasIdentityRule = false
-        var hasDuplicateSource = false
+        var exactOwners:
+            [
+                KeyCombination:
+                    [RemappingRuleRowView]
+            ] = [:]
+
+        var preservingOwners:
+            [
+                CGKeyCode:
+                    [RemappingRuleRowView]
+            ] = [:]
+
+        var hasIncompleteRule =
+            false
+
+        var hasIdentityRule =
+            false
+
+        var hasDuplicateSource =
+            false
 
         for row in ruleRows {
-            guard let rule = row.rule else {
-                hasIncompleteRule = true
-                invalidRows.insert(ObjectIdentifier(row))
+            guard
+                let rule =
+                    row.rule
+            else {
+                hasIncompleteRule =
+                    true
+
+                invalidRows.insert(
+                    ObjectIdentifier(
+                        row
+                    )
+                )
+
                 continue
             }
 
@@ -1098,82 +1847,148 @@ final class SettingsWindowController:
             case .exact:
                 exactOwners[
                     rule.source,
-                    default: []
-                ].append(row)
+                    default:
+                        []
+                ].append(
+                    row
+                )
 
-                if rule.source == rule.destination {
-                    hasIdentityRule = true
-                    invalidRows.insert(ObjectIdentifier(row))
+                if rule.source
+                    == rule.destination
+                {
+                    hasIdentityRule =
+                        true
+
+                    invalidRows.insert(
+                        ObjectIdentifier(
+                            row
+                        )
+                    )
                 }
 
             case .preserveModifiers:
                 preservingOwners[
                     rule.source.keyCode,
-                    default: []
-                ].append(row)
+                    default:
+                        []
+                ].append(
+                    row
+                )
 
-                if rule.source.keyCode == rule.destination.keyCode {
-                    hasIdentityRule = true
-                    invalidRows.insert(ObjectIdentifier(row))
+                if rule.source.keyCode
+                    == rule.destination.keyCode
+                {
+                    hasIdentityRule =
+                        true
+
+                    invalidRows.insert(
+                        ObjectIdentifier(
+                            row
+                        )
+                    )
                 }
 
-                for override in rule.overrides {
+                for override in
+                    rule.overrides
+                {
                     exactOwners[
                         override.source,
-                        default: []
-                    ].append(row)
+                        default:
+                            []
+                    ].append(
+                        row
+                    )
 
-                    if case .replaceWith(let destination) = override.action,
-                       override.source == destination
+                    if
+                        case .replaceWith(
+                            let destination
+                        ) = override.action,
+                        override.source
+                            == destination
                     {
-                        hasIdentityRule = true
-                        invalidRows.insert(ObjectIdentifier(row))
+                        hasIdentityRule =
+                            true
+
+                        invalidRows.insert(
+                            ObjectIdentifier(
+                                row
+                            )
+                        )
                     }
                 }
             }
         }
 
-        for owners in exactOwners.values where owners.count > 1 {
-            hasDuplicateSource = true
+        for owners in
+            exactOwners.values
+        where owners.count > 1
+        {
+            hasDuplicateSource =
+                true
 
             for row in owners {
-                invalidRows.insert(ObjectIdentifier(row))
+                invalidRows.insert(
+                    ObjectIdentifier(
+                        row
+                    )
+                )
             }
         }
 
-        for owners in preservingOwners.values where owners.count > 1 {
-            hasDuplicateSource = true
+        for owners in
+            preservingOwners.values
+        where owners.count > 1
+        {
+            hasDuplicateSource =
+                true
 
             for row in owners {
-                invalidRows.insert(ObjectIdentifier(row))
+                invalidRows.insert(
+                    ObjectIdentifier(
+                        row
+                    )
+                )
             }
         }
 
-        let issue: EditorValidationIssue?
+        let issue:
+            EditorValidationIssue?
 
         if hasDuplicateSource {
-            issue = .duplicateSource
+            issue =
+                .duplicateSource
         } else if hasIdentityRule {
-            issue = .identicalSourceAndDestination
+            issue =
+                .identicalSourceAndDestination
         } else if hasIncompleteRule {
-            issue = .incompleteRule
+            issue =
+                .incompleteRule
         } else {
-            issue = nil
+            issue =
+                nil
         }
 
         return ValidationSnapshot(
-            issue: issue,
-            invalidRows: invalidRows
+            issue:
+                issue,
+            invalidRows:
+                invalidRows
         )
     }
 
     private func applyValidationAppearance(
-        _ snapshot: ValidationSnapshot
+        _ snapshot:
+            ValidationSnapshot
     ) {
         for row in ruleRows {
-            let isInvalid = snapshot.invalidRows.contains(
-                ObjectIdentifier(row)
-            )
+            let isInvalid =
+                snapshot
+                    .invalidRows
+                    .contains(
+                        ObjectIdentifier(
+                            row
+                        )
+                    )
 
             row.setValidationErrorVisible(
                 isInvalid
@@ -1182,19 +1997,29 @@ final class SettingsWindowController:
     }
 
     private func refreshChangeState() {
-        let snapshot = validationSnapshot()
-        applyValidationAppearance(snapshot)
+        let snapshot =
+            validationSnapshot()
 
-        let hasChanges = hasUnsavedChanges
+        applyValidationAppearance(
+            snapshot
+        )
+
+        let hasChanges =
+            hasUnsavedRuleChanges
 
         saveButton.isEnabled =
-            snapshot.issue == nil && hasChanges
+            snapshot.issue == nil
+                && hasChanges
 
-        if let issue = snapshot.issue {
+        if let issue =
+            snapshot.issue
+        {
             setStatus(
                 issue.message,
-                isError: true
+                isError:
+                    true
             )
+
             return
         }
 
@@ -1202,12 +2027,14 @@ final class SettingsWindowController:
             if savedRules.isEmpty {
                 setStatus(
                     "No remapping rules are configured.",
-                    isError: false
+                    isError:
+                        false
                 )
             } else {
                 setStatus(
                     "Rules are saved locally on this Mac.",
-                    isError: false
+                    isError:
+                        false
                 )
             }
 
@@ -1215,78 +2042,105 @@ final class SettingsWindowController:
         }
 
         setStatus(
-            "You have unsaved changes.",
-            isError: false
+            "You have unsaved rule changes.",
+            isError:
+                false
         )
     }
 
     @objc
     private func saveRules() {
-        _ = persistRules()
+        _ =
+            persistRules()
     }
 
     @discardableResult
-    private func persistRules() -> Bool {
-        let snapshot = validationSnapshot()
-        applyValidationAppearance(snapshot)
+    private func persistRules()
+        -> Bool
+    {
+        let snapshot =
+            validationSnapshot()
 
-        if let issue = snapshot.issue {
+        applyValidationAppearance(
+            snapshot
+        )
+
+        if let issue =
+            snapshot.issue
+        {
             setStatus(
                 issue.message,
-                isError: true
+                isError:
+                    true
             )
+
             return false
         }
 
-        guard let rules = completeCurrentRules else {
+        guard
+            let rules =
+                completeCurrentRules
+        else {
             setStatus(
                 "Complete every highlighted rule before saving.",
-                isError: true
+                isError:
+                    true
             )
+
             return false
         }
 
         do {
             try remappingController
-                .replaceConfiguredRules(rules)
+                .replaceConfiguredRules(
+                    rules
+                )
 
-            savedRules = rules
+            savedRules =
+                rules
+
             refreshChangeState()
-
             return true
-        } catch let error as RemappingRulesValidationError {
+        } catch let error as
+            RemappingRulesValidationError
+        {
             switch error {
             case .duplicateSourceKey,
                  .duplicateSourceCombination,
                  .duplicatePreservingSourceKey:
                 setStatus(
                     "Each source key or key combination can appear only once.",
-                    isError: true
+                    isError:
+                        true
                 )
 
             case .identicalSourceAndDestination,
                  .identicalSourceAndDestinationCombination:
                 setStatus(
                     "A source and destination combination cannot be identical.",
-                    isError: true
+                    isError:
+                        true
                 )
 
             case .invalidModifierPreservingEndpoints:
                 setStatus(
                     "A Preserve Modifiers rule must use source and destination keys without modifiers.",
-                    isError: true
+                    isError:
+                        true
                 )
 
             case .overridesRequireModifierPreservingRule:
                 setStatus(
                     "Custom exceptions can only be added to a Preserve Modifiers rule.",
-                    isError: true
+                    isError:
+                        true
                 )
 
             case .overrideSourceKeyMismatch:
                 setStatus(
                     "Every exception must use the same physical source key as its parent rule.",
-                    isError: true
+                    isError:
+                        true
                 )
             }
 
@@ -1294,7 +2148,8 @@ final class SettingsWindowController:
         } catch {
             setStatus(
                 "The remapping rules could not be saved.",
-                isError: true
+                isError:
+                    true
             )
 
             return false
@@ -1302,106 +2157,176 @@ final class SettingsWindowController:
     }
 
     private func setStatus(
-        _ message: String,
-        isError: Bool
+        _ message:
+            String,
+        isError:
+            Bool
     ) {
-        statusLabel.stringValue = message
+        statusLabel.stringValue =
+            message
+
         statusLabel.textColor =
-            isError ? .systemRed : .secondaryLabelColor
+            isError
+                ? .systemRed
+                : .secondaryLabelColor
     }
 
     private func setTextScale(
-        _ proposedScale: CGFloat
+        _ proposedScale:
+            CGFloat
     ) {
-        let newScale = Self.clampedTextScale(
-            proposedScale
-        )
+        let newScale =
+            Self.clampedTextScale(
+                proposedScale
+            )
 
-        guard newScale != textScale else {
+        guard
+            newScale
+                != textScale
+        else {
             return
         }
 
-        textScale = newScale
+        textScale =
+            newScale
 
         UserDefaults.standard.set(
-            Double(newScale),
-            forKey: TextSizePreference.storageKey
+            Double(
+                newScale
+            ),
+            forKey:
+                TextSizePreference
+                    .storageKey
         )
 
         applyTextScale()
     }
 
     private func applyTextScale() {
-        titleLabel.font = NSFont.systemFont(
-            ofSize: 22 * textScale,
-            weight: .semibold
-        )
+        titleLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    22 * textScale,
+                weight:
+                    .semibold
+            )
 
-        descriptionLabel.font = NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
-        )
+        descriptionLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    14 * textScale,
+                weight:
+                    .regular
+            )
 
-        sourceHeader.font = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .medium
-        )
+        sourceHeader.font =
+            NSFont.systemFont(
+                ofSize:
+                    13 * textScale,
+                weight:
+                    .medium
+            )
 
-        destinationHeader.font = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .medium
-        )
+        destinationHeader.font =
+            NSFont.systemFont(
+                ofSize:
+                    13 * textScale,
+                weight:
+                    .medium
+            )
 
-        behaviorHeader.font = destinationHeader.font
-        exceptionsHeader.font = destinationHeader.font
+        behaviorHeader.font =
+            destinationHeader.font
 
-        statusLabel.font = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .regular
-        )
+        exceptionsHeader.font =
+            destinationHeader.font
 
-        let actionFont = NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
-        )
+        statusLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    13 * textScale,
+                weight:
+                    .regular
+            )
 
-        launchBehaviorTitleLabel.font = NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .semibold
-        )
+        let actionFont =
+            NSFont.systemFont(
+                ofSize:
+                    14 * textScale,
+                weight:
+                    .regular
+            )
 
-        launchBehaviorDescriptionLabel.font = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .regular
-        )
+        launchBehaviorTitleLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    14 * textScale,
+                weight:
+                    .semibold
+            )
 
-        launchBehaviorControl.font = actionFont
-        launchBehaviorStack.spacing = 6 * textScale
+        launchBehaviorDescriptionLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    13 * textScale,
+                weight:
+                    .regular
+            )
 
-        addRuleButton.font = actionFont
-        saveButton.font = actionFont
+        launchBehaviorControl.font =
+            actionFont
 
-        rulesStackView.spacing = 10 * textScale
-        actionsStack.spacing = 12 * textScale
-        mainStack.spacing = 16 * textScale
+        launchBehaviorStack.spacing =
+            6 * textScale
+
+        globalShortcutSettingsView
+            .applyTextScale(
+                textScale
+            )
+
+        addRuleButton.font =
+            actionFont
+
+        saveButton.font =
+            actionFont
+
+        rulesStackView.spacing =
+            10 * textScale
+
+        actionsStack.spacing =
+            12 * textScale
+
+        mainStack.spacing =
+            16 * textScale
 
         for row in ruleRows {
-            row.applyTextScale(textScale)
+            row.applyTextScale(
+                textScale
+            )
         }
 
-        window?.contentView?.needsLayout = true
-        window?.contentView?.layoutSubtreeIfNeeded()
+        window?
+            .contentView?
+            .needsLayout =
+                true
+
+        window?
+            .contentView?
+            .layoutSubtreeIfNeeded()
     }
 
     private static func clampedTextScale(
-        _ scale: CGFloat
+        _ scale:
+            CGFloat
     ) -> CGFloat {
         min(
             max(
                 scale,
-                TextSizePreference.minimumScale
+                TextSizePreference
+                    .minimumScale
             ),
-            TextSizePreference.maximumScale
+            TextSizePreference
+                .maximumScale
         )
     }
 }

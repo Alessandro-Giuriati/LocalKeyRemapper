@@ -20,19 +20,26 @@ nonisolated final class RemappingEngine {
     /// Modifier-preserving rules indexed by physical source key.
     private var preservingMappings:
         [CGKeyCode: CGKeyCode] = [:]
-    
+
     /// Combinations reserved for application-level commands.
     ///
-    /// Reserved combinations always pass through unchanged, even when
-    /// a normal remapping rule would otherwise match them.
+    /// Reserved combinations always pass through unchanged.
+    /// A normal remapping rule is also prevented from producing
+    /// a reserved combination as its destination.
     private var reservedCombinations:
         Set<KeyCombination> = []
 
-    init(rules: [RemapRule] = []) {
-        replaceRules(rules)
+    init(
+        rules:
+            [RemapRule] = []
+    ) {
+        replaceRules(
+            rules
+        )
     }
-    
-    /// Replaces the combinations that must never be remapped.
+
+    /// Replaces the combinations that must never be remapped
+    /// or produced by normal remapping rules.
     ///
     /// The collection is prepared outside keyboard-event processing,
     /// keeping event-time lookup minimal.
@@ -49,7 +56,8 @@ nonisolated final class RemappingEngine {
     /// Rules are compiled into dictionaries before keyboard events
     /// are processed, keeping event-time work minimal.
     func replaceRules(
-        _ rules: [RemapRule]
+        _ rules:
+            [RemapRule]
     ) {
         var newExactMappings:
             [KeyCombination: RemapAction] = [:]
@@ -60,23 +68,35 @@ nonisolated final class RemappingEngine {
         for rule in rules {
             switch rule.matchingMode {
             case .exact:
-                newExactMappings[rule.source] =
-                    .replaceWith(rule.destination)
+                newExactMappings[
+                    rule.source
+                ] =
+                    .replaceWith(
+                        rule.destination
+                    )
 
             case .preserveModifiers:
                 newPreservingMappings[
                     rule.source.keyCode
-                ] = rule.destination.keyCode
+                ] =
+                    rule.destination.keyCode
             }
 
-            for override in rule.overrides {
-                newExactMappings[override.source] =
+            for override in
+                rule.overrides
+            {
+                newExactMappings[
+                    override.source
+                ] =
                     override.action
             }
         }
 
-        exactMappings = newExactMappings
-        preservingMappings = newPreservingMappings
+        exactMappings =
+            newExactMappings
+
+        preservingMappings =
+            newPreservingMappings
     }
 
     /// Returns the remapping decision for a complete combination.
@@ -84,19 +104,23 @@ nonisolated final class RemappingEngine {
     /// Exact rules and overrides always take precedence over
     /// modifier-preserving rules.
     func decision(
-        for combination: KeyCombination
+        for combination:
+            KeyCombination
     ) -> RemapDecision {
         if reservedCombinations.contains(
             combination
         ) {
             return .passThrough
         }
-        
+
         if let exactAction =
-            exactMappings[combination]
+            exactMappings[
+                combination
+            ]
         {
             return decision(
-                for: exactAction
+                for:
+                    exactAction
             )
         }
 
@@ -109,34 +133,67 @@ nonisolated final class RemappingEngine {
             return .passThrough
         }
 
-        return .replaceWith(
+        let destination =
             KeyCombination(
-                keyCode: destinationKeyCode,
-                modifiers: combination.modifiers
+                keyCode:
+                    destinationKeyCode,
+                modifiers:
+                    combination.modifiers
             )
+
+        return replacementDecision(
+            for:
+                destination
         )
     }
 
     /// Compatibility overload for code that only supplies a key code.
     func decision(
-        for keyCode: CGKeyCode
+        for keyCode:
+            CGKeyCode
     ) -> RemapDecision {
         decision(
-            for: KeyCombination(
-                keyCode: keyCode
-            )
+            for:
+                KeyCombination(
+                    keyCode:
+                        keyCode
+                )
         )
     }
 
     private func decision(
-        for action: RemapAction
+        for action:
+            RemapAction
     ) -> RemapDecision {
         switch action {
-        case .replaceWith(let destination):
-            return .replaceWith(destination)
+        case .replaceWith(
+            let destination
+        ):
+            return replacementDecision(
+                for:
+                    destination
+            )
 
         case .passThrough:
             return .passThrough
         }
+    }
+
+    private func replacementDecision(
+        for destination:
+            KeyCombination
+    ) -> RemapDecision {
+        guard
+            !reservedCombinations
+                .contains(
+                    destination
+                )
+        else {
+            return .passThrough
+        }
+
+        return .replaceWith(
+            destination
+        )
     }
 }
