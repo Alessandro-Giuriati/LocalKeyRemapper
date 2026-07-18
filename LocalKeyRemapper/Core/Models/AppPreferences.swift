@@ -60,6 +60,10 @@ nonisolated struct AppPreferences:
     var lastRemappingEnabled:
         Bool
 
+    /// Defines whether the optional menu bar icon should be visible.
+    var showsMenuBarIcon:
+        Bool
+
     /// Stores the complete global shortcut configuration.
     var shortcutConfiguration:
         RemappingShortcutConfiguration
@@ -103,6 +107,8 @@ nonisolated struct AppPreferences:
                 .alwaysOff,
             lastRemappingEnabled:
                 false,
+            showsMenuBarIcon:
+                true,
             shortcutConfiguration:
                 defaultShortcutConfiguration
         )
@@ -129,6 +135,8 @@ nonisolated struct AppPreferences:
             RemappingLaunchBehavior,
         lastRemappingEnabled:
             Bool,
+        showsMenuBarIcon:
+            Bool = true,
         shortcutConfiguration:
             RemappingShortcutConfiguration =
                 AppPreferences
@@ -139,6 +147,9 @@ nonisolated struct AppPreferences:
 
         self.lastRemappingEnabled =
             lastRemappingEnabled
+
+        self.showsMenuBarIcon =
+            showsMenuBarIcon
 
         self.shortcutConfiguration =
             shortcutConfiguration
@@ -151,6 +162,8 @@ nonisolated struct AppPreferences:
             RemappingLaunchBehavior,
         lastRemappingEnabled:
             Bool,
+        showsMenuBarIcon:
+            Bool = true,
         toggleShortcut:
             KeyCombination?
     ) {
@@ -172,6 +185,8 @@ nonisolated struct AppPreferences:
                 launchBehavior,
             lastRemappingEnabled:
                 lastRemappingEnabled,
+            showsMenuBarIcon:
+                showsMenuBarIcon,
             shortcutConfiguration:
                 shortcutConfiguration
         )
@@ -183,6 +198,7 @@ nonisolated struct AppPreferences:
     {
         case launchBehavior
         case lastRemappingEnabled
+        case showsMenuBarIcon
         case shortcutConfiguration
 
         /// Legacy shortcut key used before multiple shortcut modes.
@@ -230,6 +246,13 @@ nonisolated struct AppPreferences:
                 forKey:
                     .lastRemappingEnabled
             ) ?? false
+
+        showsMenuBarIcon =
+            try container.decodeIfPresent(
+                Bool.self,
+                forKey:
+                    .showsMenuBarIcon
+            ) ?? true
 
         if container.contains(
             .shortcutConfiguration
@@ -286,6 +309,12 @@ nonisolated struct AppPreferences:
             lastRemappingEnabled,
             forKey:
                 .lastRemappingEnabled
+        )
+
+        try container.encode(
+            showsMenuBarIcon,
+            forKey:
+                .showsMenuBarIcon
         )
 
         try container.encode(

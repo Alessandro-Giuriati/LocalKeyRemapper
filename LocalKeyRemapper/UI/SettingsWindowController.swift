@@ -116,6 +116,9 @@ final class SettingsWindowController:
     private let globalShortcutController:
         GlobalShortcutController
 
+    private let menuBarVisibilityChangeHandler:
+        (Bool) throws -> Void
+
     private let globalShortcutSettingsView:
         GlobalShortcutSettingsView
 
@@ -212,6 +215,16 @@ final class SettingsWindowController:
                 ""
         )
 
+    private let showMenuBarIconCheckbox =
+        NSButton(
+            checkboxWithTitle:
+                "Show icon in menu bar",
+            target:
+                nil,
+            action:
+                nil
+        )
+
     private var ruleRows:
         [RemappingRuleRowView] = []
 
@@ -240,7 +253,9 @@ final class SettingsWindowController:
         appPreferencesController:
             AppPreferencesControlling,
         globalShortcutController:
-            GlobalShortcutController
+            GlobalShortcutController,
+        menuBarVisibilityChangeHandler:
+            @escaping (Bool) throws -> Void
     ) {
         self.remappingController =
             remappingController
@@ -250,6 +265,9 @@ final class SettingsWindowController:
 
         self.globalShortcutController =
             globalShortcutController
+
+        self.menuBarVisibilityChangeHandler =
+            menuBarVisibilityChangeHandler
 
         globalShortcutSettingsView =
             GlobalShortcutSettingsView(
@@ -350,6 +368,7 @@ final class SettingsWindowController:
         configureShortcutSettingsCallbacks()
         configureContent()
         synchronizeLaunchBehavior()
+        synchronizeMenuBarIconVisibility()
         applyTextScale()
     }
 
@@ -368,6 +387,7 @@ final class SettingsWindowController:
     ) {
         if window?.isVisible == false {
             synchronizeLaunchBehavior()
+            synchronizeMenuBarIconVisibility()
 
             globalShortcutSettingsView
                 .load(
@@ -619,6 +639,7 @@ final class SettingsWindowController:
                 .secondaryLabelColor
 
         configureLaunchBehavior()
+        configureMenuBarVisibilityPreference()
         configureRulesScrollView()
         configureActionButtons()
 
@@ -649,7 +670,8 @@ final class SettingsWindowController:
                 rulesHeaderView,
                 rulesScrollView,
                 actionsStack,
-                statusLabel
+                statusLabel,
+                showMenuBarIconCheckbox
             ],
             in:
                 .leading
@@ -891,6 +913,74 @@ final class SettingsWindowController:
         )
 
         return headerView
+    }
+
+    private func configureMenuBarVisibilityPreference() {
+        showMenuBarIconCheckbox.target =
+            self
+
+        showMenuBarIconCheckbox.action =
+            #selector(
+                menuBarIconVisibilityChanged
+            )
+
+        showMenuBarIconCheckbox.toolTip =
+            "Show or hide the optional LocalKeyRemapper menu bar icon."
+
+        showMenuBarIconCheckbox
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .vertical
+            )
+    }
+
+    /// Updates the checkbox when the preference changes elsewhere,
+    /// such as from the application's native menu.
+    func updateMenuBarIconVisibility(
+        _ showsMenuBarIcon:
+            Bool
+    ) {
+        showMenuBarIconCheckbox.state =
+            showsMenuBarIcon
+                ? .on
+                : .off
+    }
+
+    private func synchronizeMenuBarIconVisibility() {
+        updateMenuBarIconVisibility(
+            appPreferencesController
+                .preferences
+                .showsMenuBarIcon
+        )
+    }
+
+    @objc
+    private func menuBarIconVisibilityChanged() {
+        let previousVisibility =
+            appPreferencesController
+                .preferences
+                .showsMenuBarIcon
+
+        let requestedVisibility =
+            showMenuBarIconCheckbox.state
+                == .on
+
+        do {
+            try menuBarVisibilityChangeHandler(
+                requestedVisibility
+            )
+        } catch {
+            updateMenuBarIconVisibility(
+                previousVisibility
+            )
+
+            setStatus(
+                "The menu bar preference could not be saved.",
+                isError:
+                    true
+            )
+        }
     }
 
     private func configureLaunchBehavior() {
@@ -2288,6 +2378,9 @@ final class SettingsWindowController:
             actionFont
 
         saveButton.font =
+            actionFont
+
+        showMenuBarIconCheckbox.font =
             actionFont
 
         rulesStackView.spacing =

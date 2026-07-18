@@ -7,7 +7,8 @@
 
 import AppKit
 
-/// Manages the application's menu bar icon and lightweight status popover.
+/// Manages the application's optional menu bar icon
+/// and lightweight status popover.
 @MainActor
 final class StatusBarController:
     NSObject,
@@ -37,9 +38,6 @@ final class StatusBarController:
     private let resetTextSizeHandler:
         () -> Void
 
-    private let remappingStateChangeHandler:
-        (RemappingState) -> Void
-
     private var popoverViewController:
         StatusPopoverViewController?
 
@@ -55,9 +53,7 @@ final class StatusBarController:
         decreaseTextSizeHandler:
             @escaping () -> Void,
         resetTextSizeHandler:
-            @escaping () -> Void,
-        remappingStateChangeHandler:
-            @escaping (RemappingState) -> Void
+            @escaping () -> Void
     ) {
         self.remappingController =
             remappingController
@@ -77,40 +73,73 @@ final class StatusBarController:
         self.resetTextSizeHandler =
             resetTextSizeHandler
 
-        self.remappingStateChangeHandler =
-            remappingStateChangeHandler
-
         statusItem =
-            NSStatusBar.system.statusItem(
-                withLength:
-                    NSStatusItem.squareLength
-            )
+            NSStatusBar.system
+                .statusItem(
+                    withLength:
+                        NSStatusItem
+                            .squareLength
+                )
 
         super.init()
 
         configureStatusItem()
         configurePopover()
-        observeRemappingState()
 
-        updatePopover(
-            for: remappingController.state
+        update(
+            for:
+                remappingController.state
         )
     }
 
+    /// Refreshes the popover using the real backend state.
+    func update(
+        for state:
+            RemappingState
+    ) {
+        popoverViewController?
+            .update(
+                for:
+                    state
+            )
+    }
+
+    /// Removes the menu bar item and closes its popover.
+    ///
+    /// The remapping backend and global shortcut remain active.
+    func stop() {
+        closePopover()
+
+        NSStatusBar.system
+            .removeStatusItem(
+                statusItem
+            )
+    }
+
     private func configureStatusItem() {
-        guard let button = statusItem.button else {
+        guard
+            let button =
+                statusItem.button
+        else {
             return
         }
 
-        if let image = NSImage(
-            systemSymbolName: "keyboard",
-            accessibilityDescription:
-                "LocalKeyRemapper"
-        ) {
-            image.isTemplate = true
-            button.image = image
+        if let image =
+            NSImage(
+                systemSymbolName:
+                    "keyboard",
+                accessibilityDescription:
+                    "LocalKeyRemapper"
+            )
+        {
+            image.isTemplate =
+                true
+
+            button.image =
+                image
         } else {
-            button.title = "KR"
+            button.title =
+                "KR"
         }
 
         button.toolTip =
@@ -131,44 +160,61 @@ final class StatusBarController:
                 primaryActionHandler: {
                     [weak self] in
 
-                    self?.performPrimaryAction()
+                    self?
+                        .performPrimaryAction()
                 },
                 openSettingsHandler: {
                     [weak self] in
 
-                    self?.closePopover()
+                    self?
+                        .closePopover()
+
                     NSApplication.shared
                         .activate(
                             ignoringOtherApps:
                                 true
                         )
-                    self?.openSettingsHandler()
+
+                    self?
+                        .openSettingsHandler()
                 },
                 increaseTextSizeHandler: {
                     [weak self] in
 
-                    self?.closePopover()
-                    self?.increaseTextSizeHandler()
+                    self?
+                        .closePopover()
+
+                    self?
+                        .increaseTextSizeHandler()
                 },
                 decreaseTextSizeHandler: {
                     [weak self] in
 
-                    self?.closePopover()
-                    self?.decreaseTextSizeHandler()
+                    self?
+                        .closePopover()
+
+                    self?
+                        .decreaseTextSizeHandler()
                 },
                 resetTextSizeHandler: {
                     [weak self] in
 
-                    self?.closePopover()
-                    self?.resetTextSizeHandler()
+                    self?
+                        .closePopover()
+
+                    self?
+                        .resetTextSizeHandler()
                 },
                 quitHandler: {
                     [weak self] in
 
-                    self?.closePopover()
+                    self?
+                        .closePopover()
 
                     NSApplication.shared
-                        .terminate(nil)
+                        .terminate(
+                            nil
+                        )
                 }
             )
 
@@ -188,31 +234,6 @@ final class StatusBarController:
             self
     }
 
-    private func observeRemappingState() {
-        remappingController.onStateChange = {
-            [weak self] state in
-
-            self?.updatePopover(
-                for: state
-            )
-
-            self?
-                .remappingStateChangeHandler(
-                    state
-                )
-        }
-    }
-
-    private func updatePopover(
-        for state:
-            RemappingState
-    ) {
-        popoverViewController?
-            .update(
-                for: state
-            )
-    }
-
     @objc
     private func togglePopover() {
         if popover.isShown {
@@ -230,7 +251,7 @@ final class StatusBarController:
             return
         }
 
-        updatePopover(
+        update(
             for:
                 remappingController.state
         )
@@ -250,7 +271,9 @@ final class StatusBarController:
     }
 
     private func closePopover() {
-        popover.performClose(nil)
+        popover.performClose(
+            nil
+        )
 
         statusItem.button?
             .highlight(

@@ -52,7 +52,8 @@ final class AppCoordinator {
 
     /// Prevents application shutdown from being stored as a
     /// user-requested disabled state.
-    private var isStopping = false
+    private var isStopping =
+        false
 
     init() {
         let permissionService =
@@ -167,65 +168,58 @@ final class AppCoordinator {
     /// Starts the application user interface and registers
     /// the configured global shortcuts.
     func start() {
-        isStopping = false
+        isStopping =
+            false
 
         loadAppPreferences()
+        configureRemappingStateObservation()
 
         applicationMenuController =
             ApplicationMenuController(
                 increaseTextSizeHandler: {
                     [weak self] in
 
-                    self?.increaseTextSize()
+                    self?
+                        .increaseTextSize()
                 },
                 decreaseTextSizeHandler: {
                     [weak self] in
-
-                    self?.decreaseTextSize()
-                },
-                resetTextSizeHandler: {
-                    [weak self] in
-
-                    self?.resetTextSize()
-                }
-            )
-
-        statusBarController =
-            StatusBarController(
-                remappingController:
-                    remappingController,
-                accessibilitySettingsOpener:
-                    permissionService,
-                openSettingsHandler: {
-                    [weak self] in
-
-                    self?.showMainWindow()
-                },
-                increaseTextSizeHandler: {
-                    [weak self] in
-
-                    self?.increaseTextSize()
-                },
-                decreaseTextSizeHandler: {
-                    [weak self] in
-
-                    self?.decreaseTextSize()
-                },
-                resetTextSizeHandler: {
-                    [weak self] in
-
-                    self?.resetTextSize()
-                },
-                remappingStateChangeHandler: {
-                    [weak self]
-                    state in
 
                     self?
-                        .handleRemappingStateChange(
-                            state
+                        .decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
+
+                    self?
+                        .resetTextSize()
+                },
+                showsMenuBarIcon:
+                    appPreferencesController
+                        .preferences
+                        .showsMenuBarIcon,
+                menuBarVisibilityChangeHandler: {
+                    [weak self]
+                    showsMenuBarIcon in
+
+                    guard
+                        let self
+                    else {
+                        return
+                    }
+
+                    try self
+                        .setMenuBarIconVisible(
+                            showsMenuBarIcon
                         )
                 }
             )
+
+        applyMenuBarIconVisibility(
+            appPreferencesController
+                .preferences
+                .showsMenuBarIcon
+        )
 
         showMainWindow()
         startGlobalShortcuts()
@@ -259,20 +253,132 @@ final class AppCoordinator {
     /// Stops active system components before
     /// the application terminates.
     func stop() {
-        isStopping = true
+        isStopping =
+            true
 
         settingsWindowController?
             .prepareForApplicationTermination()
 
-        settingsWindowController = nil
+        settingsWindowController =
+            nil
 
-        globalShortcutController.stop()
-        remappingController.disable()
+        globalShortcutController
+            .stop()
 
-        statusBarController = nil
-        applicationMenuController = nil
+        remappingController
+            .disable()
+
+        remappingController.onStateChange =
+            nil
+
+        statusBarController?
+            .stop()
+
+        statusBarController =
+            nil
+
+        applicationMenuController =
+            nil
     }
 
+    private func configureRemappingStateObservation() {
+        remappingController.onStateChange = {
+            [weak self]
+            state in
+
+            self?
+                .handleRemappingStateChange(
+                    state
+                )
+        }
+    }
+
+    private func makeStatusBarController()
+        -> StatusBarController
+    {
+        StatusBarController(
+            remappingController:
+                remappingController,
+            accessibilitySettingsOpener:
+                permissionService,
+            openSettingsHandler: {
+                [weak self] in
+
+                self?
+                    .showMainWindow()
+            },
+            increaseTextSizeHandler: {
+                [weak self] in
+
+                self?
+                    .increaseTextSize()
+            },
+            decreaseTextSizeHandler: {
+                [weak self] in
+
+                self?
+                    .decreaseTextSize()
+            },
+            resetTextSizeHandler: {
+                [weak self] in
+
+                self?
+                    .resetTextSize()
+            }
+        )
+    }
+
+    private func setMenuBarIconVisible(
+        _ showsMenuBarIcon:
+            Bool
+    ) throws {
+        try appPreferencesController
+            .setShowsMenuBarIcon(
+                showsMenuBarIcon
+            )
+
+        applyMenuBarIconVisibility(
+            showsMenuBarIcon
+        )
+    }
+
+    private func applyMenuBarIconVisibility(
+        _ showsMenuBarIcon:
+            Bool
+    ) {
+        if showsMenuBarIcon {
+            if statusBarController
+                == nil
+            {
+                statusBarController =
+                    makeStatusBarController()
+            }
+
+            statusBarController?
+                .update(
+                    for:
+                        remappingController
+                            .state
+                )
+        } else {
+            statusBarController?
+                .stop()
+
+            statusBarController =
+                nil
+        }
+
+        applicationMenuController?
+            .updateMenuBarIconVisibility(
+                showsMenuBarIcon
+            )
+
+        settingsWindowController?
+            .updateMenuBarIconVisibility(
+                showsMenuBarIcon
+            )
+    }
+    
     private func settingsController()
         -> SettingsWindowController
     {
@@ -287,7 +393,22 @@ final class AppCoordinator {
                 appPreferencesController:
                     appPreferencesController,
                 globalShortcutController:
-                    globalShortcutController
+                    globalShortcutController,
+                menuBarVisibilityChangeHandler: {
+                    [weak self]
+                    showsMenuBarIcon in
+
+                    guard
+                        let self
+                    else {
+                        return
+                    }
+
+                    try self
+                        .setMenuBarIconVisible(
+                            showsMenuBarIcon
+                        )
+                }
             )
 
         settingsWindowController =
@@ -326,26 +447,37 @@ final class AppCoordinator {
             return
         }
 
-        remappingController.enable()
+        remappingController
+            .enable()
     }
 
     private func handleRemappingStateChange(
         _ state:
             RemappingState
     ) {
-        guard !isStopping else {
+        guard
+            !isStopping
+        else {
             return
         }
+
+        statusBarController?
+            .update(
+                for:
+                    state
+            )
 
         let isEnabled:
             Bool
 
         switch state {
         case .enabled:
-            isEnabled = true
+            isEnabled =
+                true
 
         case .disabled:
-            isEnabled = false
+            isEnabled =
+                false
 
         case .enabling,
              .permissionRequired,
@@ -367,7 +499,8 @@ final class AppCoordinator {
         let controller =
             settingsController()
 
-        if controller.window?.isVisible
+        if controller.window?
+            .isVisible
             != true
         {
             controller.showWindow(
@@ -375,14 +508,16 @@ final class AppCoordinator {
             )
         }
 
-        controller.increaseTextSize()
+        controller
+            .increaseTextSize()
     }
 
     private func decreaseTextSize() {
         let controller =
             settingsController()
 
-        if controller.window?.isVisible
+        if controller.window?
+            .isVisible
             != true
         {
             controller.showWindow(
@@ -390,14 +525,16 @@ final class AppCoordinator {
             )
         }
 
-        controller.decreaseTextSize()
+        controller
+            .decreaseTextSize()
     }
 
     private func resetTextSize() {
         let controller =
             settingsController()
 
-        if controller.window?.isVisible
+        if controller.window?
+            .isVisible
             != true
         {
             controller.showWindow(
@@ -405,6 +542,7 @@ final class AppCoordinator {
             )
         }
 
-        controller.resetTextSize()
+        controller
+            .resetTextSize()
     }
 }

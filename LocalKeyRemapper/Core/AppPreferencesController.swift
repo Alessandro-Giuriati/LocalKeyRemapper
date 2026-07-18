@@ -33,6 +33,12 @@ protocol AppPreferencesControlling:
             Bool
     ) throws
 
+    /// Updates whether the optional menu bar icon should be visible.
+    func setShowsMenuBarIcon(
+        _ showsMenuBarIcon:
+            Bool
+    ) throws
+
     /// Updates the complete global shortcut configuration.
     func setShortcutConfiguration(
         _ configuration:
@@ -119,6 +125,28 @@ final class AppPreferencesController:
 
         updatedPreferences.lastRemappingEnabled =
             isEnabled
+
+        try saveAndApply(
+            updatedPreferences
+        )
+    }
+
+    func setShowsMenuBarIcon(
+        _ showsMenuBarIcon:
+            Bool
+    ) throws {
+        guard
+            preferences.showsMenuBarIcon
+                != showsMenuBarIcon
+        else {
+            return
+        }
+
+        var updatedPreferences =
+            preferences
+
+        updatedPreferences.showsMenuBarIcon =
+            showsMenuBarIcon
 
         try saveAndApply(
             updatedPreferences
