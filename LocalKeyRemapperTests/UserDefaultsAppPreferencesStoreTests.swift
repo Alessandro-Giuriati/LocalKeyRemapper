@@ -34,6 +34,53 @@ final class UserDefaultsAppPreferencesStoreTests:
             try store.loadPreferences(),
             defaultPreferences
         )
+        
+        func testSavedToggleShortcutCanBeLoadedByAnotherStore()
+            throws
+        {
+            let context = try makeTestContext()
+            defer { context.cleanUp() }
+
+            let shortcut = KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [
+                    .control,
+                    .option,
+                    .command
+                ]
+            )
+
+            let expectedPreferences =
+                AppPreferences(
+                    launchBehavior:
+                        .restoreLastState,
+                    lastRemappingEnabled:
+                        true,
+                    toggleShortcut:
+                        shortcut
+                )
+
+            let savingStore =
+                UserDefaultsAppPreferencesStore(
+                    userDefaults:
+                        context.userDefaults
+                )
+
+            try savingStore.savePreferences(
+                expectedPreferences
+            )
+
+            let loadingStore =
+                UserDefaultsAppPreferencesStore(
+                    userDefaults:
+                        context.userDefaults
+                )
+
+            XCTAssertEqual(
+                try loadingStore.loadPreferences(),
+                expectedPreferences
+            )
+        }
     }
 
     func testSavedPreferencesCanBeLoadedByAnotherStore()
@@ -94,16 +141,16 @@ final class UserDefaultsAppPreferencesStoreTests:
     {
         let context = try makeTestContext()
         defer { context.cleanUp() }
-
+        
         try storeLegacyPreference(
             false,
             in: context.userDefaults
         )
-
+        
         let store = UserDefaultsAppPreferencesStore(
             userDefaults: context.userDefaults
         )
-
+        
         XCTAssertEqual(
             try store.loadPreferences(),
             AppPreferences(
@@ -111,6 +158,91 @@ final class UserDefaultsAppPreferencesStoreTests:
                 lastRemappingEnabled: false
             )
         )
+    }
+        
+        func testLegacyPreferencesUseDefaultToggleShortcut()
+            throws
+        {
+            let context =
+                try makeTestContext()
+
+            defer {
+                context.cleanUp()
+            }
+
+            try storeLegacyPreference(
+                false,
+                in:
+                    context.userDefaults
+            )
+
+            let store =
+                UserDefaultsAppPreferencesStore(
+                    userDefaults:
+                        context.userDefaults
+                )
+
+            let loadedPreferences =
+                try store.loadPreferences()
+
+            XCTAssertEqual(
+                loadedPreferences
+                    .toggleShortcut,
+                AppPreferences
+                    .defaultToggleShortcut
+            )
+        }
+
+        func testExplicitlyDisabledToggleShortcutRemainsDisabled()
+            throws
+        {
+            let context =
+                try makeTestContext()
+
+            defer {
+                context.cleanUp()
+            }
+
+            let preferences =
+                AppPreferences(
+                    launchBehavior:
+                        .alwaysOff,
+                    lastRemappingEnabled:
+                        false,
+                    toggleShortcut:
+                        nil
+                )
+
+            let savingStore =
+                UserDefaultsAppPreferencesStore(
+                    userDefaults:
+                        context.userDefaults
+                )
+
+            try savingStore.savePreferences(
+                preferences
+            )
+
+            let loadingStore =
+                UserDefaultsAppPreferencesStore(
+                    userDefaults:
+                        context.userDefaults
+                )
+
+            let loadedPreferences =
+                try loadingStore
+                    .loadPreferences()
+
+            XCTAssertNil(
+                loadedPreferences
+                    .toggleShortcut
+            )
+
+            XCTAssertEqual(
+                loadedPreferences,
+                preferences
+            )
+        }
     }
 
     private func makeTestContext() throws
@@ -151,7 +283,6 @@ final class UserDefaultsAppPreferencesStoreTests:
             forKey: "appPreferences.v1"
         )
     }
-}
 
 private nonisolated struct LegacyAppPreferences:
     Codable

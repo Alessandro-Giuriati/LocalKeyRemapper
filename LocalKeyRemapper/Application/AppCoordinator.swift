@@ -35,6 +35,12 @@ final class AppCoordinator {
     private let remappingController:
         RemappingController
 
+    private let globalShortcutManager:
+        GlobalShortcutManager
+
+    private let globalShortcutController:
+        GlobalShortcutController
+
     private var applicationMenuController:
         ApplicationMenuController?
 
@@ -63,7 +69,8 @@ final class AppCoordinator {
 
         let appPreferencesController =
             AppPreferencesController(
-                store: appPreferencesStore
+                store:
+                    appPreferencesStore
             )
 
         let remappingEngine =
@@ -71,7 +78,8 @@ final class AppCoordinator {
 
         let eventTapManager =
             EventTapManager(
-                remappingEngine: remappingEngine
+                remappingEngine:
+                    remappingEngine
             )
 
         let remappingController =
@@ -86,6 +94,25 @@ final class AppCoordinator {
                     remappingEngine,
                 eventTapManager:
                     eventTapManager
+            )
+
+        let globalShortcutManager =
+            GlobalShortcutManager()
+
+        let globalShortcutController =
+            GlobalShortcutController(
+                shortcutManager:
+                    globalShortcutManager,
+                appPreferencesController:
+                    appPreferencesController,
+                remappingEngine:
+                    remappingEngine,
+                action: {
+                    [weak remappingController] in
+
+                    remappingController?
+                        .toggle()
+                }
             )
 
         self.permissionService =
@@ -111,11 +138,19 @@ final class AppCoordinator {
 
         self.remappingController =
             remappingController
+
+        self.globalShortcutManager =
+            globalShortcutManager
+
+        self.globalShortcutController =
+            globalShortcutController
     }
 
-    /// Starts the application user interface.
+    /// Starts the application user interface and registers
+    /// the configured global shortcut.
     func start() {
         isStopping = false
+
         loadAppPreferences()
 
         applicationMenuController =
@@ -172,6 +207,7 @@ final class AppCoordinator {
                 }
             )
 
+        startGlobalShortcut()
         enableRemappingAtLaunchIfRequested()
     }
 
@@ -192,6 +228,8 @@ final class AppCoordinator {
     /// the application terminates.
     func stop() {
         isStopping = true
+
+        globalShortcutController.stop()
         remappingController.disable()
 
         settingsWindowController?.close()
@@ -208,14 +246,17 @@ final class AppCoordinator {
             return settingsWindowController
         }
 
-        let controller = SettingsWindowController(
-            remappingController:
-                remappingController,
-            appPreferencesController:
-                appPreferencesController
-        )
+        let controller =
+            SettingsWindowController(
+                remappingController:
+                    remappingController,
+                appPreferencesController:
+                    appPreferencesController
+            )
 
-        settingsWindowController = controller
+        settingsWindowController =
+            controller
+
         return controller
     }
 
@@ -224,7 +265,19 @@ final class AppCoordinator {
             try appPreferencesController
                 .loadPreferences()
         } catch {
-            // Safe fallback: automatic remapping remains disabled.
+            // Safe in-memory defaults remain active.
+        }
+    }
+
+    private func startGlobalShortcut() {
+        do {
+            try globalShortcutController
+                .start()
+        } catch {
+            // A shortcut conflict or registration failure must not
+            // prevent the application from launching.
+            //
+            // No keyboard input or error details are logged.
         }
     }
 
@@ -241,13 +294,15 @@ final class AppCoordinator {
     }
 
     private func handleRemappingStateChange(
-        _ state: RemappingState
+        _ state:
+            RemappingState
     ) {
         guard !isStopping else {
             return
         }
 
-        let isEnabled: Bool
+        let isEnabled:
+            Bool
 
         switch state {
         case .enabled:
@@ -273,13 +328,17 @@ final class AppCoordinator {
     }
 
     private func showSettings() {
-        settingsController().showWindow(nil)
+        settingsController()
+            .showWindow(nil)
     }
 
     private func increaseTextSize() {
-        let controller = settingsController()
+        let controller =
+            settingsController()
 
-        if controller.window?.isVisible != true {
+        if controller.window?.isVisible
+            != true
+        {
             controller.showWindow(nil)
         }
 
@@ -287,9 +346,12 @@ final class AppCoordinator {
     }
 
     private func decreaseTextSize() {
-        let controller = settingsController()
+        let controller =
+            settingsController()
 
-        if controller.window?.isVisible != true {
+        if controller.window?.isVisible
+            != true
+        {
             controller.showWindow(nil)
         }
 
@@ -297,13 +359,15 @@ final class AppCoordinator {
     }
 
     private func resetTextSize() {
-        let controller = settingsController()
+        let controller =
+            settingsController()
 
-        if controller.window?.isVisible != true {
+        if controller.window?.isVisible
+            != true
+        {
             controller.showWindow(nil)
         }
 
         controller.resetTextSize()
     }
 }
-

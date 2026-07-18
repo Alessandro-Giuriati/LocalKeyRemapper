@@ -350,4 +350,86 @@ final class RemappingEngineTests:
             )
         )
     }
+    
+    func testReservedCombinationPassesThroughEvenWhenRuleMatches() {
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [
+                .control,
+                .option,
+                .command
+            ]
+        )
+
+        let destination = KeyCombination(
+            keyCode: KeyCode.w,
+            modifiers: [
+                .control,
+                .option,
+                .command
+            ]
+        )
+
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: source,
+                    destination: destination
+                )
+            ]
+        )
+
+        engine.replaceReservedCombinations(
+            [source]
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for: source
+            ),
+            .passThrough
+        )
+    }
+
+    func testRemovingReservedCombinationRestoresMatchingRule() {
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [
+                .command
+            ]
+        )
+
+        let destination = KeyCombination(
+            keyCode: KeyCode.w,
+            modifiers: [
+                .command
+            ]
+        )
+
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: source,
+                    destination: destination
+                )
+            ]
+        )
+
+        engine.replaceReservedCombinations(
+            [source]
+        )
+
+        engine.replaceReservedCombinations(
+            Set<KeyCombination>()
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for: source
+            ),
+            .replaceWith(
+                destination
+            )
+        )
+    }
 }

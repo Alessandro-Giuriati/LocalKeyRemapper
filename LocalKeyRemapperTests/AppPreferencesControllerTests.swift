@@ -103,6 +103,137 @@ final class AppPreferencesControllerTests:
                 lastRemappingEnabled: true
             )
         )
+        
+        func testSettingToggleShortcutSavesAndUpdatesState()
+            throws
+        {
+            let store = PreferencesMockStore(
+                preferences: .standard
+            )
+
+            let controller = AppPreferencesController(
+                store: store
+            )
+
+            let shortcut = KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [
+                    .control,
+                    .option,
+                    .command
+                ]
+            )
+
+            try controller.setToggleShortcut(
+                shortcut
+            )
+
+            XCTAssertEqual(
+                controller.preferences
+                    .toggleShortcut,
+                shortcut
+            )
+
+            XCTAssertEqual(
+                store.savedPreferences?
+                    .toggleShortcut,
+                shortcut
+            )
+
+            XCTAssertEqual(
+                store.saveCallCount,
+                1
+            )
+        }
+
+        func testClearingToggleShortcutSavesAndUpdatesState()
+            throws
+        {
+            let shortcut = KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [
+                    .command
+                ]
+            )
+
+            let initialPreferences =
+                AppPreferences(
+                    launchBehavior: .alwaysOff,
+                    lastRemappingEnabled: false,
+                    toggleShortcut: shortcut
+                )
+
+            let store = PreferencesMockStore(
+                preferences:
+                    initialPreferences
+            )
+
+            let controller =
+                AppPreferencesController(
+                    store: store,
+                    initialPreferences:
+                        initialPreferences
+                )
+
+            try controller.setToggleShortcut(
+                nil
+            )
+
+            XCTAssertNil(
+                controller.preferences
+                    .toggleShortcut
+            )
+
+            XCTAssertNil(
+                store.savedPreferences?
+                    .toggleShortcut
+            )
+
+            XCTAssertEqual(
+                store.saveCallCount,
+                1
+            )
+        }
+
+        func testUnchangedToggleShortcutDoesNotSave()
+            throws
+        {
+            let shortcut = KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [
+                    .control,
+                    .command
+                ]
+            )
+
+            let initialPreferences =
+                AppPreferences(
+                    launchBehavior: .alwaysOff,
+                    lastRemappingEnabled: false,
+                    toggleShortcut: shortcut
+                )
+
+            let store = PreferencesMockStore(
+                preferences:
+                    initialPreferences
+            )
+
+            let controller =
+                AppPreferencesController(
+                    store: store,
+                    initialPreferences:
+                        initialPreferences
+                )
+
+            try controller.setToggleShortcut(
+                shortcut
+            )
+
+            XCTAssertEqual(
+                store.saveCallCount,
+                0
+            )
+        }
     }
 
     func testUnchangedLaunchBehaviorDoesNotSave()

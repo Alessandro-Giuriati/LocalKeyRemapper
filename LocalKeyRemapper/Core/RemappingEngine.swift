@@ -20,9 +20,28 @@ nonisolated final class RemappingEngine {
     /// Modifier-preserving rules indexed by physical source key.
     private var preservingMappings:
         [CGKeyCode: CGKeyCode] = [:]
+    
+    /// Combinations reserved for application-level commands.
+    ///
+    /// Reserved combinations always pass through unchanged, even when
+    /// a normal remapping rule would otherwise match them.
+    private var reservedCombinations:
+        Set<KeyCombination> = []
 
     init(rules: [RemapRule] = []) {
         replaceRules(rules)
+    }
+    
+    /// Replaces the combinations that must never be remapped.
+    ///
+    /// The collection is prepared outside keyboard-event processing,
+    /// keeping event-time lookup minimal.
+    func replaceReservedCombinations(
+        _ combinations:
+            Set<KeyCombination>
+    ) {
+        reservedCombinations =
+            combinations
     }
 
     /// Replaces all currently loaded remapping rules.
@@ -67,6 +86,12 @@ nonisolated final class RemappingEngine {
     func decision(
         for combination: KeyCombination
     ) -> RemapDecision {
+        if reservedCombinations.contains(
+            combination
+        ) {
+            return .passThrough
+        }
+        
         if let exactAction =
             exactMappings[combination]
         {

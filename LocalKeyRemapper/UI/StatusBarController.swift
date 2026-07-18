@@ -153,13 +153,15 @@ final class StatusBarController: NSObject {
 
         settingsMenuItem.target = self
 
-        let textSizeMenuItem = NSMenuItem(
-            title: "Text Size",
-            action: nil,
-            keyEquivalent: ""
-        )
+        let textSizeMenuItem =
+            NSMenuItem(
+                title: "Text Size",
+                action: nil,
+                keyEquivalent: ""
+            )
 
-        textSizeMenuItem.submenu = makeTextSizeMenu()
+        textSizeMenuItem.submenu =
+            makeTextSizeMenu()
 
         let quitMenuItem =
             NSMenuItem(
@@ -192,34 +194,61 @@ final class StatusBarController: NSObject {
     }
 
     private func makeTextSizeMenu() -> NSMenu {
-        let menu = NSMenu(title: "Text Size")
+        let menu =
+            NSMenu(
+                title: "Text Size"
+            )
 
-        let increaseItem = NSMenuItem(
-            title: "Increase Text Size",
-            action: #selector(increaseTextSize),
-            keyEquivalent: "+"
-        )
+        let increaseItem =
+            NSMenuItem(
+                title:
+                    "Increase Text Size",
+                action:
+                    #selector(
+                        increaseTextSize
+                    ),
+                keyEquivalent: "+"
+            )
 
         increaseItem.target = self
-        increaseItem.keyEquivalentModifierMask = [.command]
 
-        let decreaseItem = NSMenuItem(
-            title: "Decrease Text Size",
-            action: #selector(decreaseTextSize),
-            keyEquivalent: "-"
-        )
+        increaseItem
+            .keyEquivalentModifierMask =
+                [.command]
+
+        let decreaseItem =
+            NSMenuItem(
+                title:
+                    "Decrease Text Size",
+                action:
+                    #selector(
+                        decreaseTextSize
+                    ),
+                keyEquivalent: "-"
+            )
 
         decreaseItem.target = self
-        decreaseItem.keyEquivalentModifierMask = [.command]
 
-        let resetItem = NSMenuItem(
-            title: "Reset Text Size",
-            action: #selector(resetTextSize),
-            keyEquivalent: "0"
-        )
+        decreaseItem
+            .keyEquivalentModifierMask =
+                [.command]
+
+        let resetItem =
+            NSMenuItem(
+                title:
+                    "Reset Text Size",
+                action:
+                    #selector(
+                        resetTextSize
+                    ),
+                keyEquivalent: "0"
+            )
 
         resetItem.target = self
-        resetItem.keyEquivalentModifierMask = [.command]
+
+        resetItem
+            .keyEquivalentModifierMask =
+                [.command]
 
         menu.addItem(increaseItem)
         menu.addItem(decreaseItem)
@@ -232,13 +261,20 @@ final class StatusBarController: NSObject {
         remappingController.onStateChange = {
             [weak self] state in
 
-            self?.updateMenu(for: state)
-            self?.remappingStateChangeHandler(state)
+            self?.updateMenu(
+                for: state
+            )
+
+            self?
+                .remappingStateChangeHandler(
+                    state
+                )
         }
     }
 
     private func updateMenu(
-        for state: RemappingState
+        for state:
+            RemappingState
     ) {
         switch state {
         case .disabled:
@@ -282,12 +318,15 @@ final class StatusBarController: NSObject {
                 true
 
         case .failed(let failure):
-            updateMenuForFailure(failure)
+            updateMenuForFailure(
+                failure
+            )
         }
     }
 
     private func updateMenuForFailure(
-        _ failure: RemappingFailure
+        _ failure:
+            RemappingFailure
     ) {
         switch failure {
         case .rulesLoadingFailed:
@@ -358,6 +397,7 @@ final class StatusBarController: NSObject {
 
     @objc
     private func quitApplication() {
-        NSApplication.shared.terminate(nil)
+        NSApplication.shared
+            .terminate(nil)
     }
 }

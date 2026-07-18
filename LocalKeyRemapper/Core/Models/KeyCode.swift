@@ -22,6 +22,9 @@ nonisolated enum KeyCode {
 
     static let n =
         CGKeyCode(kVK_ANSI_N)
+    
+    static let r =
+        CGKeyCode(kVK_ANSI_R)
 
     static let v =
         CGKeyCode(kVK_ANSI_V)
