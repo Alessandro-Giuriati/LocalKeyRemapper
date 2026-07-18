@@ -7,12 +7,17 @@
 
 import AppKit
 
-/// Manages the application's menu bar interface.
+/// Manages the application's menu bar icon and lightweight status popover.
 @MainActor
-final class StatusBarController: NSObject {
-
+final class StatusBarController:
+    NSObject,
+    NSPopoverDelegate
+{
     private let statusItem:
         NSStatusItem
+
+    private let popover =
+        NSPopover()
 
     private let remappingController:
         RemappingControlling
@@ -35,11 +40,8 @@ final class StatusBarController: NSObject {
     private let remappingStateChangeHandler:
         (RemappingState) -> Void
 
-    private var stateMenuItem:
-        NSMenuItem?
-
-    private var toggleMenuItem:
-        NSMenuItem?
+    private var popoverViewController:
+        StatusPopoverViewController?
 
     init(
         remappingController:
@@ -87,19 +89,15 @@ final class StatusBarController: NSObject {
         super.init()
 
         configureStatusItem()
+        configurePopover()
         observeRemappingState()
 
-        updateMenu(
+        updatePopover(
             for: remappingController.state
         )
     }
 
     private func configureStatusItem() {
-        configureButton()
-        configureMenu()
-    }
-
-    private func configureButton() {
         guard let button = statusItem.button else {
             return
         }
@@ -117,151 +115,84 @@ final class StatusBarController: NSObject {
 
         button.toolTip =
             "LocalKeyRemapper"
+
+        button.target =
+            self
+
+        button.action =
+            #selector(
+                togglePopover
+            )
     }
 
-    private func configureMenu() {
-        let menu = NSMenu()
+    private func configurePopover() {
+        let controller =
+            StatusPopoverViewController(
+                primaryActionHandler: {
+                    [weak self] in
 
-        let stateMenuItem =
-            NSMenuItem(
-                title: "Remapping: Off",
-                action: nil,
-                keyEquivalent: ""
+                    self?.performPrimaryAction()
+                },
+                openSettingsHandler: {
+                    [weak self] in
+
+                    self?.closePopover()
+                    NSApplication.shared
+                        .activate(
+                            ignoringOtherApps:
+                                true
+                        )
+                    self?.openSettingsHandler()
+                },
+                increaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.closePopover()
+                    self?.increaseTextSizeHandler()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.closePopover()
+                    self?.decreaseTextSizeHandler()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
+
+                    self?.closePopover()
+                    self?.resetTextSizeHandler()
+                },
+                quitHandler: {
+                    [weak self] in
+
+                    self?.closePopover()
+
+                    NSApplication.shared
+                        .terminate(nil)
+                }
             )
 
-        stateMenuItem.isEnabled = false
+        popoverViewController =
+            controller
 
-        let toggleMenuItem =
-            NSMenuItem(
-                title: "Enable Remapping",
-                action:
-                    #selector(
-                        performPrimaryAction
-                    ),
-                keyEquivalent: ""
-            )
+        popover.contentViewController =
+            controller
 
-        toggleMenuItem.target = self
+        popover.behavior =
+            .transient
 
-        let settingsMenuItem =
-            NSMenuItem(
-                title: "Settings…",
-                action:
-                    #selector(openSettings),
-                keyEquivalent: ","
-            )
+        popover.animates =
+            true
 
-        settingsMenuItem.target = self
-
-        let textSizeMenuItem =
-            NSMenuItem(
-                title: "Text Size",
-                action: nil,
-                keyEquivalent: ""
-            )
-
-        textSizeMenuItem.submenu =
-            makeTextSizeMenu()
-
-        let quitMenuItem =
-            NSMenuItem(
-                title:
-                    "Quit LocalKeyRemapper",
-                action:
-                    #selector(
-                        quitApplication
-                    ),
-                keyEquivalent: "q"
-            )
-
-        quitMenuItem.target = self
-
-        menu.addItem(stateMenuItem)
-        menu.addItem(toggleMenuItem)
-        menu.addItem(.separator())
-        menu.addItem(settingsMenuItem)
-        menu.addItem(textSizeMenuItem)
-        menu.addItem(.separator())
-        menu.addItem(quitMenuItem)
-
-        statusItem.menu = menu
-
-        self.stateMenuItem =
-            stateMenuItem
-
-        self.toggleMenuItem =
-            toggleMenuItem
-    }
-
-    private func makeTextSizeMenu() -> NSMenu {
-        let menu =
-            NSMenu(
-                title: "Text Size"
-            )
-
-        let increaseItem =
-            NSMenuItem(
-                title:
-                    "Increase Text Size",
-                action:
-                    #selector(
-                        increaseTextSize
-                    ),
-                keyEquivalent: "+"
-            )
-
-        increaseItem.target = self
-
-        increaseItem
-            .keyEquivalentModifierMask =
-                [.command]
-
-        let decreaseItem =
-            NSMenuItem(
-                title:
-                    "Decrease Text Size",
-                action:
-                    #selector(
-                        decreaseTextSize
-                    ),
-                keyEquivalent: "-"
-            )
-
-        decreaseItem.target = self
-
-        decreaseItem
-            .keyEquivalentModifierMask =
-                [.command]
-
-        let resetItem =
-            NSMenuItem(
-                title:
-                    "Reset Text Size",
-                action:
-                    #selector(
-                        resetTextSize
-                    ),
-                keyEquivalent: "0"
-            )
-
-        resetItem.target = self
-
-        resetItem
-            .keyEquivalentModifierMask =
-                [.command]
-
-        menu.addItem(increaseItem)
-        menu.addItem(decreaseItem)
-        menu.addItem(resetItem)
-
-        return menu
+        popover.delegate =
+            self
     }
 
     private func observeRemappingState() {
         remappingController.onStateChange = {
             [weak self] state in
 
-            self?.updateMenu(
+            self?.updatePopover(
                 for: state
             )
 
@@ -272,84 +203,71 @@ final class StatusBarController: NSObject {
         }
     }
 
-    private func updateMenu(
+    private func updatePopover(
         for state:
             RemappingState
     ) {
-        switch state {
-        case .disabled:
-            stateMenuItem?.title =
-                "Remapping: Off"
-
-            toggleMenuItem?.title =
-                "Enable Remapping"
-
-            toggleMenuItem?.isEnabled =
-                true
-
-        case .enabling:
-            stateMenuItem?.title =
-                "Remapping: Enabling…"
-
-            toggleMenuItem?.title =
-                "Cancel"
-
-            toggleMenuItem?.isEnabled =
-                true
-
-        case .enabled:
-            stateMenuItem?.title =
-                "Remapping: On"
-
-            toggleMenuItem?.title =
-                "Disable Remapping"
-
-            toggleMenuItem?.isEnabled =
-                true
-
-        case .permissionRequired:
-            stateMenuItem?.title =
-                "Accessibility Permission Required"
-
-            toggleMenuItem?.title =
-                "Open Accessibility Settings…"
-
-            toggleMenuItem?.isEnabled =
-                true
-
-        case .failed(let failure):
-            updateMenuForFailure(
-                failure
+        popoverViewController?
+            .update(
+                for: state
             )
-        }
-    }
-
-    private func updateMenuForFailure(
-        _ failure:
-            RemappingFailure
-    ) {
-        switch failure {
-        case .rulesLoadingFailed:
-            stateMenuItem?.title =
-                "Error: Rules Could Not Load"
-
-        case .invalidRules:
-            stateMenuItem?.title =
-                "Error: Invalid Remapping Rules"
-
-        case .eventTapStartFailed:
-            stateMenuItem?.title =
-                "Error: Event Tap Could Not Start"
-        }
-
-        toggleMenuItem?.title =
-            "Try Again"
-
-        toggleMenuItem?.isEnabled =
-            true
     }
 
     @objc
+    private func togglePopover() {
+        if popover.isShown {
+            closePopover()
+        } else {
+            showPopover()
+        }
+    }
+
+    private func showPopover() {
+        guard
+            let button =
+                statusItem.button
+        else {
+            return
+        }
+
+        updatePopover(
+            for:
+                remappingController.state
+        )
+
+        popover.show(
+            relativeTo:
+                button.bounds,
+            of:
+                button,
+            preferredEdge:
+                .minY
+        )
+
+        button.highlight(
+            true
+        )
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+
+        statusItem.button?
+            .highlight(
+                false
+            )
+    }
+
+    func popoverDidClose(
+        _ notification:
+            Notification
+    ) {
+        statusItem.button?
+            .highlight(
+                false
+            )
+    }
+
     private func performPrimaryAction() {
         if remappingController.state
             == .permissionRequired
@@ -371,33 +289,9 @@ final class StatusBarController: NSObject {
             return
         }
 
+        closePopover()
+
         accessibilitySettingsOpener
             .openAccessibilitySettings()
-    }
-
-    @objc
-    private func openSettings() {
-        openSettingsHandler()
-    }
-
-    @objc
-    private func increaseTextSize() {
-        increaseTextSizeHandler()
-    }
-
-    @objc
-    private func decreaseTextSize() {
-        decreaseTextSizeHandler()
-    }
-
-    @objc
-    private func resetTextSize() {
-        resetTextSizeHandler()
-    }
-
-    @objc
-    private func quitApplication() {
-        NSApplication.shared
-            .terminate(nil)
     }
 }
