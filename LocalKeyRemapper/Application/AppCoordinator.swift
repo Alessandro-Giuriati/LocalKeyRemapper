@@ -199,7 +199,7 @@ final class AppCoordinator {
                 openSettingsHandler: {
                     [weak self] in
 
-                    self?.showSettings()
+                    self?.showMainWindow()
                 },
                 increaseTextSizeHandler: {
                     [weak self] in
@@ -227,8 +227,20 @@ final class AppCoordinator {
                 }
             )
 
+        showMainWindow()
         startGlobalShortcuts()
         enableRemappingAtLaunchIfRequested()
+    }
+
+    /// Shows the application's main window.
+    ///
+    /// The same operation is used at launch, from the menu bar,
+    /// and when the user reopens the application from the Dock.
+    func showMainWindow() {
+        settingsController()
+            .showWindow(
+                nil
+            )
     }
 
     /// Checks whether Accessibility permission was granted
@@ -349,13 +361,6 @@ final class AppCoordinator {
         } catch {
             // A preference write failure must not interrupt remapping.
         }
-    }
-
-    private func showSettings() {
-        settingsController()
-            .showWindow(
-                nil
-            )
     }
 
     private func increaseTextSize() {

@@ -8,29 +8,63 @@
 import AppKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
-
-    private var appCoordinator: AppCoordinator?
+final class AppDelegate:
+    NSObject,
+    NSApplicationDelegate
+{
+    private var appCoordinator:
+        AppCoordinator?
 
     func applicationDidFinishLaunching(
-        _ notification: Notification
+        _ notification:
+            Notification
     ) {
-        let appCoordinator = AppCoordinator()
+        // LocalKeyRemapper is now a regular windowed macOS application.
+        //
+        // A regular activation policy keeps the application visible
+        // in the Dock and provides the standard application menu bar.
+        NSApplication.shared.setActivationPolicy(
+            .regular
+        )
 
-        self.appCoordinator = appCoordinator
+        let appCoordinator =
+            AppCoordinator()
+
+        self.appCoordinator =
+            appCoordinator
 
         appCoordinator.start()
     }
 
     func applicationDidBecomeActive(
-        _ notification: Notification
+        _ notification:
+            Notification
     ) {
-        appCoordinator?.applicationDidBecomeActive()
+        appCoordinator?
+            .applicationDidBecomeActive()
+    }
+
+    /// Reopens the main window when the user clicks the Dock icon
+    /// while the application has no visible windows.
+    func applicationShouldHandleReopen(
+        _ sender:
+            NSApplication,
+        hasVisibleWindows flag:
+            Bool
+    ) -> Bool {
+        if !flag {
+            appCoordinator?
+                .showMainWindow()
+        }
+
+        return true
     }
 
     func applicationWillTerminate(
-        _ notification: Notification
+        _ notification:
+            Notification
     ) {
-        appCoordinator?.stop()
+        appCoordinator?
+            .stop()
     }
 }
