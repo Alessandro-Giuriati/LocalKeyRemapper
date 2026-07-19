@@ -23,7 +23,7 @@ final class AppCoordinator: NSObject {
 
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
-    private var settingsWindowController: SettingsWindowController?
+    private var mainWindowController: MainWindowController?
 
     private var isObservingWorkspaceActivation =
         false
@@ -154,7 +154,7 @@ final class AppCoordinator: NSObject {
     /// The same operation is used at launch, from the menu bar,
     /// and when the user reopens the application from the Dock.
     func showMainWindow() {
-        settingsController().showWindow(nil)
+        getOrCreateMainWindowController().showWindow(nil)
     }
 
     /// Checks whether Accessibility permission was granted
@@ -170,9 +170,9 @@ final class AppCoordinator: NSObject {
 
         stopObservingWorkspaceActivation()
 
-        settingsWindowController?
+        mainWindowController?
             .prepareForApplicationTermination()
-        settingsWindowController = nil
+        mainWindowController = nil
 
         globalShortcutController.stop()
         remappingController.disable()
@@ -310,17 +310,17 @@ final class AppCoordinator: NSObject {
         applicationMenuController?.updateMenuBarIconVisibility(
             showsMenuBarIcon
         )
-        settingsWindowController?.updateMenuBarIconVisibility(
+        mainWindowController?.updateMenuBarIconVisibility(
             showsMenuBarIcon
         )
     }
 
-    private func settingsController() -> SettingsWindowController {
-        if let settingsWindowController {
-            return settingsWindowController
+    private func getOrCreateMainWindowController() -> MainWindowController {
+        if let mainWindowController {
+            return mainWindowController
         }
 
-        let controller = SettingsWindowController(
+        let controller = MainWindowController(
             remappingController: remappingController,
             appPreferencesController: appPreferencesController,
             globalShortcutController: globalShortcutController,
@@ -343,7 +343,7 @@ final class AppCoordinator: NSObject {
             }
         )
 
-        settingsWindowController = controller
+        mainWindowController = controller
         return controller
     }
 
@@ -386,7 +386,7 @@ final class AppCoordinator: NSObject {
         statusBarController?.update(
             for: state
         )
-        settingsWindowController?.updateRemappingState(
+        mainWindowController?.updateRemappingState(
             state
         )
 
@@ -413,7 +413,7 @@ final class AppCoordinator: NSObject {
     }
 
     private func increaseTextSize() {
-        let controller = settingsController()
+        let controller = getOrCreateMainWindowController()
 
         if controller.window?.isVisible != true {
             controller.showWindow(nil)
@@ -423,7 +423,7 @@ final class AppCoordinator: NSObject {
     }
 
     private func decreaseTextSize() {
-        let controller = settingsController()
+        let controller = getOrCreateMainWindowController()
 
         if controller.window?.isVisible != true {
             controller.showWindow(nil)
@@ -433,7 +433,7 @@ final class AppCoordinator: NSObject {
     }
 
     private func resetTextSize() {
-        let controller = settingsController()
+        let controller = getOrCreateMainWindowController()
 
         if controller.window?.isVisible != true {
             controller.showWindow(nil)

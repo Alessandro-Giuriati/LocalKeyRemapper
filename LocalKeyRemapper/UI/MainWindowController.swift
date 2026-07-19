@@ -1,5 +1,5 @@
 //
-//  SettingsWindowController.swift
+//  MainWindowController.swift
 //  LocalKeyRemapper
 //
 //  Created by Alessandro Giuriati on 7/16/26.
@@ -9,13 +9,13 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 
-/// A settings window that intercepts a key press only while
+/// A main application window that intercepts a key press only while
 /// the user is explicitly selecting a key or global shortcut.
 ///
 /// The handler receives events only from this window.
 /// It is not a global keyboard monitor.
 @MainActor
-private final class SettingsWindow: NSWindow {
+private final class MainWindow: NSWindow {
     var keyDownHandler: ((NSEvent) -> Bool)?
 
     override func sendEvent(_ event: NSEvent) {
@@ -39,7 +39,7 @@ private final class FlippedView: NSView {
 /// Manages application settings, remapping rules, launch behavior,
 /// and global shortcut configuration.
 @MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate {
     private enum TextSizePreference {
         static let storageKey = "settingsTextScale.v1"
         static let defaultScale: CGFloat = 1.0
@@ -214,7 +214,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             )
         }
 
-        let window = SettingsWindow(
+        let window = MainWindow(
             contentRect: NSRect(
                 x: 0,
                 y: 0,
@@ -231,7 +231,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
 
-        window.title = "LocalKeyRemapper Settings"
+        window.title = "LocalKeyRemapper"
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(
             width: 960,

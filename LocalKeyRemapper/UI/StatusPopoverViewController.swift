@@ -27,7 +27,7 @@ final class StatusPopoverViewController:
     private let primaryActionHandler:
         () -> Void
 
-    private let openSettingsHandler:
+    private let openMainWindowHandler:
         () -> Void
 
     private let increaseTextSizeHandler:
@@ -75,7 +75,7 @@ final class StatusPopoverViewController:
         self.primaryActionHandler =
             primaryActionHandler
 
-        self.openSettingsHandler =
+        self.openMainWindowHandler =
             openSettingsHandler
 
         self.increaseTextSizeHandler =
@@ -193,12 +193,12 @@ final class StatusPopoverViewController:
         primaryActionButton.bezelStyle =
             .rounded
 
-        let settingsButton =
+        let openMainWindowButton =
             makeFullWidthButton(
                 title:
-                    "Settings…",
+                    "Open LocalKeyRemapper",
                 action:
-                    #selector(openSettings)
+                    #selector(openMainWindow)
             )
 
         let textSizeRow =
@@ -224,7 +224,7 @@ final class StatusPopoverViewController:
                     stateLabel,
                     primaryActionButton,
                     firstSeparator,
-                    settingsButton,
+                    openMainWindowButton,
                     textSizeRow,
                     secondSeparator,
                     quitButton
@@ -250,7 +250,7 @@ final class StatusPopoverViewController:
         for fullWidthView in [
             primaryActionButton,
             firstSeparator,
-            settingsButton,
+            openMainWindowButton,
             textSizeRow,
             secondSeparator,
             quitButton
@@ -273,7 +273,7 @@ final class StatusPopoverViewController:
             )
             .isActive = true
 
-        settingsButton.heightAnchor
+        openMainWindowButton.heightAnchor
             .constraint(
                 equalToConstant:
                     Layout.buttonHeight
@@ -510,8 +510,8 @@ final class StatusPopoverViewController:
     }
 
     @objc
-    private func openSettings() {
-        openSettingsHandler()
+    private func openMainWindow() {
+        openMainWindowHandler()
     }
 
     @objc

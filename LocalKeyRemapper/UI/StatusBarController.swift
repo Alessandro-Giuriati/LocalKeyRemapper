@@ -29,7 +29,7 @@ final class StatusBarController:
     private let refreshRemappingStateHandler:
         () -> Void
 
-    private let openSettingsHandler:
+    private let openMainWindowHandler:
         () -> Void
 
     private let increaseTextSizeHandler:
@@ -69,7 +69,7 @@ final class StatusBarController:
         self.refreshRemappingStateHandler =
             refreshRemappingStateHandler
 
-        self.openSettingsHandler =
+        self.openMainWindowHandler =
             openSettingsHandler
 
         self.increaseTextSizeHandler =
@@ -185,7 +185,7 @@ final class StatusBarController:
                         )
 
                     self?
-                        .openSettingsHandler()
+                        .openMainWindowHandler()
                 },
                 increaseTextSizeHandler: {
                     [weak self] in
