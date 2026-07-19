@@ -158,6 +158,80 @@ final class RemappingController:
         }
     }
 
+    /// Handles an event tap interruption reported by Core Graphics.
+    ///
+    /// When Accessibility permission was revoked, the invalid tap is
+    /// removed immediately and the controller enters the
+    /// permission-required state. Transient interruptions are recovered
+    /// by creating a fresh event tap.
+    func handleEventTapInterruption() {
+        guard
+            state == .enabled
+                || state == .enabling
+        else {
+            return
+        }
+
+        eventTapManager.stop()
+
+        guard permissionService.isGranted else {
+            updateState(.permissionRequired)
+            return
+        }
+
+        do {
+            try eventTapManager.start()
+        } catch {
+            eventTapManager.stop()
+
+            if permissionService.isGranted {
+                updateState(
+                    .failed(.eventTapStartFailed)
+                )
+            } else {
+                updateState(.permissionRequired)
+            }
+
+            return
+        }
+
+        if isKeyCaptureActive {
+            eventTapManager.pause()
+        }
+
+        updateState(.enabled)
+    }
+
+    /// Revalidates Accessibility permission after a relevant
+    /// application or user-interface event.
+    ///
+    /// This method does not recreate a healthy event tap. It only removes
+    /// the tap when permission was revoked, or retries activation after
+    /// permission was granted.
+    func refreshAccessibilityPermission() {
+        switch state {
+        case .enabled,
+             .enabling:
+            guard !permissionService.isGranted else {
+                return
+            }
+
+            eventTapManager.stop()
+            updateState(.permissionRequired)
+
+        case .permissionRequired:
+            guard permissionService.isGranted else {
+                return
+            }
+
+            updateState(.disabled)
+
+        case .disabled,
+             .failed:
+            break
+        }
+    }
+
     /// Returns the rules currently stored by the application.
     func loadConfiguredRules() throws -> [RemapRule] {
         try rulesStore.loadRules()

@@ -42,11 +42,6 @@ final class AppDelegate:
             return
         }
 
-        NSApplication.shared
-            .setActivationPolicy(
-                .regular
-            )
-
         let appCoordinator =
             AppCoordinator()
 

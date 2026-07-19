@@ -41,6 +41,16 @@ final class EventTapManager:
 
     private var isPaused = false
 
+    private var isInterruptionNotificationPending =
+        false
+
+    /// Called after Core Graphics disables the event tap.
+    ///
+    /// The callback is scheduled after the current event-tap callback
+    /// returns, so higher-level code can safely remove or recreate the tap.
+    var onInterruption:
+        (() -> Void)?
+
     /// Keeps key-up events consistent with the decision made
     /// for the corresponding physical key-down event.
     ///
@@ -54,7 +64,8 @@ final class EventTapManager:
     }
 
     init(
-        remappingEngine: RemappingEngine
+        remappingEngine:
+            RemappingEngine
     ) {
         self.remappingEngine =
             remappingEngine
@@ -71,45 +82,65 @@ final class EventTapManager:
             (CGEventMask(1)
                 << CGEventType.keyUp.rawValue)
 
-        let userInfo = Unmanaged
-            .passUnretained(self)
-            .toOpaque()
+        let userInfo =
+            Unmanaged
+                .passUnretained(
+                    self
+                )
+                .toOpaque()
 
-        guard let eventTap =
-            CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
-                place: .headInsertEventTap,
-                options: .defaultTap,
-                eventsOfInterest: eventMask,
-                callback:
-                    Self.eventTapCallback,
-                userInfo: userInfo
-            )
+        guard
+            let eventTap =
+                CGEvent.tapCreate(
+                    tap:
+                        .cgSessionEventTap,
+                    place:
+                        .headInsertEventTap,
+                    options:
+                        .defaultTap,
+                    eventsOfInterest:
+                        eventMask,
+                    callback:
+                        Self.eventTapCallback,
+                    userInfo:
+                        userInfo
+                )
         else {
             throw EventTapError
                 .creationFailed
         }
 
-        guard let runLoopSource =
-            CFMachPortCreateRunLoopSource(
-                kCFAllocatorDefault,
-                eventTap,
-                0
-            )
+        guard
+            let runLoopSource =
+                CFMachPortCreateRunLoopSource(
+                    kCFAllocatorDefault,
+                    eventTap,
+                    0
+                )
         else {
-            CFMachPortInvalidate(eventTap)
+            CFMachPortInvalidate(
+                eventTap
+            )
 
             throw EventTapError
                 .runLoopSourceCreationFailed
         }
 
-        self.eventTap = eventTap
+        self.eventTap =
+            eventTap
+
         self.runLoopSource =
             runLoopSource
 
-        isPaused = false
+        isPaused =
+            false
+
+        isInterruptionNotificationPending =
+            false
+
         activeDecisions.removeAll(
-            keepingCapacity: true
+            keepingCapacity:
+                true
         )
 
         CFRunLoopAddSource(
@@ -119,16 +150,20 @@ final class EventTapManager:
         )
 
         CGEvent.tapEnable(
-            tap: eventTap,
-            enable: true
+            tap:
+                eventTap,
+            enable:
+                true
         )
     }
 
     func stop() {
         if let eventTap {
             CGEvent.tapEnable(
-                tap: eventTap,
-                enable: false
+                tap:
+                    eventTap,
+                enable:
+                    false
             )
         }
 
@@ -150,12 +185,21 @@ final class EventTapManager:
             )
         }
 
-        runLoopSource = nil
-        eventTap = nil
-        isPaused = false
+        runLoopSource =
+            nil
+
+        eventTap =
+            nil
+
+        isPaused =
+            false
+
+        isInterruptionNotificationPending =
+            false
 
         activeDecisions.removeAll(
-            keepingCapacity: true
+            keepingCapacity:
+                true
         )
     }
 
@@ -169,14 +213,18 @@ final class EventTapManager:
         }
 
         CGEvent.tapEnable(
-            tap: eventTap,
-            enable: false
+            tap:
+                eventTap,
+            enable:
+                false
         )
 
-        isPaused = true
+        isPaused =
+            true
 
         activeDecisions.removeAll(
-            keepingCapacity: true
+            keepingCapacity:
+                true
         )
     }
 
@@ -190,15 +238,19 @@ final class EventTapManager:
         }
 
         activeDecisions.removeAll(
-            keepingCapacity: true
+            keepingCapacity:
+                true
         )
 
         CGEvent.tapEnable(
-            tap: eventTap,
-            enable: true
+            tap:
+                eventTap,
+            enable:
+                true
         )
 
-        isPaused = false
+        isPaused =
+            false
     }
 
     private static let eventTapCallback:
@@ -211,48 +263,61 @@ final class EventTapManager:
 
         guard let userInfo else {
             return Unmanaged
-                .passUnretained(event)
+                .passUnretained(
+                    event
+                )
         }
 
         let manager =
             Unmanaged<EventTapManager>
-                .fromOpaque(userInfo)
+                .fromOpaque(
+                    userInfo
+                )
                 .takeUnretainedValue()
 
         return MainActor.assumeIsolated {
             manager.handle(
-                eventType: eventType,
-                event: event
+                eventType:
+                    eventType,
+                event:
+                    event
             )
         }
     }
 
     private func handle(
-        eventType: CGEventType,
-        event: CGEvent
+        eventType:
+            CGEventType,
+        event:
+            CGEvent
     ) -> Unmanaged<CGEvent>? {
         if
             eventType
-                == .tapDisabledByTimeout ||
-            eventType
+                == .tapDisabledByTimeout
+                || eventType
                 == .tapDisabledByUserInput
         {
             activeDecisions.removeAll(
-                keepingCapacity: true
+                keepingCapacity:
+                    true
             )
 
-            reenableAfterInterruption()
+            scheduleInterruptionNotification()
 
             return Unmanaged
-                .passUnretained(event)
+                .passUnretained(
+                    event
+                )
         }
 
         guard
-            eventType == .keyDown ||
-            eventType == .keyUp
+            eventType == .keyDown
+                || eventType == .keyUp
         else {
             return Unmanaged
-                .passUnretained(event)
+                .passUnretained(
+                    event
+                )
         }
 
         let sourceKeyCode =
@@ -264,15 +329,19 @@ final class EventTapManager:
 
         let sourceCombination =
             KeyCombination(
-                keyCode: sourceKeyCode,
-                modifiers: KeyModifiers(
-                    eventFlags: event.flags
-                )
+                keyCode:
+                    sourceKeyCode,
+                modifiers:
+                    KeyModifiers(
+                        eventFlags:
+                            event.flags
+                    )
             )
 
         let decision =
             decisionForEvent(
-                eventType: eventType,
+                eventType:
+                    eventType,
                 sourceKeyCode:
                     sourceKeyCode,
                 sourceCombination:
@@ -281,31 +350,63 @@ final class EventTapManager:
 
         apply(
             decision,
-            to: event
+            to:
+                event
         )
 
         return Unmanaged
-            .passUnretained(event)
+            .passUnretained(
+                event
+            )
+    }
+
+    private func scheduleInterruptionNotification() {
+        guard
+            !isInterruptionNotificationPending
+        else {
+            return
+        }
+
+        isInterruptionNotificationPending =
+            true
+
+        Task {
+            @MainActor
+            [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            isInterruptionNotificationPending =
+                false
+
+            onInterruption?()
+        }
     }
 
     private func decisionForEvent(
-        eventType: CGEventType,
-        sourceKeyCode: CGKeyCode,
+        eventType:
+            CGEventType,
+        sourceKeyCode:
+            CGKeyCode,
         sourceCombination:
             KeyCombination
     ) -> RemapDecision {
         if eventType == .keyDown {
-            if let activeDecision =
-                activeDecisions[
-                    sourceKeyCode
-                ]
+            if
+                let activeDecision =
+                    activeDecisions[
+                        sourceKeyCode
+                    ]
             {
                 return activeDecision
             }
 
             let decision =
                 remappingEngine.decision(
-                    for: sourceCombination
+                    for:
+                        sourceCombination
                 )
 
             activeDecisions[
@@ -315,22 +416,27 @@ final class EventTapManager:
             return decision
         }
 
-        if let activeDecision =
-            activeDecisions.removeValue(
-                forKey: sourceKeyCode
-            )
+        if
+            let activeDecision =
+                activeDecisions.removeValue(
+                    forKey:
+                        sourceKeyCode
+                )
         {
             return activeDecision
         }
 
         return remappingEngine.decision(
-            for: sourceCombination
+            for:
+                sourceCombination
         )
     }
 
     private func apply(
-        _ decision: RemapDecision,
-        to event: CGEvent
+        _ decision:
+            RemapDecision,
+        to event:
+            CGEvent
     ) {
         switch decision {
         case .passThrough:
@@ -350,23 +456,9 @@ final class EventTapManager:
             event.flags =
                 destination.modifiers
                     .applying(
-                        to: event.flags
+                        to:
+                            event.flags
                     )
         }
-    }
-
-    private func reenableAfterInterruption() {
-        guard
-            let eventTap,
-            isRunning,
-            !isPaused
-        else {
-            return
-        }
-
-        CGEvent.tapEnable(
-            tap: eventTap,
-            enable: true
-        )
     }
 }

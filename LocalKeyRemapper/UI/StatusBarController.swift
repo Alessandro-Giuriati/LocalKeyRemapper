@@ -26,6 +26,9 @@ final class StatusBarController:
     private let accessibilitySettingsOpener:
         AccessibilitySettingsOpening
 
+    private let refreshRemappingStateHandler:
+        () -> Void
+
     private let openSettingsHandler:
         () -> Void
 
@@ -46,6 +49,8 @@ final class StatusBarController:
             RemappingControlling,
         accessibilitySettingsOpener:
             AccessibilitySettingsOpening,
+        refreshRemappingStateHandler:
+            @escaping () -> Void = {},
         openSettingsHandler:
             @escaping () -> Void,
         increaseTextSizeHandler:
@@ -60,6 +65,9 @@ final class StatusBarController:
 
         self.accessibilitySettingsOpener =
             accessibilitySettingsOpener
+
+        self.refreshRemappingStateHandler =
+            refreshRemappingStateHandler
 
         self.openSettingsHandler =
             openSettingsHandler
@@ -124,13 +132,14 @@ final class StatusBarController:
             return
         }
 
-        if let image =
-            NSImage(
-                systemSymbolName:
-                    "keyboard",
-                accessibilityDescription:
-                    "LocalKeyRemapper"
-            )
+        if
+            let image =
+                NSImage(
+                    systemSymbolName:
+                        "keyboard",
+                    accessibilityDescription:
+                        "LocalKeyRemapper"
+                )
         {
             image.isTemplate =
                 true
@@ -251,6 +260,8 @@ final class StatusBarController:
             return
         }
 
+        refreshRemappingStateHandler()
+
         update(
             for:
                 remappingController.state
@@ -292,8 +303,9 @@ final class StatusBarController:
     }
 
     private func performPrimaryAction() {
-        if remappingController.state
-            == .permissionRequired
+        if
+            remappingController.state
+                == .permissionRequired
         {
             checkPermissionOrOpenSettings()
             return
