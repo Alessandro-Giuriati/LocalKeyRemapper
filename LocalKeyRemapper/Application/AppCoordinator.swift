@@ -20,13 +20,13 @@ final class AppCoordinator: NSObject {
     private let remappingController: RemappingController
     private let globalShortcutManager: GlobalShortcutManager
     private let globalShortcutController: GlobalShortcutController
+    private let ruleEditorSession: RemappingRuleEditorSession
 
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
 
-    private var isObservingWorkspaceActivation =
-        false
+    private var isObservingWorkspaceActivation = false
 
     /// Prevents application shutdown from being stored as a
     /// user-requested disabled state.
@@ -81,6 +81,7 @@ final class AppCoordinator: NSObject {
                 }
             }
         )
+        let ruleEditorSession = RemappingRuleEditorSession()
 
         self.permissionService = permissionService
         self.rulesStore = rulesStore
@@ -92,6 +93,7 @@ final class AppCoordinator: NSObject {
         self.remappingController = remappingController
         self.globalShortcutManager = globalShortcutManager
         self.globalShortcutController = globalShortcutController
+        self.ruleEditorSession = ruleEditorSession
 
         super.init()
     }
@@ -214,8 +216,7 @@ final class AppCoordinator: NSObject {
                     nil
             )
 
-        isObservingWorkspaceActivation =
-            true
+        isObservingWorkspaceActivation = true
     }
 
     private func stopObservingWorkspaceActivation() {
@@ -234,14 +235,12 @@ final class AppCoordinator: NSObject {
                     nil
             )
 
-        isObservingWorkspaceActivation =
-            false
+        isObservingWorkspaceActivation = false
     }
 
     @objc
     private func workspaceDidActivateApplication(
-        _ notification:
-            Notification
+        _ notification: Notification
     ) {
         remappingController
             .refreshAccessibilityPermission()
@@ -315,7 +314,9 @@ final class AppCoordinator: NSObject {
         )
     }
 
-    private func getOrCreateMainWindowController() -> MainWindowController {
+    private func getOrCreateMainWindowController() ->
+        MainWindowController
+    {
         if let mainWindowController {
             return mainWindowController
         }
@@ -324,6 +325,7 @@ final class AppCoordinator: NSObject {
             remappingController: remappingController,
             appPreferencesController: appPreferencesController,
             globalShortcutController: globalShortcutController,
+            ruleEditorSession: ruleEditorSession,
             menuBarVisibilityChangeHandler: {
                 [weak self] showsMenuBarIcon in
 

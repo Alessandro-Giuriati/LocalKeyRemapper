@@ -12,19 +12,57 @@ import CoreGraphics
 /// A main application window that intercepts a key press only while
 /// the user is explicitly selecting a key or global shortcut.
 ///
-/// The handler receives events only from this window.
-/// It is not a global keyboard monitor.
+/// The handler receives events only from this window. It is not a global
+/// keyboard monitor.
 @MainActor
 private final class MainWindow: NSWindow {
     var keyDownHandler: ((NSEvent) -> Bool)?
+    var undoHandler: (() -> Void)?
+    var redoHandler: (() -> Void)?
+    var canUndoHandler: (() -> Bool)?
+    var canRedoHandler: (() -> Bool)?
 
-    override func sendEvent(_ event: NSEvent) {
+    override func sendEvent(
+        _ event: NSEvent
+    ) {
         if event.type == .keyDown,
            keyDownHandler?(event) == true {
             return
         }
 
         super.sendEvent(event)
+    }
+
+    override func validateUserInterfaceItem(
+        _ item: NSValidatedUserInterfaceItem
+    ) -> Bool {
+        if item.action
+            == #selector(performRuleEditorUndo(_:))
+        {
+            return canUndoHandler?() ?? false
+        }
+
+        if item.action
+            == #selector(performRuleEditorRedo(_:))
+        {
+            return canRedoHandler?() ?? false
+        }
+
+        return super.validateUserInterfaceItem(item)
+    }
+
+    @objc
+    func performRuleEditorUndo(
+        _ sender: Any?
+    ) {
+        undoHandler?()
+    }
+
+    @objc
+    func performRuleEditorRedo(
+        _ sender: Any?
+    ) {
+        redoHandler?()
     }
 }
 
@@ -37,9 +75,12 @@ private final class FlippedView: NSView {
 }
 
 /// Manages application settings, remapping rules, launch behavior,
-/// and global shortcut configuration.
+/// global shortcut configuration, and session-scoped rule editor history.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController:
+    NSWindowController,
+    NSWindowDelegate
+{
     private enum TextSizePreference {
         static let storageKey = "settingsTextScale.v1"
         static let defaultScale: CGFloat = 1.0
@@ -57,8 +98,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             switch self {
             case .incompleteRule:
                 return "Complete every highlighted rule before saving."
+
             case .duplicateSource:
                 return "Each exact source combination and each Preserve Modifiers source key can appear only once."
+
             case .identicalSourceAndDestination:
                 return "A source and destination key cannot be identical."
             }
@@ -78,6 +121,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let globalShortcutSettingsView: GlobalShortcutSettingsView
     private let ruleRemovalConfirmationController =
         RuleRemovalConfirmationController()
+    private let ruleEditorSession: RemappingRuleEditorSession
 
     /// The application controller implements both the settings and runtime
     /// remapping interfaces. Keeping the cast here avoids widening the
@@ -143,6 +187,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let rulesDocumentView = FlippedView()
     private let rulesStackView = NSStackView()
     private let addRuleButton = NSButton()
+    private let undoButton = NSButton()
+    private let redoButton = NSButton()
     private let saveButton = NSButton()
     private let actionsStack = NSStackView()
 
@@ -180,27 +226,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     )
 
     private var ruleRows: [RemappingRuleRowView] = []
-
-    /// Last rule collection successfully loaded or saved.
-    private var savedRules: [RemapRule] = []
-
     private var captureRow: RemappingRuleRowView?
     private var captureField: RemappingRuleRowView.KeyField?
-    private var shortcutCaptureField: GlobalShortcutSettingsView.CaptureField?
-    private var exceptionsWindowController: RemapOverridesWindowController?
+    private var shortcutCaptureField:
+        GlobalShortcutSettingsView.CaptureField?
+    private var exceptionsWindowController:
+        RemapOverridesWindowController?
     private var textScale: CGFloat
 
     init(
         remappingController: RemappingSettingsControlling,
         appPreferencesController: AppPreferencesControlling,
         globalShortcutController: GlobalShortcutController,
-        menuBarVisibilityChangeHandler: @escaping (Bool) throws -> Void,
+        ruleEditorSession: RemappingRuleEditorSession,
+        menuBarVisibilityChangeHandler:
+            @escaping (Bool) throws -> Void,
         openAccessibilitySettingsHandler: @escaping () -> Void = {}
     ) {
         self.remappingController = remappingController
         self.appPreferencesController = appPreferencesController
         self.globalShortcutController = globalShortcutController
-        self.menuBarVisibilityChangeHandler = menuBarVisibilityChangeHandler
+        self.ruleEditorSession = ruleEditorSession
+        self.menuBarVisibilityChangeHandler =
+            menuBarVisibilityChangeHandler
         self.openAccessibilitySettingsHandler =
             openAccessibilitySettingsHandler
 
@@ -258,6 +306,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.keyDownHandler = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
+        window.undoHandler = { [weak self] in
+            self?.undoRuleEditorChange()
+        }
+        window.redoHandler = { [weak self] in
+            self?.redoRuleEditorChange()
+        }
+        window.canUndoHandler = { [weak self] in
+            self?.canUndoRuleEditorChange ?? false
+        }
+        window.canRedoHandler = { [weak self] in
+            self?.canRedoRuleEditorChange ?? false
+        }
+
+        ruleEditorSession.onChange = { [weak self] in
+            self?.renderRuleEditor()
+        }
 
         configureShortcutSettingsCallbacks()
         configureContent()
@@ -267,14 +331,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         updateRemappingState(
             remappingRuntimeController?.state ?? .disabled
         )
+        initializeRuleEditorSession()
         applyTextScale()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    convenience init(
+        remappingController: RemappingSettingsControlling,
+        appPreferencesController: AppPreferencesControlling,
+        globalShortcutController: GlobalShortcutController,
+        menuBarVisibilityChangeHandler:
+            @escaping (Bool) throws -> Void,
+        openAccessibilitySettingsHandler: @escaping () -> Void = {}
+    ) {
+        self.init(
+            remappingController: remappingController,
+            appPreferencesController: appPreferencesController,
+            globalShortcutController: globalShortcutController,
+            ruleEditorSession: RemappingRuleEditorSession(),
+            menuBarVisibilityChangeHandler:
+                menuBarVisibilityChangeHandler,
+            openAccessibilitySettingsHandler:
+                openAccessibilitySettingsHandler
+        )
     }
 
-    override func showWindow(_ sender: Any?) {
+    required init?(
+        coder: NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
+    }
+
+    override func showWindow(
+        _ sender: Any?
+    ) {
         if window?.isVisible == false {
             synchronizeLaunchBehavior()
             synchronizeRuleRemovalConfirmationPreference()
@@ -290,7 +381,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                         .shortcutConfiguration
             )
 
-            loadConfiguredRules()
+            renderRuleEditor()
         }
 
         super.showWindow(sender)
@@ -308,21 +399,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         exceptionsWindowController = nil
     }
 
-    /// Increases the Settings interface text size.
     func increaseTextSize() {
         setTextScale(
             textScale + TextSizePreference.step
         )
     }
 
-    /// Decreases the Settings interface text size.
     func decreaseTextSize() {
         setTextScale(
             textScale - TextSizePreference.step
         )
     }
 
-    /// Restores the default Settings interface text size.
     func resetTextSize() {
         setTextScale(
             TextSizePreference.defaultScale
@@ -330,8 +418,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Updates the controls to reflect the real backend state.
-    func updateRemappingState(_ state: RemappingState) {
-        let canControlRemapping = remappingRuntimeController != nil
+    func updateRemappingState(
+        _ state: RemappingState
+    ) {
+        let canControlRemapping =
+            remappingRuntimeController != nil
 
         switch state {
         case .disabled:
@@ -361,10 +452,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
+    func windowShouldClose(
+        _ sender: NSWindow
+    ) -> Bool {
         endKeyCapture()
 
-        let hasRuleChanges = hasUnsavedRuleChanges
+        let hasRuleChanges =
+            ruleEditorSession.hasUnsavedChanges
         let hasShortcutChanges =
             globalShortcutSettingsView.hasUnsavedChanges
 
@@ -409,7 +503,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         case .alertSecondButtonReturn:
             if hasRuleChanges {
-                loadConfiguredRules()
+                ruleEditorSession.restoreSavedRules()
             }
 
             if hasShortcutChanges {
@@ -423,7 +517,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    func windowWillClose(_ notification: Notification) {
+    func windowWillClose(
+        _ notification: Notification
+    ) {
         endKeyCapture()
         exceptionsWindowController = nil
     }
@@ -464,7 +560,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         destinationHeader.textColor = .secondaryLabelColor
         behaviorHeader.textColor = .secondaryLabelColor
         exceptionsHeader.textColor = .secondaryLabelColor
-        launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
+        launchBehaviorDescriptionLabel.textColor =
+            .secondaryLabelColor
 
         configureLaunchBehavior()
         configureRuleRemovalConfirmationPreference()
@@ -478,6 +575,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         actionsStack.setViews(
             [
                 addRuleButton,
+                undoButton,
+                redoButton,
                 saveButton
             ],
             in: .leading
@@ -598,6 +697,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 sourceHeader.bottomAnchor.constraint(
                     equalTo: headerView.bottomAnchor
                 ),
+
                 arrowSpacer.leadingAnchor.constraint(
                     equalTo: sourceHeader.trailingAnchor,
                     constant: 10
@@ -605,6 +705,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 arrowSpacer.widthAnchor.constraint(
                     equalToConstant: 18
                 ),
+
                 destinationHeader.leadingAnchor.constraint(
                     equalTo: arrowSpacer.trailingAnchor,
                     constant: 10
@@ -615,6 +716,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 destinationHeader.bottomAnchor.constraint(
                     equalTo: headerView.bottomAnchor
                 ),
+
                 behaviorHeader.leadingAnchor.constraint(
                     equalTo: destinationHeader.trailingAnchor,
                     constant: 10
@@ -628,6 +730,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 behaviorHeader.widthAnchor.constraint(
                     equalToConstant: 168
                 ),
+
                 exceptionsHeader.leadingAnchor.constraint(
                     equalTo: behaviorHeader.trailingAnchor,
                     constant: 10
@@ -641,6 +744,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 exceptionsHeader.widthAnchor.constraint(
                     equalToConstant: 116
                 ),
+
                 removeSpacer.leadingAnchor.constraint(
                     equalTo: exceptionsHeader.trailingAnchor,
                     constant: 10
@@ -652,6 +756,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 removeSpacer.widthAnchor.constraint(
                     equalToConstant: 82
                 ),
+
                 sourceHeader.widthAnchor.constraint(
                     equalTo: destinationHeader.widthAnchor
                 ),
@@ -682,7 +787,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Updates the checkbox when the preference changes elsewhere,
     /// such as from the application's native menu.
-    func updateMenuBarIconVisibility(_ showsMenuBarIcon: Bool) {
+    func updateMenuBarIconVisibility(
+        _ showsMenuBarIcon: Bool
+    ) {
         showMenuBarIconCheckbox.state =
             showsMenuBarIcon ? .on : .off
     }
@@ -874,11 +981,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         addRuleButton.target = self
         addRuleButton.action = #selector(addEmptyRule)
 
+        undoButton.title = "Undo"
+        undoButton.image = NSImage(
+            systemSymbolName: "arrow.uturn.backward",
+            accessibilityDescription: "Undo"
+        )
+        undoButton.imagePosition = .imageLeading
+        undoButton.bezelStyle = .rounded
+        undoButton.target = self
+        undoButton.action = #selector(undoButtonPressed)
+        undoButton.toolTip =
+            "Undo the last rule editor change (Command-Z)."
+
+        redoButton.title = "Redo"
+        redoButton.image = NSImage(
+            systemSymbolName: "arrow.uturn.forward",
+            accessibilityDescription: "Redo"
+        )
+        redoButton.imagePosition = .imageLeading
+        redoButton.bezelStyle = .rounded
+        redoButton.target = self
+        redoButton.action = #selector(redoButtonPressed)
+        redoButton.toolTip =
+            "Redo the last undone rule editor change (Shift-Command-Z)."
+
         saveButton.title = "Save Rules"
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"
         saveButton.target = self
         saveButton.action = #selector(saveRules)
+
+        updateRuleEditorHistoryControls()
+    }
+
+    @objc
+    private func undoButtonPressed() {
+        undoRuleEditorChange()
+    }
+
+    @objc
+    private func redoButtonPressed() {
+        redoRuleEditorChange()
     }
 
     private func configureRemappingControl() {
@@ -1065,24 +1208,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         )
     }
 
-    private func loadConfiguredRules() {
-        endKeyCapture()
-        removeAllRuleRows()
+    private func initializeRuleEditorSession() {
+        guard !ruleEditorSession.isInitialized else {
+            renderRuleEditor()
+            return
+        }
 
         do {
             let rules = try remappingController.loadConfiguredRules()
-            savedRules = rules
-
-            for rule in rules {
-                addRuleRow(
-                    rule: rule,
-                    scrollIntoView: false
-                )
-            }
-
-            refreshChangeState()
+            ruleEditorSession.initialize(
+                with: rules
+            )
         } catch {
-            savedRules = []
+            ruleEditorSession.initialize(
+                with: []
+            )
             setStatus(
                 "The configured rules could not be loaded.",
                 isError: true
@@ -1091,12 +1231,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Rebuilds only the visual rows from the session-owned editor state.
+    /// No persistent rules are loaded here, so closing and reopening the
+    /// window cannot erase Undo or Redo history.
+    private func renderRuleEditor() {
+        endKeyCapture()
+        removeAllRuleRows()
+
+        for item in ruleEditorSession.items {
+            addRuleRow(
+                item: item
+            )
+        }
+
+        refreshChangeState()
+        window?.contentView?.needsLayout = true
+    }
+
     private func addRuleRow(
-        rule: RemapRule? = nil,
-        scrollIntoView: Bool = true
+        item: RemappingRuleEditorItem
     ) {
         let row = RemappingRuleRowView(
-            rule: rule
+            item: item
         )
 
         row.applyTextScale(textScale)
@@ -1148,9 +1304,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         row.onRuleChanged = {
-            [weak self] in
+            [weak self] updatedItem in
 
-            self?.refreshChangeState()
+            self?.ruleEditorSession.updateItem(
+                updatedItem
+            )
         }
 
         ruleRows.append(row)
@@ -1159,12 +1317,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         row.widthAnchor.constraint(
             equalTo: rulesStackView.widthAnchor
         ).isActive = true
-
-        refreshChangeState()
-
-        if scrollIntoView {
-            scrollToRuleRow(row)
-        }
     }
 
     private func showExceptions(
@@ -1185,19 +1337,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             remappingController: remappingController,
             textScale: textScale,
             onSave: {
-                [weak self, weak row] overrides in
+                [weak row] overrides in
 
                 row?.setOverrides(overrides)
-                self?.refreshChangeState()
             },
             onClose: {
                 [weak self] in
 
                 self?.exceptionsWindowController = nil
+                self?.updateRuleEditorHistoryControls()
             }
         )
 
         exceptionsWindowController = controller
+        updateRuleEditorHistoryControls()
         controller.showAsSheet()
     }
 
@@ -1232,26 +1385,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        removeRuleRow(row)
-    }
-
-    private func removeRuleRow(
-        _ row: RemappingRuleRowView
-    ) {
         if captureRow === row {
             endKeyCapture()
         }
 
-        guard let index = ruleRows.firstIndex(
-            where: { $0 === row }
-        ) else {
-            return
-        }
-
-        ruleRows.remove(at: index)
-        rulesStackView.removeArrangedSubview(row)
-        row.removeFromSuperview()
-        refreshChangeState()
+        ruleEditorSession.removeItem(
+            id: row.editorItemID
+        )
     }
 
     private func removeAllRuleRows() {
@@ -1265,7 +1405,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc
     private func addEmptyRule() {
-        addRuleRow()
+        let itemID = ruleEditorSession.insertEmptyItem()
+
+        if let row = ruleRows.first(
+            where: { $0.editorItemID == itemID }
+        ) {
+            scrollToRuleRow(row)
+        }
     }
 
     private func beginRuleKeyCapture(
@@ -1284,6 +1430,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         captureField = field
         beginCaptureSession()
         row.showCapturePrompt(for: field)
+        updateRuleEditorHistoryControls()
 
         if row.matchingMode == .preserveModifiers {
             setStatus(
@@ -1312,6 +1459,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         globalShortcutSettingsView.beginCapturePrompt(
             for: field
         )
+        updateRuleEditorHistoryControls()
     }
 
     private func beginCaptureSession() {
@@ -1319,14 +1467,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         globalShortcutController.beginShortcutCapture()
     }
 
-    private func handleKeyDown(_ event: NSEvent) -> Bool {
+    private func handleKeyDown(
+        _ event: NSEvent
+    ) -> Bool {
         if let shortcutCaptureField {
             if event.keyCode == UInt16(kVK_Escape) {
                 endKeyCapture()
                 return true
             }
 
-            let combination = keyCombination(from: event)
+            let combination = keyCombination(
+                from: event
+            )
             globalShortcutSettingsView.setCapturedShortcut(
                 combination,
                 for: shortcutCaptureField
@@ -1340,7 +1492,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return false
         }
 
-        let combination = keyCombination(from: event)
+        let combination = keyCombination(
+            from: event
+        )
         captureRow.setCombination(
             combination,
             for: captureField
@@ -1363,7 +1517,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func endKeyCapture() {
         let hadActiveCapture =
-            captureRow != nil || shortcutCaptureField != nil
+            captureRow != nil
+            || shortcutCaptureField != nil
 
         guard hadActiveCapture else {
             return
@@ -1386,104 +1541,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         remappingController.endKeyCapture()
+        updateRuleEditorHistoryControls()
     }
 
-    /// Returns all current rules only when every row is complete.
-    private var completeCurrentRules: [RemapRule]? {
-        let rules = ruleRows.compactMap { $0.rule }
-
-        guard rules.count == ruleRows.count else {
-            return nil
-        }
-
-        return rules
+    private var canUndoRuleEditorChange: Bool {
+        captureRow == nil
+            && shortcutCaptureField == nil
+            && exceptionsWindowController == nil
+            && ruleEditorSession.canUndo
     }
 
-    /// Indicates whether the rule editor differs from the last
-    /// successfully loaded or saved rule collection.
-    private var hasUnsavedRuleChanges: Bool {
-        guard let currentRules = completeCurrentRules else {
-            return true
-        }
-
-        return normalizedRules(currentRules)
-            != normalizedRules(savedRules)
+    private var canRedoRuleEditorChange: Bool {
+        captureRow == nil
+            && shortcutCaptureField == nil
+            && exceptionsWindowController == nil
+            && ruleEditorSession.canRedo
     }
 
-    /// Sorts rules and their exceptions into a stable order.
-    private func normalizedRules(
-        _ rules: [RemapRule]
-    ) -> [RemapRule] {
-        let normalizedRules = rules.map { rule in
-            RemapRule(
-                source: rule.source,
-                destination: rule.destination,
-                matchingMode: rule.matchingMode,
-                overrides: normalizedOverrides(
-                    rule.overrides
-                )
-            )
+    private func undoRuleEditorChange() {
+        guard canUndoRuleEditorChange else {
+            return
         }
 
-        return normalizedRules.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
-                return first.source.keyCode
-                    < second.source.keyCode
-            }
-
-            if first.source.modifiers.rawValue
-                != second.source.modifiers.rawValue {
-                return first.source.modifiers.rawValue
-                    < second.source.modifiers.rawValue
-            }
-
-            if first.matchingMode.rawValue
-                != second.matchingMode.rawValue {
-                return first.matchingMode.rawValue
-                    < second.matchingMode.rawValue
-            }
-
-            if first.destination.keyCode
-                != second.destination.keyCode {
-                return first.destination.keyCode
-                    < second.destination.keyCode
-            }
-
-            return first.destination.modifiers.rawValue
-                < second.destination.modifiers.rawValue
-        }
+        ruleEditorSession.undo()
     }
 
-    private func normalizedOverrides(
-        _ overrides: [RemapOverride]
-    ) -> [RemapOverride] {
-        overrides.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
-                return first.source.keyCode
-                    < second.source.keyCode
-            }
-
-            if first.source.modifiers.rawValue
-                != second.source.modifiers.rawValue {
-                return first.source.modifiers.rawValue
-                    < second.source.modifiers.rawValue
-            }
-
-            return actionSortKey(first.action)
-                < actionSortKey(second.action)
+    private func redoRuleEditorChange() {
+        guard canRedoRuleEditorChange else {
+            return
         }
+
+        ruleEditorSession.redo()
     }
 
-    private func actionSortKey(
-        _ action: RemapAction
-    ) -> String {
-        switch action {
-        case .passThrough:
-            return "0"
+    private func updateRuleEditorHistoryControls() {
+        undoButton.isEnabled =
+            canUndoRuleEditorChange
 
-        case .replaceWith(let destination):
-            return "1-\(destination.keyCode)-\(destination.modifiers.rawValue)"
-        }
+        redoButton.isEnabled =
+            canRedoRuleEditorChange
     }
 
     private func validationSnapshot() -> ValidationSnapshot {
@@ -1528,7 +1624,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 ].append(row)
 
                 if rule.source.keyCode
-                    == rule.destination.keyCode {
+                    == rule.destination.keyCode
+                {
                     hasIdentityRule = true
                     invalidRows.insert(
                         ObjectIdentifier(row)
@@ -1607,8 +1704,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func refreshChangeState() {
         let snapshot = validationSnapshot()
         applyValidationAppearance(snapshot)
+        updateRuleEditorHistoryControls()
 
-        let hasChanges = hasUnsavedRuleChanges
+        let hasChanges =
+            ruleEditorSession.hasUnsavedChanges
         saveButton.isEnabled =
             snapshot.issue == nil && hasChanges
 
@@ -1621,7 +1720,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         if !hasChanges {
-            if savedRules.isEmpty {
+            if ruleEditorSession.savedRules.isEmpty {
                 setStatus(
                     "No remapping rules are configured.",
                     isError: false
@@ -1660,7 +1759,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return false
         }
 
-        guard let rules = completeCurrentRules else {
+        guard let rules = ruleEditorSession.completeRules else {
             setStatus(
                 "Complete every highlighted rule before saving.",
                 isError: true
@@ -1672,7 +1771,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             try remappingController.replaceConfiguredRules(
                 rules
             )
-            savedRules = rules
+            ruleEditorSession.markCurrentRulesAsSaved(
+                rules
+            )
             refreshChangeState()
             return true
         } catch let error as RemappingRulesValidationError {
@@ -1795,6 +1896,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         confirmRuleRemovalCheckbox.font = actionFont
         addRuleButton.font = actionFont
+        undoButton.font = actionFont
+        redoButton.font = actionFont
         saveButton.font = actionFont
         remappingLabel.font = actionFont
         textSizeLabel.font = actionFont
