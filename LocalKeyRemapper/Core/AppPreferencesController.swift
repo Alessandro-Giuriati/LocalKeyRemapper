@@ -39,6 +39,12 @@ protocol AppPreferencesControlling:
             Bool
     ) throws
 
+    /// Updates whether removing a rule requires confirmation.
+    func setConfirmsRuleRemoval(
+        _ confirmsRuleRemoval:
+            Bool
+    ) throws
+
     /// Updates the complete global shortcut configuration.
     func setShortcutConfiguration(
         _ configuration:
@@ -147,6 +153,28 @@ final class AppPreferencesController:
 
         updatedPreferences.showsMenuBarIcon =
             showsMenuBarIcon
+
+        try saveAndApply(
+            updatedPreferences
+        )
+    }
+
+    func setConfirmsRuleRemoval(
+        _ confirmsRuleRemoval:
+            Bool
+    ) throws {
+        guard
+            preferences.confirmsRuleRemoval
+                != confirmsRuleRemoval
+        else {
+            return
+        }
+
+        var updatedPreferences =
+            preferences
+
+        updatedPreferences.confirmsRuleRemoval =
+            confirmsRuleRemoval
 
         try saveAndApply(
             updatedPreferences

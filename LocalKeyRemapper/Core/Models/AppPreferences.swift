@@ -64,6 +64,10 @@ nonisolated struct AppPreferences:
     var showsMenuBarIcon:
         Bool
 
+    /// Defines whether removing a remapping rule requires confirmation.
+    var confirmsRuleRemoval:
+        Bool
+
     /// Stores the complete global shortcut configuration.
     var shortcutConfiguration:
         RemappingShortcutConfiguration
@@ -109,6 +113,8 @@ nonisolated struct AppPreferences:
                 false,
             showsMenuBarIcon:
                 true,
+            confirmsRuleRemoval:
+                false,
             shortcutConfiguration:
                 defaultShortcutConfiguration
         )
@@ -137,6 +143,8 @@ nonisolated struct AppPreferences:
             Bool,
         showsMenuBarIcon:
             Bool = true,
+        confirmsRuleRemoval:
+            Bool = false,
         shortcutConfiguration:
             RemappingShortcutConfiguration =
                 AppPreferences
@@ -151,6 +159,9 @@ nonisolated struct AppPreferences:
         self.showsMenuBarIcon =
             showsMenuBarIcon
 
+        self.confirmsRuleRemoval =
+            confirmsRuleRemoval
+
         self.shortcutConfiguration =
             shortcutConfiguration
     }
@@ -164,6 +175,8 @@ nonisolated struct AppPreferences:
             Bool,
         showsMenuBarIcon:
             Bool = true,
+        confirmsRuleRemoval:
+            Bool = false,
         toggleShortcut:
             KeyCombination?
     ) {
@@ -187,6 +200,8 @@ nonisolated struct AppPreferences:
                 lastRemappingEnabled,
             showsMenuBarIcon:
                 showsMenuBarIcon,
+            confirmsRuleRemoval:
+                confirmsRuleRemoval,
             shortcutConfiguration:
                 shortcutConfiguration
         )
@@ -199,6 +214,7 @@ nonisolated struct AppPreferences:
         case launchBehavior
         case lastRemappingEnabled
         case showsMenuBarIcon
+        case confirmsRuleRemoval
         case shortcutConfiguration
 
         /// Legacy shortcut key used before multiple shortcut modes.
@@ -253,6 +269,13 @@ nonisolated struct AppPreferences:
                 forKey:
                     .showsMenuBarIcon
             ) ?? true
+
+        confirmsRuleRemoval =
+            try container.decodeIfPresent(
+                Bool.self,
+                forKey:
+                    .confirmsRuleRemoval
+            ) ?? false
 
         if container.contains(
             .shortcutConfiguration
@@ -315,6 +338,12 @@ nonisolated struct AppPreferences:
             showsMenuBarIcon,
             forKey:
                 .showsMenuBarIcon
+        )
+
+        try container.encode(
+            confirmsRuleRemoval,
+            forKey:
+                .confirmsRuleRemoval
         )
 
         try container.encode(

@@ -76,6 +76,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let menuBarVisibilityChangeHandler: (Bool) throws -> Void
     private let openAccessibilitySettingsHandler: () -> Void
     private let globalShortcutSettingsView: GlobalShortcutSettingsView
+    private let ruleRemovalConfirmationController =
+        RuleRemovalConfirmationController()
 
     /// The application controller implements both the settings and runtime
     /// remapping interfaces. Keeping the cast here avoids widening the
@@ -130,6 +132,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     )
 
     private let launchBehaviorStack = NSStackView()
+
+    private let confirmRuleRemovalCheckbox = NSButton(
+        checkboxWithTitle: "Confirm before removing rules",
+        target: nil,
+        action: nil
+    )
+
     private let rulesScrollView = NSScrollView()
     private let rulesDocumentView = FlippedView()
     private let rulesStackView = NSStackView()
@@ -253,6 +262,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         configureShortcutSettingsCallbacks()
         configureContent()
         synchronizeLaunchBehavior()
+        synchronizeRuleRemovalConfirmationPreference()
         synchronizeMenuBarIconVisibility()
         updateRemappingState(
             remappingRuntimeController?.state ?? .disabled
@@ -267,6 +277,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         if window?.isVisible == false {
             synchronizeLaunchBehavior()
+            synchronizeRuleRemovalConfirmationPreference()
             synchronizeMenuBarIconVisibility()
             updateRemappingState(
                 remappingRuntimeController?.state ?? .disabled
@@ -456,6 +467,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
 
         configureLaunchBehavior()
+        configureRuleRemovalConfirmationPreference()
         configureMenuBarVisibilityPreference()
         configureRulesScrollView()
         configureActionButtons()
@@ -496,6 +508,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 descriptionLabel,
                 launchBehaviorStack,
                 globalShortcutSettingsView,
+                confirmRuleRemovalCheckbox,
                 rulesHeaderView,
                 rulesScrollView,
                 actionsStack,
@@ -697,6 +710,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             )
             setStatus(
                 "The menu bar preference could not be saved.",
+                isError: true
+            )
+        }
+    }
+
+    private func configureRuleRemovalConfirmationPreference() {
+        confirmRuleRemovalCheckbox.target = self
+        confirmRuleRemovalCheckbox.action = #selector(
+            ruleRemovalConfirmationPreferenceChanged
+        )
+        confirmRuleRemovalCheckbox.toolTip =
+            "Ask for confirmation before removing a remapping rule."
+        confirmRuleRemovalCheckbox.setContentHuggingPriority(
+            .required,
+            for: .vertical
+        )
+    }
+
+    private func synchronizeRuleRemovalConfirmationPreference() {
+        confirmRuleRemovalCheckbox.state =
+            appPreferencesController.preferences.confirmsRuleRemoval
+                ? .on
+                : .off
+    }
+
+    @objc
+    private func ruleRemovalConfirmationPreferenceChanged() {
+        let previousValue =
+            appPreferencesController.preferences.confirmsRuleRemoval
+        let requestedValue =
+            confirmRuleRemovalCheckbox.state == .on
+
+        guard ruleRemovalConfirmationController
+            .shouldApplyPreferenceChange(
+                from: previousValue,
+                to: requestedValue
+            ) else {
+            synchronizeRuleRemovalConfirmationPreference()
+            return
+        }
+
+        do {
+            try appPreferencesController.setConfirmsRuleRemoval(
+                requestedValue
+            )
+        } catch {
+            synchronizeRuleRemovalConfirmationPreference()
+            setStatus(
+                "The rule removal confirmation preference could not be saved.",
                 isError: true
             )
         }
@@ -1082,7 +1144,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 return
             }
 
-            self?.removeRuleRow(row)
+            self?.requestRuleRemoval(row)
         }
 
         row.onRuleChanged = {
@@ -1153,6 +1215,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         rulesDocumentView.scrollToVisible(
             visibleRect
         )
+    }
+
+    private func requestRuleRemoval(
+        _ row: RemappingRuleRowView
+    ) {
+        let confirmationRequired =
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
+
+        guard ruleRemovalConfirmationController
+            .shouldRemoveRule(
+                confirmationRequired: confirmationRequired
+            ) else {
+            return
+        }
+
+        removeRuleRow(row)
     }
 
     private func removeRuleRow(
@@ -1713,6 +1793,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             textScale
         )
 
+        confirmRuleRemovalCheckbox.font = actionFont
         addRuleButton.font = actionFont
         saveButton.font = actionFont
         remappingLabel.font = actionFont
