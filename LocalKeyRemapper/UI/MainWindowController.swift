@@ -100,7 +100,7 @@ final class MainWindowController:
                 return "Complete every highlighted rule before saving."
 
             case .duplicateSource:
-                return "Each exact source combination and each Preserve Modifiers source key can appear only once."
+                return "Each active exact source combination and each Preserve Modifiers source key can appear only once."
 
             case .identicalSourceAndDestination:
                 return "A source and destination key cannot be identical."
@@ -136,7 +136,7 @@ final class MainWindowController:
 
     private let descriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "Record complete combinations, choose how modifiers behave, and add exact exceptions when needed."
+            "Record complete combinations, choose how modifiers behave, and add stored exceptions when needed."
     )
 
     private let sourceHeader = NSTextField(
@@ -1326,16 +1326,25 @@ final class MainWindowController:
 
         guard exceptionsWindowController == nil,
               let parentWindow = window,
-              let rule = row.rule,
-              rule.matchingMode == .preserveModifiers else {
+              let rule = row.rule else {
             return
         }
+
+        let editorItemID = row.editorItemID
 
         let controller = RemapOverridesWindowController(
             parentWindow: parentWindow,
             rule: rule,
             remappingController: remappingController,
             textScale: textScale,
+            validateCandidateOverrides: {
+                [weak self] candidateOverrides in
+
+                self?.validateCandidateOverrides(
+                    candidateOverrides,
+                    replacingOverridesFor: editorItemID
+                )
+            },
             onSave: {
                 [weak row] overrides in
 
@@ -1352,6 +1361,68 @@ final class MainWindowController:
         exceptionsWindowController = controller
         updateRuleEditorHistoryControls()
         controller.showAsSheet()
+    }
+
+    private func validateCandidateOverrides(
+        _ candidateOverrides: [RemapOverride],
+        replacingOverridesFor editorItemID: UUID
+    ) -> String? {
+        var replacedTargetItem = false
+
+        let candidateRules = ruleEditorSession.items.compactMap {
+            item -> RemapRule? in
+
+            var candidateItem = item
+
+            if candidateItem.id == editorItemID {
+                candidateItem.overrides = candidateOverrides
+                replacedTargetItem = true
+            }
+
+            return candidateItem.rule
+        }
+
+        guard replacedTargetItem else {
+            return "The parent remapping rule is no longer available."
+        }
+
+        do {
+            try RemappingRulesValidator()
+                .validate(candidateRules)
+            return nil
+        } catch let error as RemappingRulesValidationError {
+            return candidateOverrideValidationMessage(
+                for: error
+            )
+        } catch {
+            return "The candidate exceptions could not be validated."
+        }
+    }
+
+    private func candidateOverrideValidationMessage(
+        for error: RemappingRulesValidationError
+    ) -> String {
+        switch error {
+        case .duplicateSourceKey,
+             .duplicateSourceCombination:
+            return "This exception cannot be enabled because its source combination conflicts with an active exact rule or another enabled exception."
+
+        case .duplicatePreservingSourceKey:
+            return "The current rules contain more than one Preserve Modifiers rule for the same source key."
+
+        case .identicalSourceAndDestination,
+             .identicalSourceAndDestinationCombination:
+            return "An exception cannot replace a source combination with itself."
+
+        case .invalidModifierPreservingEndpoints:
+            return "A Preserve Modifiers rule must use source and destination keys without modifiers."
+
+        case .overridesRequireModifierPreservingRule:
+            return "Stored exceptions are allowed in both matching modes, but they are active only in Preserve Modifiers."
+
+        case .overrideSourceKeyMismatch:
+            return "Every exception must use the same physical source key as its parent rule."
+        }
     }
 
     private func scrollToRuleRow(
@@ -1632,7 +1703,8 @@ final class MainWindowController:
                     )
                 }
 
-                for override in rule.overrides {
+                for override in rule.overrides
+                where override.isEnabled {
                     exactOwners[
                         override.source,
                         default: []
@@ -1782,7 +1854,7 @@ final class MainWindowController:
                  .duplicateSourceCombination,
                  .duplicatePreservingSourceKey:
                 setStatus(
-                    "Each source key or key combination can appear only once.",
+                    "Each active source key or key combination can appear only once.",
                     isError: true
                 )
 
@@ -1801,7 +1873,7 @@ final class MainWindowController:
 
             case .overridesRequireModifierPreservingRule:
                 setStatus(
-                    "Custom exceptions can only be added to a Preserve Modifiers rule.",
+                    "Stored exceptions are allowed in both matching modes, but they are active only in Preserve Modifiers.",
                     isError: true
                 )
 

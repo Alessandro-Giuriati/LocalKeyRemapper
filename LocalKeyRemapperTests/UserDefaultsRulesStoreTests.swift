@@ -17,8 +17,7 @@ final class UserDefaultsRulesStoreTests:
     func testLoadReturnsDefaultRulesWhenNothingIsStored()
         throws
     {
-        let context =
-            try makeContext()
+        let context = try makeContext()
 
         defer {
             context.cleanUp()
@@ -26,20 +25,15 @@ final class UserDefaultsRulesStoreTests:
 
         let defaultRules = [
             RemapRule(
-                sourceKeyCode:
-                    KeyCode.v,
-                destinationKeyCode:
-                    KeyCode.w
+                sourceKeyCode: KeyCode.v,
+                destinationKeyCode: KeyCode.w
             )
         ]
 
-        let store =
-            UserDefaultsRulesStore(
-                userDefaults:
-                    context.userDefaults,
-                defaultRules:
-                    defaultRules
-            )
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: defaultRules
+        )
 
         XCTAssertEqual(
             try store.loadRules(),
@@ -50,8 +44,7 @@ final class UserDefaultsRulesStoreTests:
     func testAdvancedRulesCanBeSavedAndLoaded()
         throws
     {
-        let context =
-            try makeContext()
+        let context = try makeContext()
 
         defer {
             context.cleanUp()
@@ -59,85 +52,154 @@ final class UserDefaultsRulesStoreTests:
 
         let expectedRules = [
             RemapRule(
-                source:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.v
-                    ),
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.w
-                    ),
-                matchingMode:
-                    .preserveModifiers,
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.w
+                ),
+                matchingMode: .preserveModifiers,
                 overrides: [
                     RemapOverride(
-                        source:
-                            KeyCombination(
-                                keyCode:
-                                    KeyCode.v,
-                                modifiers:
-                                    [.command]
-                            ),
-                        action:
-                            .passThrough
+                        source: KeyCombination(
+                            keyCode: KeyCode.v,
+                            modifiers: [.command]
+                        ),
+                        action: .passThrough
                     )
                 ]
             ),
             RemapRule(
-                source:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.n,
-                        modifiers:
-                            [
-                                .control,
-                                .option
-                            ]
-                    ),
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.j,
-                        modifiers:
-                            [
-                                .control,
-                                .command
-                            ]
-                    )
+                source: KeyCombination(
+                    keyCode: KeyCode.n,
+                    modifiers: [
+                        .control,
+                        .option
+                    ]
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.j,
+                    modifiers: [
+                        .control,
+                        .command
+                    ]
+                )
             )
         ]
 
-        let savingStore =
-            UserDefaultsRulesStore(
-                userDefaults:
-                    context.userDefaults,
-                defaultRules: []
-            )
-
-        try savingStore.saveRules(
-            expectedRules
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
         )
 
-        let loadingStore =
-            UserDefaultsRulesStore(
-                userDefaults:
-                    context.userDefaults,
-                defaultRules: []
-            )
+        try store.saveRules(expectedRules)
 
         XCTAssertEqual(
-            try loadingStore.loadRules(),
+            try store.loadRules(),
             expectedRules
+        )
+    }
+
+    func testDisabledOverrideCanBeSavedAndLoaded()
+        throws
+    {
+        let context = try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let expectedRule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                RemapOverride(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v,
+                        modifiers: [.command]
+                    ),
+                    action: .passThrough,
+                    isEnabled: false
+                )
+            ]
+        )
+
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
+        )
+
+        try store.saveRules([expectedRule])
+
+        let loadedRule = try XCTUnwrap(
+            store.loadRules().first
+        )
+
+        XCTAssertEqual(
+            loadedRule,
+            expectedRule
+        )
+        XCTAssertFalse(
+            loadedRule.overrides[0].isEnabled
+        )
+    }
+
+    func testExactRuleWithStoredOverridesCanBeSavedAndLoaded()
+        throws
+    {
+        let context = try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let expectedRule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .exact,
+            overrides: [
+                RemapOverride(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v,
+                        modifiers: [.command]
+                    ),
+                    action: .replaceWith(
+                        KeyCombination(
+                            keyCode: KeyCode.j,
+                            modifiers: [.option]
+                        )
+                    ),
+                    isEnabled: true
+                )
+            ]
+        )
+
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
+        )
+
+        try store.saveRules([expectedRule])
+
+        XCTAssertEqual(
+            try store.loadRules(),
+            [expectedRule]
         )
     }
 
     func testLegacyStoredRulesAreMigratedToExactRules()
         throws
     {
-        let context =
-            try makeContext()
+        let context = try makeContext()
 
         defer {
             context.cleanUp()
@@ -145,10 +207,8 @@ final class UserDefaultsRulesStoreTests:
 
         let legacyRules = [
             LegacyRemapRule(
-                sourceKeyCode:
-                    KeyCode.v,
-                destinationKeyCode:
-                    KeyCode.w
+                sourceKeyCode: KeyCode.v,
+                destinationKeyCode: KeyCode.w
             )
         ]
 
@@ -157,26 +217,153 @@ final class UserDefaultsRulesStoreTests:
 
         context.userDefaults.set(
             data,
-            forKey:
-                "remappingRules.v1"
+            forKey: "remappingRules.v1"
         )
 
-        let store =
-            UserDefaultsRulesStore(
-                userDefaults:
-                    context.userDefaults,
-                defaultRules: []
-            )
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
+        )
 
         XCTAssertEqual(
             try store.loadRules(),
             [
                 RemapRule(
-                    sourceKeyCode:
-                        KeyCode.v,
-                    destinationKeyCode:
-                        KeyCode.w
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
                 )
+            ]
+        )
+    }
+
+    func testStoredOverrideWithoutEnabledFieldLoadsAsEnabled()
+        throws
+    {
+        let context = try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let legacyOverride = LegacyStoredOverride(
+            source: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [.command]
+            ),
+            action: .passThrough
+        )
+
+        let legacyRule = LegacyAdvancedRemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [legacyOverride]
+        )
+
+        let data = try JSONEncoder()
+            .encode([legacyRule])
+
+        context.userDefaults.set(
+            data,
+            forKey: "remappingRules.v1"
+        )
+
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
+        )
+
+        let loadedOverride = try XCTUnwrap(
+            store.loadRules().first?.overrides.first
+        )
+
+        XCTAssertTrue(
+            loadedOverride.isEnabled
+        )
+        XCTAssertEqual(
+            loadedOverride.source,
+            legacyOverride.source
+        )
+        XCTAssertEqual(
+            loadedOverride.action,
+            legacyOverride.action
+        )
+    }
+
+    func testOverrideSourceDestinationActionAndOrderArePreserved()
+        throws
+    {
+        let context = try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let firstOverride = RemapOverride(
+            source: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [.shift]
+            ),
+            action: .replaceWith(
+                KeyCombination(
+                    keyCode: KeyCode.b,
+                    modifiers: [.control]
+                )
+            ),
+            isEnabled: false
+        )
+
+        let secondOverride = RemapOverride(
+            source: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [.command]
+            ),
+            action: .passThrough,
+            isEnabled: true
+        )
+
+        let expectedRule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                firstOverride,
+                secondOverride
+            ]
+        )
+
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: []
+        )
+
+        try store.saveRules([expectedRule])
+
+        let loadedRule = try XCTUnwrap(
+            store.loadRules().first
+        )
+
+        XCTAssertEqual(
+            loadedRule.source,
+            expectedRule.source
+        )
+        XCTAssertEqual(
+            loadedRule.destination,
+            expectedRule.destination
+        )
+        XCTAssertEqual(
+            loadedRule.overrides,
+            [
+                firstOverride,
+                secondOverride
             ]
         )
     }
@@ -184,26 +371,21 @@ final class UserDefaultsRulesStoreTests:
     func testEmptyRuleCollectionIsPersisted()
         throws
     {
-        let context =
-            try makeContext()
+        let context = try makeContext()
 
         defer {
             context.cleanUp()
         }
 
-        let store =
-            UserDefaultsRulesStore(
-                userDefaults:
-                    context.userDefaults,
-                defaultRules: [
-                    RemapRule(
-                        sourceKeyCode:
-                            KeyCode.v,
-                        destinationKeyCode:
-                            KeyCode.w
-                    )
-                ]
-            )
+        let store = UserDefaultsRulesStore(
+            userDefaults: context.userDefaults,
+            defaultRules: [
+                RemapRule(
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
+                )
+            ]
+        )
 
         try store.saveRules([])
 
@@ -217,22 +399,18 @@ final class UserDefaultsRulesStoreTests:
         throws -> TestUserDefaultsContext
     {
         let suiteName =
-            "UserDefaultsRulesStoreTests." +
-            UUID().uuidString
+            "UserDefaultsRulesStoreTests."
+            + UUID().uuidString
 
-        let userDefaults =
-            try XCTUnwrap(
-                UserDefaults(
-                    suiteName:
-                        suiteName
-                )
+        let userDefaults = try XCTUnwrap(
+            UserDefaults(
+                suiteName: suiteName
             )
+        )
 
         return TestUserDefaultsContext(
-            suiteName:
-                suiteName,
-            userDefaults:
-                userDefaults
+            suiteName: suiteName,
+            userDefaults: userDefaults
         )
     }
 }
@@ -240,11 +418,24 @@ final class UserDefaultsRulesStoreTests:
 private nonisolated struct LegacyRemapRule:
     Codable
 {
-    let sourceKeyCode:
-        CGKeyCode
+    let sourceKeyCode: CGKeyCode
+    let destinationKeyCode: CGKeyCode
+}
 
-    let destinationKeyCode:
-        CGKeyCode
+private nonisolated struct LegacyStoredOverride:
+    Codable
+{
+    let source: KeyCombination
+    let action: RemapAction
+}
+
+private nonisolated struct LegacyAdvancedRemapRule:
+    Codable
+{
+    let source: KeyCombination
+    let destination: KeyCombination
+    let matchingMode: RemapMatchingMode
+    let overrides: [LegacyStoredOverride]
 }
 
 private struct TestUserDefaultsContext {

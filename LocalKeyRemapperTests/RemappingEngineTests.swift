@@ -15,21 +15,15 @@ final class RemappingEngineTests:
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    sourceKeyCode:
-                        KeyCode.v,
-                    destinationKeyCode:
-                        KeyCode.w
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
                 )
             ]
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: KeyCode.v
-            ),
-            .replaceKeyCode(
-                KeyCode.w
-            )
+            engine.decision(for: KeyCode.v),
+            .replaceKeyCode(KeyCode.w)
         )
     }
 
@@ -37,23 +31,18 @@ final class RemappingEngineTests:
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    sourceKeyCode:
-                        KeyCode.v,
-                    destinationKeyCode:
-                        KeyCode.w
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
                 )
             ]
         )
 
-        let decision =
-            engine.decision(
-                for: KeyCombination(
-                    keyCode:
-                        KeyCode.v,
-                    modifiers:
-                        [.command]
-                )
+        let decision = engine.decision(
+            for: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [.command]
             )
+        )
 
         XCTAssertEqual(
             decision,
@@ -65,81 +54,61 @@ final class RemappingEngineTests:
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    source:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.v
-                        ),
-                    destination:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.w
-                        ),
-                    matchingMode:
-                        .preserveModifiers
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers
                 )
             ]
         )
 
-        let decision =
-            engine.decision(
-                for: KeyCombination(
-                    keyCode:
-                        KeyCode.v,
-                    modifiers:
-                        [
-                            .command,
-                            .shift
-                        ]
-                )
+        let decision = engine.decision(
+            for: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [
+                    .command,
+                    .shift
+                ]
             )
+        )
 
         XCTAssertEqual(
             decision,
             .replaceWith(
                 KeyCombination(
-                    keyCode:
-                        KeyCode.w,
-                    modifiers:
-                        [
-                            .command,
-                            .shift
-                        ]
+                    keyCode: KeyCode.w,
+                    modifiers: [
+                        .command,
+                        .shift
+                    ]
                 )
             )
         )
     }
 
     func testPassThroughOverrideWinsOverPreservingRule() {
-        let commandV =
-            KeyCombination(
-                keyCode:
-                    KeyCode.v,
-                modifiers:
-                    [.command]
-            )
+        let commandV = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
 
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    source:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.v
-                        ),
-                    destination:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.w
-                        ),
-                    matchingMode:
-                        .preserveModifiers,
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers,
                     overrides: [
                         RemapOverride(
-                            source:
-                                commandV,
-                            action:
-                                .passThrough
+                            source: commandV,
+                            action: .passThrough
                         )
                     ]
                 )
@@ -147,59 +116,42 @@ final class RemappingEngineTests:
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: commandV
-            ),
+            engine.decision(for: commandV),
             .passThrough
         )
     }
 
     func testCustomOverrideCanReplaceKeyAndModifiers() {
-        let source =
-            KeyCombination(
-                keyCode:
-                    KeyCode.v,
-                modifiers:
-                    [
-                        .control,
-                        .option
-                    ]
-            )
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [
+                .control,
+                .option
+            ]
+        )
 
-        let destination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.j,
-                modifiers:
-                    [
-                        .control,
-                        .command
-                    ]
-            )
+        let destination = KeyCombination(
+            keyCode: KeyCode.j,
+            modifiers: [
+                .control,
+                .command
+            ]
+        )
 
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    source:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.v
-                        ),
-                    destination:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.w
-                        ),
-                    matchingMode:
-                        .preserveModifiers,
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers,
                     overrides: [
                         RemapOverride(
-                            source:
-                                source,
-                            action:
-                                .replaceWith(
-                                    destination
-                                )
+                            source: source,
+                            action: .replaceWith(destination)
                         )
                     ]
                 )
@@ -207,95 +159,245 @@ final class RemappingEngineTests:
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
+            engine.decision(for: source),
+            .replaceWith(destination)
+        )
+    }
+
+    func testDisabledOverrideIsIgnored() {
+        let commandV = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers,
+                    overrides: [
+                        RemapOverride(
+                            source: commandV,
+                            action: .passThrough,
+                            isEnabled: false
+                        )
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: commandV),
             .replaceWith(
-                destination
+                KeyCombination(
+                    keyCode: KeyCode.w,
+                    modifiers: [.command]
+                )
+            )
+        )
+    }
+
+    func testStoredOverrideUnderExactRuleIsInactive() {
+        let commandV = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .exact,
+                    overrides: [
+                        RemapOverride(
+                            source: commandV,
+                            action: .replaceWith(
+                                KeyCombination(
+                                    keyCode: KeyCode.j,
+                                    modifiers: [.option]
+                                )
+                            )
+                        )
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: commandV),
+            .passThrough
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: KeyCode.v),
+            .replaceKeyCode(KeyCode.w)
+        )
+    }
+
+    func testStoredOverrideBecomesActiveAfterReturningToPreserveModifiers() {
+        let commandV = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let overrideDestination = KeyCombination(
+            keyCode: KeyCode.j,
+            modifiers: [.option]
+        )
+
+        let storedOverride = RemapOverride(
+            source: commandV,
+            action: .replaceWith(overrideDestination)
+        )
+
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .exact,
+                    overrides: [storedOverride]
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: commandV),
+            .passThrough
+        )
+
+        engine.replaceRules(
+            [
+                RemapRule(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers,
+                    overrides: [storedOverride]
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: commandV),
+            .replaceWith(overrideDestination)
+        )
+    }
+
+    func testOtherCombinationsContinueUsingPreserveModifiersBehavior() {
+        let engine = RemappingEngine(
+            rules: [
+                RemapRule(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v
+                    ),
+                    destination: KeyCombination(
+                        keyCode: KeyCode.w
+                    ),
+                    matchingMode: .preserveModifiers,
+                    overrides: [
+                        RemapOverride(
+                            source: KeyCombination(
+                                keyCode: KeyCode.v,
+                                modifiers: [.command]
+                            ),
+                            action: .passThrough
+                        )
+                    ]
+                )
+            ]
+        )
+
+        let shiftV = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.shift]
+        )
+
+        XCTAssertEqual(
+            engine.decision(for: shiftV),
+            .replaceWith(
+                KeyCombination(
+                    keyCode: KeyCode.w,
+                    modifiers: [.shift]
+                )
             )
         )
     }
 
     func testStandaloneExactCombinationCanRemoveModifiers() {
-        let source =
-            KeyCombination(
-                keyCode:
-                    KeyCode.n,
-                modifiers:
-                    [
-                        .control,
-                        .option
-                    ]
-            )
+        let source = KeyCombination(
+            keyCode: KeyCode.n,
+            modifiers: [
+                .control,
+                .option
+            ]
+        )
 
-        let destination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.b
-            )
+        let destination = KeyCombination(
+            keyCode: KeyCode.b
+        )
 
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    source:
-                        source,
-                    destination:
-                        destination
+                    source: source,
+                    destination: destination
                 )
             ]
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
-            .replaceWith(
-                destination
-            )
+            engine.decision(for: source),
+            .replaceWith(destination)
         )
     }
 
     func testStandaloneExactCombinationCanReplaceModifiers() {
-        let source =
-            KeyCombination(
-                keyCode:
-                    KeyCode.n,
-                modifiers:
-                    [
-                        .control,
-                        .option
-                    ]
-            )
+        let source = KeyCombination(
+            keyCode: KeyCode.n,
+            modifiers: [
+                .control,
+                .option
+            ]
+        )
 
-        let destination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.j,
-                modifiers:
-                    [
-                        .control,
-                        .command
-                    ]
-            )
+        let destination = KeyCombination(
+            keyCode: KeyCode.j,
+            modifiers: [
+                .control,
+                .command
+            ]
+        )
 
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    source:
-                        source,
-                    destination:
-                        destination
+                    source: source,
+                    destination: destination
                 )
             ]
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
-            .replaceWith(
-                destination
-            )
+            engine.decision(for: source),
+            .replaceWith(destination)
         )
     }
 
@@ -303,54 +405,41 @@ final class RemappingEngineTests:
         let engine = RemappingEngine(
             rules: [
                 RemapRule(
-                    sourceKeyCode:
-                        KeyCode.v,
-                    destinationKeyCode:
-                        KeyCode.w
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
                 )
             ]
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: KeyCode.w
-            ),
+            engine.decision(for: KeyCode.w),
             .passThrough
         )
     }
 
     func testReplacingRulesUpdatesTheEngine() {
-        let engine =
-            RemappingEngine()
+        let engine = RemappingEngine()
 
         XCTAssertEqual(
-            engine.decision(
-                for: KeyCode.v
-            ),
+            engine.decision(for: KeyCode.v),
             .passThrough
         )
 
         engine.replaceRules(
             [
                 RemapRule(
-                    sourceKeyCode:
-                        KeyCode.v,
-                    destinationKeyCode:
-                        KeyCode.w
+                    sourceKeyCode: KeyCode.v,
+                    destinationKeyCode: KeyCode.w
                 )
             ]
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: KeyCode.v
-            ),
-            .replaceKeyCode(
-                KeyCode.w
-            )
+            engine.decision(for: KeyCode.v),
+            .replaceKeyCode(KeyCode.w)
         )
     }
-    
+
     func testReservedCombinationPassesThroughEvenWhenRuleMatches() {
         let source = KeyCombination(
             keyCode: KeyCode.v,
@@ -384,9 +473,7 @@ final class RemappingEngineTests:
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
+            engine.decision(for: source),
             .passThrough
         )
     }
@@ -394,16 +481,12 @@ final class RemappingEngineTests:
     func testRemovingReservedCombinationRestoresMatchingRule() {
         let source = KeyCombination(
             keyCode: KeyCode.v,
-            modifiers: [
-                .command
-            ]
+            modifiers: [.command]
         )
 
         let destination = KeyCombination(
             keyCode: KeyCode.w,
-            modifiers: [
-                .command
-            ]
+            modifiers: [.command]
         )
 
         let engine = RemappingEngine(
@@ -424,12 +507,8 @@ final class RemappingEngineTests:
         )
 
         XCTAssertEqual(
-            engine.decision(
-                for: source
-            ),
-            .replaceWith(
-                destination
-            )
+            engine.decision(for: source),
+            .replaceWith(destination)
         )
     }
 }

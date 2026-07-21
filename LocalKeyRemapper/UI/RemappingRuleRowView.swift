@@ -11,6 +11,367 @@ import CoreGraphics
 /// Displays and edits one remapping rule editor item.
 @MainActor
 final class RemappingRuleRowView: NSView {
+    @MainActor
+    private final class BehaviorMenuItemView:
+        NSView
+    {
+        private let checkmarkLabel =
+            NSTextField(
+                labelWithString: ""
+            )
+
+        private let titleLabel =
+            NSTextField(
+                labelWithString: ""
+            )
+
+        private let examplesLabel =
+            NSTextField(
+                wrappingLabelWithString: ""
+            )
+
+        private var trackingAreaReference:
+            NSTrackingArea?
+
+        private var isHovered = false {
+            didSet {
+                guard oldValue != isHovered else {
+                    return
+                }
+
+                updateAppearance()
+                needsDisplay = true
+            }
+        }
+
+        var onActivate: (() -> Void)?
+
+        var isSelected = false {
+            didSet {
+                updateAppearance()
+            }
+        }
+
+        init(
+            title: String
+        ) {
+            super.init(
+                frame:
+                    NSRect(
+                        x: 0,
+                        y: 0,
+                        width: 390,
+                        height: 118
+                    )
+            )
+
+            titleLabel.stringValue = title
+
+            configureContent()
+            updateAppearance()
+        }
+
+        required init?(
+            coder: NSCoder
+        ) {
+            fatalError(
+                "init(coder:) has not been implemented"
+            )
+        }
+
+        /// Makes the complete custom menu item behave as one clickable area.
+        /// Text labels never become separate hit-test targets.
+        override func hitTest(
+            _ point: NSPoint
+        ) -> NSView? {
+            guard !isHidden,
+                  alphaValue > 0 else {
+                return nil
+            }
+
+            return bounds.contains(point)
+                ? self
+                : nil
+        }
+
+        /// Keeps the normal pointer over the entire menu item instead of
+        /// showing an insertion cursor over its text labels.
+        override func resetCursorRects() {
+            addCursorRect(
+                bounds,
+                cursor: .arrow
+            )
+        }
+
+        override func draw(
+            _ dirtyRect: NSRect
+        ) {
+            super.draw(dirtyRect)
+
+            guard isHovered else {
+                return
+            }
+
+            NSColor.selectedContentBackgroundColor
+                .setFill()
+
+            NSBezierPath(
+                roundedRect:
+                    bounds.insetBy(
+                        dx: 4,
+                        dy: 3
+                    ),
+                xRadius: 6,
+                yRadius: 6
+            ).fill()
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+
+            if let trackingAreaReference {
+                removeTrackingArea(
+                    trackingAreaReference
+                )
+            }
+
+            let trackingArea =
+                NSTrackingArea(
+                    rect: bounds,
+                    options: [
+                        .activeAlways,
+                        .mouseEnteredAndExited,
+                        .cursorUpdate
+                    ],
+                    owner: self,
+                    userInfo: nil
+                )
+
+            addTrackingArea(trackingArea)
+            trackingAreaReference =
+                trackingArea
+        }
+
+        override func mouseEntered(
+            with event: NSEvent
+        ) {
+            NSCursor.arrow.set()
+            isHovered = true
+        }
+
+        override func cursorUpdate(
+            with event: NSEvent
+        ) {
+            NSCursor.arrow.set()
+        }
+
+        override func mouseExited(
+            with event: NSEvent
+        ) {
+            isHovered = false
+        }
+
+        override func mouseUp(
+            with event: NSEvent
+        ) {
+            guard
+                bounds.contains(
+                    convert(
+                        event.locationInWindow,
+                        from: nil
+                    )
+                )
+            else {
+                return
+            }
+
+            let menu =
+                enclosingMenuItem?
+                    .menu
+
+            menu?.cancelTracking()
+            onActivate?()
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            updateAppearance()
+            needsDisplay = true
+        }
+
+        func setExamples(
+            _ examples: [String]
+        ) {
+            examplesLabel.stringValue =
+                examples.joined(
+                    separator: "\n"
+                )
+        }
+
+        func applyTextScale(
+            _ scale: CGFloat
+        ) {
+            titleLabel.font =
+                NSFont.systemFont(
+                    ofSize: 14 * scale,
+                    weight: .semibold
+                )
+
+            examplesLabel.font =
+                NSFont.systemFont(
+                    ofSize: 12 * scale,
+                    weight: .regular
+                )
+
+            checkmarkLabel.font =
+                NSFont.systemFont(
+                    ofSize: 14 * scale,
+                    weight: .semibold
+                )
+
+            frame.size =
+                NSSize(
+                    width: 390 * scale,
+                    height: 118 * scale
+                )
+
+            needsLayout = true
+        }
+
+        private func configureContent() {
+            for label in [
+                checkmarkLabel,
+                titleLabel,
+                examplesLabel
+            ] {
+                label.isEditable = false
+                label.isSelectable = false
+                label.isBezeled = false
+                label.drawsBackground = false
+                label.focusRingType = .none
+                label.allowsEditingTextAttributes = false
+            }
+
+            checkmarkLabel.alignment =
+                .center
+
+            titleLabel.lineBreakMode =
+                .byTruncatingTail
+
+            examplesLabel.maximumNumberOfLines =
+                4
+
+            examplesLabel.lineBreakMode =
+                .byTruncatingTail
+
+            let views: [NSView] = [
+                checkmarkLabel,
+                titleLabel,
+                examplesLabel
+            ]
+
+            for view in views {
+                view.translatesAutoresizingMaskIntoConstraints =
+                    false
+
+                addSubview(view)
+            }
+
+            NSLayoutConstraint.activate(
+                [
+                    checkmarkLabel.leadingAnchor.constraint(
+                        equalTo: leadingAnchor,
+                        constant: 12
+                    ),
+
+                    checkmarkLabel.topAnchor.constraint(
+                        equalTo: topAnchor,
+                        constant: 12
+                    ),
+
+                    checkmarkLabel.widthAnchor.constraint(
+                        equalToConstant: 18
+                    ),
+
+                    titleLabel.leadingAnchor.constraint(
+                        equalTo:
+                            checkmarkLabel
+                                .trailingAnchor,
+                        constant: 8
+                    ),
+
+                    titleLabel.trailingAnchor.constraint(
+                        equalTo: trailingAnchor,
+                        constant: -14
+                    ),
+
+                    titleLabel.topAnchor.constraint(
+                        equalTo: topAnchor,
+                        constant: 10
+                    ),
+
+                    examplesLabel.leadingAnchor.constraint(
+                        equalTo:
+                            titleLabel
+                                .leadingAnchor
+                    ),
+
+                    examplesLabel.trailingAnchor.constraint(
+                        equalTo:
+                            titleLabel
+                                .trailingAnchor
+                    ),
+
+                    examplesLabel.topAnchor.constraint(
+                        equalTo:
+                            titleLabel
+                                .bottomAnchor,
+                        constant: 4
+                    ),
+
+                    examplesLabel.bottomAnchor.constraint(
+                        lessThanOrEqualTo:
+                            bottomAnchor,
+                        constant: -10
+                    )
+                ]
+            )
+
+            applyTextScale(1.0)
+        }
+
+        private func updateAppearance() {
+            checkmarkLabel.stringValue =
+                isSelected ? "✓" : ""
+
+            let primaryColor: NSColor
+            let secondaryColor: NSColor
+
+            if isHovered {
+                primaryColor =
+                    .selectedControlTextColor
+
+                secondaryColor =
+                    .selectedControlTextColor
+            } else {
+                primaryColor =
+                    .labelColor
+
+                secondaryColor =
+                    .secondaryLabelColor
+            }
+
+            checkmarkLabel.textColor =
+                primaryColor
+
+            titleLabel.textColor =
+                primaryColor
+
+            examplesLabel.textColor =
+                secondaryColor
+        }
+    }
+
     enum KeyField: Equatable {
         case source
         case destination
@@ -20,6 +381,8 @@ final class RemappingRuleRowView: NSView {
     var onDestinationKeyRequested: (() -> Void)?
     var onExceptionsRequested: (() -> Void)?
     var onRemoveRequested: (() -> Void)?
+    var onMatchingModeChangeRequested:
+        ((RemappingRuleEditorItem) -> Bool)?
     var onRuleChanged: ((RemappingRuleEditorItem) -> Void)?
 
     private let sourceKeyButton = NSButton()
@@ -28,6 +391,17 @@ final class RemappingRuleRowView: NSView {
     )
     private let destinationKeyButton = NSButton()
     private let behaviorPopUpButton = NSPopUpButton()
+
+    private let exactBehaviorMenuView =
+        BehaviorMenuItemView(
+            title: "Exact only"
+        )
+
+    private let preserveBehaviorMenuView =
+        BehaviorMenuItemView(
+            title: "Preserve modifiers"
+        )
+
     private let exceptionsButton = NSButton()
     private let removeButton = NSButton()
 
@@ -56,9 +430,7 @@ final class RemappingRuleRowView: NSView {
             sourceCombination: sourceCombination,
             destinationCombination: destinationCombination,
             matchingMode: matchingMode,
-            overrides: matchingMode == .preserveModifiers
-                ? overrides
-                : []
+            overrides: overrides
         )
     }
 
@@ -73,9 +445,7 @@ final class RemappingRuleRowView: NSView {
         sourceCombination = item.sourceCombination
         destinationCombination = item.destinationCombination
         matchingMode = item.matchingMode
-        overrides = item.matchingMode == .preserveModifiers
-            ? item.overrides
-            : []
+        overrides = item.overrides
 
         super.init(frame: .zero)
 
@@ -130,16 +500,25 @@ final class RemappingRuleRowView: NSView {
 
         switch field {
         case .source:
-            let previousKeyCode = sourceCombination?.keyCode
-            sourceCombination = normalizedCombination
+            let previousKeyCode =
+                sourceCombination?.keyCode
+
+            sourceCombination =
+                normalizedCombination
 
             if let previousKeyCode,
-               previousKeyCode != normalizedCombination.keyCode {
-                overrides = []
+               previousKeyCode
+                != normalizedCombination.keyCode
+            {
+                retargetOverrides(
+                    to:
+                        normalizedCombination.keyCode
+                )
             }
 
         case .destination:
-            destinationCombination = normalizedCombination
+            destinationCombination =
+                normalizedCombination
         }
 
         updateControls()
@@ -161,29 +540,41 @@ final class RemappingRuleRowView: NSView {
 
         switch field {
         case .source:
-            sourceKeyButton.title = "Press combination…"
+            sourceKeyButton.title =
+                "Press combination…"
+
         case .destination:
-            destinationKeyButton.title = "Press combination…"
+            destinationKeyButton.title =
+                "Press combination…"
         }
     }
 
     func restoreButtonTitles() {
-        sourceKeyButton.title = buttonTitle(
-            for: sourceCombination
-        )
-        destinationKeyButton.title = buttonTitle(
-            for: destinationCombination
-        )
+        sourceKeyButton.title =
+            buttonTitle(
+                for: sourceCombination
+            )
+
+        destinationKeyButton.title =
+            buttonTitle(
+                for:
+                    destinationCombination
+            )
     }
 
     func setValidationErrorVisible(
         _ isVisible: Bool
     ) {
-        guard isShowingValidationError != isVisible else {
+        guard
+            isShowingValidationError
+                != isVisible
+        else {
             return
         }
 
-        isShowingValidationError = isVisible
+        isShowingValidationError =
+            isVisible
+
         updateValidationAppearance()
     }
 
@@ -192,30 +583,53 @@ final class RemappingRuleRowView: NSView {
     ) {
         textScale = scale
 
-        let controlFont = NSFont.systemFont(
-            ofSize: 14 * scale,
-            weight: .regular
+        let controlFont =
+            NSFont.systemFont(
+                ofSize: 14 * scale,
+                weight: .regular
+            )
+
+        sourceKeyButton.font =
+            controlFont
+
+        destinationKeyButton.font =
+            controlFont
+
+        behaviorPopUpButton.font =
+            NSFont.systemFont(
+                ofSize: 13 * scale,
+                weight: .regular
+            )
+
+        exactBehaviorMenuView.applyTextScale(
+            scale
         )
 
-        sourceKeyButton.font = controlFont
-        destinationKeyButton.font = controlFont
-        behaviorPopUpButton.font = NSFont.systemFont(
-            ofSize: 13 * scale,
-            weight: .regular
+        preserveBehaviorMenuView.applyTextScale(
+            scale
         )
-        exceptionsButton.font = NSFont.systemFont(
-            ofSize: 13 * scale,
-            weight: .regular
-        )
-        removeButton.font = NSFont.systemFont(
-            ofSize: 13 * scale,
-            weight: .regular
-        )
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 20 * scale,
-            weight: .regular
-        )
-        rowHeightConstraint?.constant = 42 * scale
+
+        exceptionsButton.font =
+            NSFont.systemFont(
+                ofSize: 13 * scale,
+                weight: .regular
+            )
+
+        removeButton.font =
+            NSFont.systemFont(
+                ofSize: 13 * scale,
+                weight: .regular
+            )
+
+        arrowLabel.font =
+            NSFont.systemFont(
+                ofSize: 20 * scale,
+                weight: .regular
+            )
+
+        rowHeightConstraint?.constant =
+            42 * scale
+
         needsLayout = true
     }
 
@@ -226,36 +640,45 @@ final class RemappingRuleRowView: NSView {
 
         configureKeyButton(
             sourceKeyButton,
-            action: #selector(requestSourceKey)
+            action:
+                #selector(requestSourceKey)
         )
+
         configureKeyButton(
             destinationKeyButton,
-            action: #selector(requestDestinationKey)
+            action:
+                #selector(
+                    requestDestinationKey
+                )
         )
 
         arrowLabel.alignment = .center
 
-        behaviorPopUpButton.addItems(
-            withTitles: [
-                "Exact only",
-                "Preserve modifiers"
-            ]
-        )
-        behaviorPopUpButton.target = self
-        behaviorPopUpButton.action = #selector(behaviorChanged)
-        behaviorPopUpButton.toolTip =
-            "Match only the recorded combination or preserve incoming modifiers."
+        configureBehaviorMenu()
 
-        exceptionsButton.title = "Exceptions…"
-        exceptionsButton.bezelStyle = .rounded
+        behaviorPopUpButton.toolTip =
+            "Choose exact matching or preserve incoming modifiers. Open the menu to preview both behaviors."
+
+        exceptionsButton.title =
+            "Exceptions…"
+
+        exceptionsButton.bezelStyle =
+            .rounded
+
         exceptionsButton.target = self
-        exceptionsButton.action = #selector(requestExceptions)
+        exceptionsButton.action =
+            #selector(requestExceptions)
+
+        exceptionsButton.toolTip =
+            "View and edit stored exceptions. They are active only in Preserve Modifiers mode."
 
         removeButton.title = "Remove"
         removeButton.bezelStyle = .rounded
-        removeButton.hasDestructiveAction = true
+        removeButton.hasDestructiveAction =
+            true
         removeButton.target = self
-        removeButton.action = #selector(requestRemoval)
+        removeButton.action =
+            #selector(requestRemoval)
 
         let views: [NSView] = [
             sourceKeyButton,
@@ -267,14 +690,19 @@ final class RemappingRuleRowView: NSView {
         ]
 
         for view in views {
-            view.translatesAutoresizingMaskIntoConstraints = false
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
             addSubview(view)
         }
 
-        let rowHeightConstraint = heightAnchor.constraint(
-            equalToConstant: 42
-        )
-        self.rowHeightConstraint = rowHeightConstraint
+        let rowHeightConstraint =
+            heightAnchor.constraint(
+                equalToConstant: 42
+            )
+
+        self.rowHeightConstraint =
+            rowHeightConstraint
 
         NSLayoutConstraint.activate(
             [
@@ -282,85 +710,123 @@ final class RemappingRuleRowView: NSView {
                     equalTo: leadingAnchor,
                     constant: 6
                 ),
+
                 sourceKeyButton.topAnchor.constraint(
                     equalTo: topAnchor,
                     constant: 4
                 ),
+
                 sourceKeyButton.bottomAnchor.constraint(
                     equalTo: bottomAnchor,
                     constant: -4
                 ),
 
                 arrowLabel.leadingAnchor.constraint(
-                    equalTo: sourceKeyButton.trailingAnchor,
+                    equalTo:
+                        sourceKeyButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 arrowLabel.centerYAnchor.constraint(
-                    equalTo: sourceKeyButton.centerYAnchor
+                    equalTo:
+                        sourceKeyButton
+                            .centerYAnchor
                 ),
+
                 arrowLabel.widthAnchor.constraint(
                     equalToConstant: 18
                 ),
 
                 destinationKeyButton.leadingAnchor.constraint(
-                    equalTo: arrowLabel.trailingAnchor,
+                    equalTo:
+                        arrowLabel
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 destinationKeyButton.topAnchor.constraint(
                     equalTo: topAnchor,
                     constant: 4
                 ),
+
                 destinationKeyButton.bottomAnchor.constraint(
                     equalTo: bottomAnchor,
                     constant: -4
                 ),
 
                 behaviorPopUpButton.leadingAnchor.constraint(
-                    equalTo: destinationKeyButton.trailingAnchor,
+                    equalTo:
+                        destinationKeyButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 behaviorPopUpButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
+                    equalTo:
+                        destinationKeyButton
+                            .centerYAnchor
                 ),
+
                 behaviorPopUpButton.widthAnchor.constraint(
                     equalToConstant: 168
                 ),
 
                 exceptionsButton.leadingAnchor.constraint(
-                    equalTo: behaviorPopUpButton.trailingAnchor,
+                    equalTo:
+                        behaviorPopUpButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 exceptionsButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
+                    equalTo:
+                        destinationKeyButton
+                            .centerYAnchor
                 ),
+
                 exceptionsButton.widthAnchor.constraint(
                     equalToConstant: 116
                 ),
 
                 removeButton.leadingAnchor.constraint(
-                    equalTo: exceptionsButton.trailingAnchor,
+                    equalTo:
+                        exceptionsButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 removeButton.trailingAnchor.constraint(
                     equalTo: trailingAnchor,
                     constant: -6
                 ),
+
                 removeButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
+                    equalTo:
+                        destinationKeyButton
+                            .centerYAnchor
                 ),
+
                 removeButton.widthAnchor.constraint(
                     equalToConstant: 82
                 ),
 
                 sourceKeyButton.widthAnchor.constraint(
-                    equalTo: destinationKeyButton.widthAnchor
+                    equalTo:
+                        destinationKeyButton
+                            .widthAnchor
                 ),
+
                 sourceKeyButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
+                    greaterThanOrEqualToConstant:
+                        120
                 ),
+
                 destinationKeyButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
+                    greaterThanOrEqualToConstant:
+                        120
                 ),
+
                 rowHeightConstraint
             ]
         )
@@ -377,26 +843,97 @@ final class RemappingRuleRowView: NSView {
         button.action = action
     }
 
+    private func configureBehaviorMenu() {
+        behaviorPopUpButton.addItems(
+            withTitles: [
+                "Exact only",
+                "Preserve modifiers"
+            ]
+        )
+
+        guard
+            let exactItem =
+                behaviorPopUpButton.item(
+                    at: 0
+                ),
+            let preserveItem =
+                behaviorPopUpButton.item(
+                    at: 1
+                )
+        else {
+            return
+        }
+
+        exactItem.tag = 0
+        exactItem.target = self
+        exactItem.action =
+            #selector(
+                behaviorMenuItemSelected(_:)
+            )
+        exactItem.view =
+            exactBehaviorMenuView
+
+        preserveItem.tag = 1
+        preserveItem.target = self
+        preserveItem.action =
+            #selector(
+                behaviorMenuItemSelected(_:)
+            )
+        preserveItem.view =
+            preserveBehaviorMenuView
+
+        exactBehaviorMenuView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .exact
+            )
+        }
+
+        preserveBehaviorMenuView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .preserveModifiers
+            )
+        }
+
+        refreshBehaviorMenuPreviews()
+    }
+
     private func synchronizeBehaviorControl() {
         switch matchingMode {
         case .exact:
-            behaviorPopUpButton.selectItem(at: 0)
+            behaviorPopUpButton.selectItem(
+                at: 0
+            )
+
         case .preserveModifiers:
-            behaviorPopUpButton.selectItem(at: 1)
+            behaviorPopUpButton.selectItem(
+                at: 1
+            )
         }
+
+        exactBehaviorMenuView.isSelected =
+            matchingMode == .exact
+
+        preserveBehaviorMenuView.isSelected =
+            matchingMode
+                == .preserveModifiers
     }
 
     private func updateControls() {
         restoreButtonTitles()
+        refreshBehaviorMenuPreviews()
 
         exceptionsButton.isEnabled =
-            matchingMode == .preserveModifiers
-            && sourceCombination != nil
+            sourceCombination != nil
             && destinationCombination != nil
 
-        exceptionsButton.title = overrides.isEmpty
-            ? "Exceptions…"
-            : "Exceptions (\(overrides.count))"
+        exceptionsButton.title =
+            overrides.isEmpty
+                ? "Exceptions…"
+                : "Exceptions (\(overrides.count))"
     }
 
     private func updateValidationAppearance() {
@@ -406,19 +943,26 @@ final class RemappingRuleRowView: NSView {
 
         if isShowingValidationError {
             layer.borderWidth = 1.5
-            layer.borderColor = NSColor.systemRed.cgColor
-            layer.backgroundColor = NSColor.systemRed
-                .withAlphaComponent(0.08)
-                .cgColor
+            layer.borderColor =
+                NSColor.systemRed.cgColor
+
+            layer.backgroundColor =
+                NSColor.systemRed
+                    .withAlphaComponent(0.08)
+                    .cgColor
         } else {
             layer.borderWidth = 0
-            layer.borderColor = NSColor.clear.cgColor
-            layer.backgroundColor = NSColor.clear.cgColor
+            layer.borderColor =
+                NSColor.clear.cgColor
+
+            layer.backgroundColor =
+                NSColor.clear.cgColor
         }
     }
 
     private func buttonTitle(
-        for combination: KeyCombination?
+        for combination:
+            KeyCombination?
     ) -> String {
         guard let combination else {
             return "Choose Combination…"
@@ -429,55 +973,320 @@ final class RemappingRuleRowView: NSView {
         )
     }
 
+    private func refreshBehaviorMenuPreviews() {
+        exactBehaviorMenuView.setExamples(
+            behaviorPreviewLines(
+                for: .exact
+            )
+        )
+
+        preserveBehaviorMenuView.setExamples(
+            behaviorPreviewLines(
+                for: .preserveModifiers
+            )
+        )
+
+        synchronizeBehaviorControl()
+    }
+
+    private func behaviorPreviewLines(
+        for mode: RemapMatchingMode
+    ) -> [String] {
+        guard
+            let sourceCombination,
+            let destinationCombination
+        else {
+            return [
+                "Choose source and destination to preview."
+            ]
+        }
+
+        let previewSources:
+            [KeyCombination]
+
+        switch mode {
+        case .exact:
+            previewSources =
+                exactPreviewSources(
+                    configuredSource:
+                        sourceCombination
+                )
+
+        case .preserveModifiers:
+            previewSources = [
+                KeyCombination(
+                    keyCode:
+                        sourceCombination.keyCode
+                ),
+                KeyCombination(
+                    keyCode:
+                        sourceCombination.keyCode,
+                    modifiers:
+                        .shift
+                ),
+                KeyCombination(
+                    keyCode:
+                        sourceCombination.keyCode,
+                    modifiers:
+                        .command
+                )
+            ]
+        }
+
+        var previewLines =
+            previewSources.map {
+                previewSource in
+
+                let previewDestination:
+                    KeyCombination
+
+                switch mode {
+                case .exact:
+                    previewDestination =
+                        previewSource
+                            == sourceCombination
+                        ? destinationCombination
+                        : previewSource
+
+                case .preserveModifiers:
+                    previewDestination =
+                        preservePreviewDestination(
+                            for:
+                                previewSource,
+                            destinationKeyCode:
+                                destinationCombination
+                                    .keyCode
+                        )
+                }
+
+                return
+                    "\(KeyCombinationDisplayName.name(for: previewSource)) → "
+                    + KeyCombinationDisplayName.name(
+                        for:
+                            previewDestination
+                    )
+            }
+
+        if mode == .preserveModifiers {
+            let sourceKeyName =
+                KeyCodeDisplayName.name(
+                    for:
+                        sourceCombination.keyCode
+                )
+
+            previewLines.append(
+                "Modifier + \(sourceKeyName) → Custom action"
+            )
+        }
+
+        return previewLines
+    }
+
+    private func exactPreviewSources(
+        configuredSource:
+            KeyCombination
+    ) -> [KeyCombination] {
+        let candidateSources = [
+            configuredSource,
+            KeyCombination(
+                keyCode:
+                    configuredSource.keyCode
+            ),
+            KeyCombination(
+                keyCode:
+                    configuredSource.keyCode,
+                modifiers:
+                    .shift
+            ),
+            KeyCombination(
+                keyCode:
+                    configuredSource.keyCode,
+                modifiers:
+                    .command
+            ),
+            KeyCombination(
+                keyCode:
+                    configuredSource.keyCode,
+                modifiers:
+                    .option
+            )
+        ]
+
+        var uniqueSources:
+            [KeyCombination] = []
+
+        for candidate in candidateSources
+        where !uniqueSources.contains(
+            candidate
+        ) {
+            uniqueSources.append(
+                candidate
+            )
+
+            if uniqueSources.count == 3 {
+                break
+            }
+        }
+
+        return uniqueSources
+    }
+
+    private func preservePreviewDestination(
+        for source: KeyCombination,
+        destinationKeyCode: CGKeyCode
+    ) -> KeyCombination {
+        if let activeOverride =
+            overrides.first(
+                where: {
+                    $0.isEnabled
+                    && $0.source == source
+                }
+            )
+        {
+            switch activeOverride.action {
+            case .passThrough:
+                return source
+
+            case .replaceWith(
+                let destination
+            ):
+                return destination
+            }
+        }
+
+        return KeyCombination(
+            keyCode:
+                destinationKeyCode,
+            modifiers:
+                source.modifiers
+        )
+    }
+
+    private func retargetOverrides(
+        to sourceKeyCode: CGKeyCode
+    ) {
+        overrides = overrides.map {
+            override in
+
+            RemapOverride(
+                source:
+                    KeyCombination(
+                        keyCode:
+                            sourceKeyCode,
+                        modifiers:
+                            override
+                                .source
+                                .modifiers
+                    ),
+                action:
+                    override.action,
+                isEnabled:
+                    override.isEnabled
+            )
+        }
+    }
+
     @objc
-    private func behaviorChanged() {
-        let requestedMode: RemapMatchingMode =
-            behaviorPopUpButton.indexOfSelectedItem == 1
+    private func behaviorMenuItemSelected(
+        _ sender: NSMenuItem
+    ) {
+        selectBehavior(
+            sender.tag == 1
                 ? .preserveModifiers
                 : .exact
+        )
+    }
 
-        guard requestedMode != matchingMode else {
+    private func selectBehavior(
+        _ requestedMode:
+            RemapMatchingMode
+    ) {
+        guard
+            requestedMode != matchingMode
+        else {
+            synchronizeBehaviorControl()
             return
         }
 
-        if requestedMode == .exact,
-           !overrides.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Remove custom exceptions?"
-            alert.informativeText =
-                "Exact-only rules cannot contain modifier exceptions."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Remove Exceptions")
-            alert.addButton(withTitle: "Cancel")
-            alert.buttons.first?.hasDestructiveAction = true
+        let candidateItem =
+            editorItem(
+                applying:
+                    requestedMode
+            )
 
-            guard alert.runModal() == .alertFirstButtonReturn else {
-                synchronizeBehaviorControl()
-                return
-            }
-
-            overrides = []
+        if let onMatchingModeChangeRequested,
+           !onMatchingModeChangeRequested(
+                candidateItem
+           )
+        {
+            synchronizeBehaviorControl()
+            return
         }
 
-        matchingMode = requestedMode
+        sourceCombination =
+            candidateItem
+                .sourceCombination
 
-        if matchingMode == .preserveModifiers {
-            if let sourceCombination {
-                self.sourceCombination = KeyCombination(
-                    keyCode: sourceCombination.keyCode
-                )
-            }
+        destinationCombination =
+            candidateItem
+                .destinationCombination
 
-            if let destinationCombination {
-                self.destinationCombination = KeyCombination(
-                    keyCode: destinationCombination.keyCode
-                )
-            }
-        }
+        matchingMode =
+            candidateItem
+                .matchingMode
+
+        overrides =
+            candidateItem
+                .overrides
 
         synchronizeBehaviorControl()
         updateControls()
         onRuleChanged?(editorItem)
+    }
+
+    private func editorItem(
+        applying requestedMode:
+            RemapMatchingMode
+    ) -> RemappingRuleEditorItem {
+        var candidateSource =
+            sourceCombination
+
+        var candidateDestination =
+            destinationCombination
+
+        if requestedMode
+            == .preserveModifiers
+        {
+            if let sourceCombination {
+                candidateSource =
+                    KeyCombination(
+                        keyCode:
+                            sourceCombination
+                                .keyCode
+                    )
+            }
+
+            if let destinationCombination {
+                candidateDestination =
+                    KeyCombination(
+                        keyCode:
+                            destinationCombination
+                                .keyCode
+                    )
+            }
+        }
+
+        return RemappingRuleEditorItem(
+            id: editorItemID,
+            sourceCombination:
+                candidateSource,
+            destinationCombination:
+                candidateDestination,
+            matchingMode:
+                requestedMode,
+            overrides:
+                overrides
+        )
     }
 
     @objc

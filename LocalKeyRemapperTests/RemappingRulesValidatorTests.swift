@@ -5,6 +5,7 @@
 //  Created by Alessandro Giuriati on 7/16/26.
 //
 
+import CoreGraphics
 import XCTest
 @testable import LocalKeyRemapper
 
@@ -25,16 +26,12 @@ final class RemappingRulesValidatorTests:
             .validate(
                 [
                     RemapRule(
-                        sourceKeyCode:
-                            KeyCode.v,
-                        destinationKeyCode:
-                            KeyCode.w
+                        sourceKeyCode: KeyCode.v,
+                        destinationKeyCode: KeyCode.w
                     ),
                     RemapRule(
-                        sourceKeyCode:
-                            KeyCode.w,
-                        destinationKeyCode:
-                            KeyCode.v
+                        sourceKeyCode: KeyCode.w,
+                        destinationKeyCode: KeyCode.v
                     )
                 ]
             )
@@ -44,53 +41,38 @@ final class RemappingRulesValidatorTests:
         throws
     {
         let rule = RemapRule(
-            source:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.v
-                ),
-            destination:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.w
-                ),
-            matchingMode:
-                .preserveModifiers,
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
             overrides: [
                 RemapOverride(
-                    source:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.v,
-                            modifiers:
-                                [.command]
-                        ),
-                    action:
-                        .passThrough
+                    source: KeyCombination(
+                        keyCode: KeyCode.v,
+                        modifiers: [.command]
+                    ),
+                    action: .passThrough
                 ),
                 RemapOverride(
-                    source:
+                    source: KeyCombination(
+                        keyCode: KeyCode.v,
+                        modifiers: [
+                            .control,
+                            .option
+                        ]
+                    ),
+                    action: .replaceWith(
                         KeyCombination(
-                            keyCode:
-                                KeyCode.v,
-                            modifiers:
-                                [
-                                    .control,
-                                    .option
-                                ]
-                        ),
-                    action:
-                        .replaceWith(
-                            KeyCombination(
-                                keyCode:
-                                    KeyCode.j,
-                                modifiers:
-                                    [
-                                        .control,
-                                        .command
-                                    ]
-                            )
+                            keyCode: KeyCode.j,
+                            modifiers: [
+                                .control,
+                                .command
+                            ]
                         )
+                    )
                 )
             ]
         )
@@ -99,19 +81,228 @@ final class RemappingRulesValidatorTests:
             .validate([rule])
     }
 
+    func testExactRuleWithStoredOverridesIsAccepted()
+        throws
+    {
+        let rule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .exact,
+            overrides: [
+                RemapOverride(
+                    source: KeyCombination(
+                        keyCode: KeyCode.v,
+                        modifiers: [.command]
+                    ),
+                    action: .passThrough
+                )
+            ]
+        )
+
+        try RemappingRulesValidator()
+            .validate([rule])
+    }
+
+    func testDisabledOverrideConflictingWithExactRuleIsAccepted()
+        throws
+    {
+        let conflictingSource = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rules = [
+            RemapRule(
+                source: conflictingSource,
+                destination: KeyCombination(
+                    keyCode: KeyCode.b
+                )
+            ),
+            RemapRule(
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.w
+                ),
+                matchingMode: .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source: conflictingSource,
+                        action: .passThrough,
+                        isEnabled: false
+                    )
+                ]
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(rules)
+    }
+
+    func testOverrideOwnedByExactRuleCanConflictBecauseItIsInactive()
+        throws
+    {
+        let conflictingSource = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rules = [
+            RemapRule(
+                source: conflictingSource,
+                destination: KeyCombination(
+                    keyCode: KeyCode.b
+                )
+            ),
+            RemapRule(
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.w
+                ),
+                matchingMode: .exact,
+                overrides: [
+                    RemapOverride(
+                        source: conflictingSource,
+                        action: .passThrough,
+                        isEnabled: true
+                    )
+                ]
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(rules)
+    }
+
+    func testEnabledOverrideUnderPreserveModifiersConflictingWithExactRuleIsRejected() {
+        let conflictingSource = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rules = [
+            RemapRule(
+                source: conflictingSource,
+                destination: KeyCombination(
+                    keyCode: KeyCode.b
+                )
+            ),
+            RemapRule(
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.w
+                ),
+                matchingMode: .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source: conflictingSource,
+                        action: .passThrough,
+                        isEnabled: true
+                    )
+                ]
+            )
+        ]
+
+        assertDuplicateSourceCombination(
+            conflictingSource,
+            rules: rules
+        )
+    }
+
+    func testTwoDisabledOverridesWithSameSourceAreAccepted()
+        throws
+    {
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                RemapOverride(
+                    source: source,
+                    action: .passThrough,
+                    isEnabled: false
+                ),
+                RemapOverride(
+                    source: source,
+                    action: .replaceWith(
+                        KeyCombination(
+                            keyCode: KeyCode.j
+                        )
+                    ),
+                    isEnabled: false
+                )
+            ]
+        )
+
+        try RemappingRulesValidator()
+            .validate([rule])
+    }
+
+    func testTwoEnabledOverridesWithSameSourceAreRejected() {
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                RemapOverride(
+                    source: source,
+                    action: .passThrough,
+                    isEnabled: true
+                ),
+                RemapOverride(
+                    source: source,
+                    action: .replaceWith(
+                        KeyCombination(
+                            keyCode: KeyCode.j
+                        )
+                    ),
+                    isEnabled: true
+                )
+            ]
+        )
+
+        assertDuplicateSourceCombination(
+            source,
+            rules: [rule]
+        )
+    }
+
     func testDuplicateLegacySourceKeyIsRejected() {
         let rules = [
             RemapRule(
-                sourceKeyCode:
-                    KeyCode.v,
-                destinationKeyCode:
-                    KeyCode.w
+                sourceKeyCode: KeyCode.v,
+                destinationKeyCode: KeyCode.w
             ),
             RemapRule(
-                sourceKeyCode:
-                    KeyCode.v,
-                destinationKeyCode:
-                    KeyCode.b
+                sourceKeyCode: KeyCode.v,
+                destinationKeyCode: KeyCode.b
             )
         ]
 
@@ -120,91 +311,61 @@ final class RemappingRulesValidatorTests:
                 .validate(rules)
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
-                .duplicateSourceKey(
-                    KeyCode.v
-                )
+                error as? RemappingRulesValidationError,
+                .duplicateSourceKey(KeyCode.v)
             )
         }
     }
 
     func testDuplicateExactCombinationIsRejected() {
-        let source =
-            KeyCombination(
-                keyCode:
-                    KeyCode.n,
-                modifiers:
-                    [
-                        .control,
-                        .option
-                    ]
-            )
+        let source = KeyCombination(
+            keyCode: KeyCode.n,
+            modifiers: [
+                .control,
+                .option
+            ]
+        )
 
         let rules = [
             RemapRule(
-                source:
-                    source,
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.b
-                    )
+                source: source,
+                destination: KeyCombination(
+                    keyCode: KeyCode.b
+                )
             ),
             RemapRule(
-                source:
-                    source,
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.j
-                    )
+                source: source,
+                destination: KeyCombination(
+                    keyCode: KeyCode.j
+                )
             )
         ]
 
-        XCTAssertThrowsError(
-            try RemappingRulesValidator()
-                .validate(rules)
-        ) { error in
-            XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
-                .duplicateSourceCombination(
-                    source
-                )
-            )
-        }
+        assertDuplicateSourceCombination(
+            source,
+            rules: rules
+        )
     }
 
     func testDuplicatePreservingSourceKeyIsRejected() {
         let rules = [
             RemapRule(
-                source:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.v
-                    ),
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.w
-                    ),
-                matchingMode:
-                    .preserveModifiers
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.w
+                ),
+                matchingMode: .preserveModifiers
             ),
             RemapRule(
-                source:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.v
-                    ),
-                destination:
-                    KeyCombination(
-                        keyCode:
-                            KeyCode.b
-                    ),
-                matchingMode:
-                    .preserveModifiers
+                source: KeyCombination(
+                    keyCode: KeyCode.v
+                ),
+                destination: KeyCombination(
+                    keyCode: KeyCode.b
+                ),
+                matchingMode: .preserveModifiers
             )
         ]
 
@@ -213,11 +374,8 @@ final class RemappingRulesValidatorTests:
                 .validate(rules)
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
-                .duplicatePreservingSourceKey(
-                    KeyCode.v
-                )
+                error as? RemappingRulesValidationError,
+                .duplicatePreservingSourceKey(KeyCode.v)
             )
         }
     }
@@ -228,52 +386,41 @@ final class RemappingRulesValidatorTests:
                 .validate(
                     [
                         RemapRule(
-                            sourceKeyCode:
-                                KeyCode.v,
-                            destinationKeyCode:
-                                KeyCode.v
+                            sourceKeyCode: KeyCode.v,
+                            destinationKeyCode: KeyCode.v
                         )
                     ]
                 )
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
-                .identicalSourceAndDestination(
-                    KeyCode.v
-                )
+                error as? RemappingRulesValidationError,
+                .identicalSourceAndDestination(KeyCode.v)
             )
         }
     }
 
     func testIdenticalModifiedCombinationIsRejected() {
-        let combination =
-            KeyCombination(
-                keyCode:
-                    KeyCode.n,
-                modifiers:
-                    [
-                        .control,
-                        .option
-                    ]
-            )
+        let combination = KeyCombination(
+            keyCode: KeyCode.n,
+            modifiers: [
+                .control,
+                .option
+            ]
+        )
 
         XCTAssertThrowsError(
             try RemappingRulesValidator()
                 .validate(
                     [
                         RemapRule(
-                            source:
-                                combination,
-                            destination:
-                                combination
+                            source: combination,
+                            destination: combination
                         )
                     ]
                 )
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
+                error as? RemappingRulesValidationError,
                 .identicalSourceAndDestinationCombination(
                     combination
                 )
@@ -283,20 +430,14 @@ final class RemappingRulesValidatorTests:
 
     func testPreservingRuleRejectsModifiedEndpoints() {
         let rule = RemapRule(
-            source:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.v,
-                    modifiers:
-                        [.command]
-                ),
-            destination:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.w
-                ),
-            matchingMode:
-                .preserveModifiers
+            source: KeyCombination(
+                keyCode: KeyCode.v,
+                modifiers: [.command]
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers
         )
 
         XCTAssertThrowsError(
@@ -304,8 +445,7 @@ final class RemappingRulesValidatorTests:
                 .validate([rule])
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
+                error as? RemappingRulesValidationError,
                 .invalidModifierPreservingEndpoints
             )
         }
@@ -313,29 +453,78 @@ final class RemappingRulesValidatorTests:
 
     func testOverrideMustUseParentSourceKey() {
         let rule = RemapRule(
-            source:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.v
-                ),
-            destination:
-                KeyCombination(
-                    keyCode:
-                        KeyCode.w
-                ),
-            matchingMode:
-                .preserveModifiers,
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
             overrides: [
                 RemapOverride(
-                    source:
-                        KeyCombination(
-                            keyCode:
-                                KeyCode.n,
-                            modifiers:
-                                [.command]
-                        ),
-                    action:
-                        .passThrough
+                    source: KeyCombination(
+                        keyCode: KeyCode.n,
+                        modifiers: [.command]
+                    ),
+                    action: .passThrough
+                )
+            ]
+        )
+
+        assertSourceKeyMismatch(
+            rule,
+            expected: KeyCode.v,
+            actual: KeyCode.n
+        )
+    }
+
+    func testDisabledOverrideMustStillUseParentSourceKey() {
+        let rule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                RemapOverride(
+                    source: KeyCombination(
+                        keyCode: KeyCode.n,
+                        modifiers: [.command]
+                    ),
+                    action: .passThrough,
+                    isEnabled: false
+                )
+            ]
+        )
+
+        assertSourceKeyMismatch(
+            rule,
+            expected: KeyCode.v,
+            actual: KeyCode.n
+        )
+    }
+
+    func testDisabledIdentityReplacementIsRejected() {
+        let source = KeyCombination(
+            keyCode: KeyCode.v,
+            modifiers: [.command]
+        )
+
+        let rule = RemapRule(
+            source: KeyCombination(
+                keyCode: KeyCode.v
+            ),
+            destination: KeyCombination(
+                keyCode: KeyCode.w
+            ),
+            matchingMode: .preserveModifiers,
+            overrides: [
+                RemapOverride(
+                    source: source,
+                    action: .replaceWith(source),
+                    isEnabled: false
                 )
             ]
         )
@@ -345,14 +534,56 @@ final class RemappingRulesValidatorTests:
                 .validate([rule])
         ) { error in
             XCTAssertEqual(
-                error as?
-                    RemappingRulesValidationError,
-                .overrideSourceKeyMismatch(
-                    expected:
-                        KeyCode.v,
-                    actual:
-                        KeyCode.n
+                error as? RemappingRulesValidationError,
+                .identicalSourceAndDestinationCombination(
+                    source
                 )
+            )
+        }
+    }
+
+    private func assertDuplicateSourceCombination(
+        _ source: KeyCombination,
+        rules: [RemapRule],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertThrowsError(
+            try RemappingRulesValidator()
+                .validate(rules),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertEqual(
+                error as? RemappingRulesValidationError,
+                .duplicateSourceCombination(source),
+                file: file,
+                line: line
+            )
+        }
+    }
+
+    private func assertSourceKeyMismatch(
+        _ rule: RemapRule,
+        expected: CGKeyCode,
+        actual: CGKeyCode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertThrowsError(
+            try RemappingRulesValidator()
+                .validate([rule]),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertEqual(
+                error as? RemappingRulesValidationError,
+                .overrideSourceKeyMismatch(
+                    expected: expected,
+                    actual: actual
+                ),
+                file: file,
+                line: line
             )
         }
     }

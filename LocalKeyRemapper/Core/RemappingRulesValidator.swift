@@ -16,7 +16,7 @@ nonisolated enum RemappingRulesValidationError:
     /// Compatibility error for duplicate exact rules without modifiers.
     case duplicateSourceKey(CGKeyCode)
 
-    /// More than one exact rule or override uses the same combination.
+    /// More than one active exact rule or override uses the same combination.
     case duplicateSourceCombination(KeyCombination)
 
     /// More than one modifier-preserving rule uses the same source key.
@@ -25,7 +25,7 @@ nonisolated enum RemappingRulesValidationError:
     /// Compatibility error for an unmodified identity rule.
     case identicalSourceAndDestination(CGKeyCode)
 
-    /// An exact rule replaces a combination with itself.
+    /// An exact rule or stored override replaces a combination with itself.
     case identicalSourceAndDestinationCombination(
         KeyCombination
     )
@@ -34,11 +34,13 @@ nonisolated enum RemappingRulesValidationError:
     /// destination keys because incoming modifiers are preserved.
     case invalidModifierPreservingEndpoints
 
-    /// Exact rules cannot contain overrides.
+    /// Retained for source compatibility with older callers.
+    /// Exact rules may now keep stored overrides, so the validator
+    /// no longer throws this error.
     case overridesRequireModifierPreservingRule
 
     /// An override must refer to the same physical source key
-    /// as its parent modifier-preserving rule.
+    /// as its parent rule.
     case overrideSourceKeyMismatch(
         expected: CGKeyCode,
         actual: CGKeyCode
@@ -72,11 +74,6 @@ nonisolated struct RemappingRulesValidator:
         for rule in rules {
             switch rule.matchingMode {
             case .exact:
-                guard rule.overrides.isEmpty else {
-                    throw RemappingRulesValidationError
-                        .overridesRequireModifierPreservingRule
-                }
-
                 try insertExactSource(
                     rule.source,
                     into: &exactSources
@@ -117,36 +114,56 @@ nonisolated struct RemappingRulesValidator:
                             rule.source.keyCode
                         )
                 }
-
-                for override in rule.overrides {
-                    guard
-                        override.source.keyCode
-                            == rule.source.keyCode
-                    else {
-                        throw RemappingRulesValidationError
-                            .overrideSourceKeyMismatch(
-                                expected:
-                                    rule.source.keyCode,
-                                actual:
-                                    override.source.keyCode
-                            )
-                    }
-
-                    try insertExactSource(
-                        override.source,
-                        into: &exactSources
-                    )
-
-                    if case .replaceWith(
-                        let destination
-                    ) = override.action {
-                        try validateReplacement(
-                            source: override.source,
-                            destination: destination
-                        )
-                    }
-                }
             }
+
+            try validateStoredOverrides(
+                rule.overrides,
+                parentSourceKeyCode: rule.source.keyCode,
+                areActive:
+                    rule.matchingMode == .preserveModifiers,
+                exactSources: &exactSources
+            )
+        }
+    }
+
+    private func validateStoredOverrides(
+        _ overrides: [RemapOverride],
+        parentSourceKeyCode: CGKeyCode,
+        areActive: Bool,
+        exactSources: inout Set<KeyCombination>
+    ) throws {
+        for override in overrides {
+            guard
+                override.source.keyCode
+                    == parentSourceKeyCode
+            else {
+                throw RemappingRulesValidationError
+                    .overrideSourceKeyMismatch(
+                        expected:
+                            parentSourceKeyCode,
+                        actual:
+                            override.source.keyCode
+                    )
+            }
+
+            if case .replaceWith(
+                let destination
+            ) = override.action {
+                try validateReplacement(
+                    source: override.source,
+                    destination: destination
+                )
+            }
+
+            guard areActive,
+                  override.isEnabled else {
+                continue
+            }
+
+            try insertExactSource(
+                override.source,
+                into: &exactSources
+            )
         }
     }
 

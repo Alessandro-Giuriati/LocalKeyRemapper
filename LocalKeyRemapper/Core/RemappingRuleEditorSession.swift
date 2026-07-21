@@ -45,7 +45,9 @@ nonisolated final class RemappingRuleEditorSession {
 
     /// Returns every current item as a rule only when no row is incomplete.
     var completeRules: [RemapRule]? {
-        let rules = items.compactMap { $0.rule }
+        let rules = items.compactMap {
+            $0.rule
+        }
 
         guard rules.count == items.count else {
             return nil
@@ -61,8 +63,11 @@ nonisolated final class RemappingRuleEditorSession {
             return true
         }
 
-        return Self.normalizedRules(completeRules)
-            != Self.normalizedRules(savedRules)
+        return Self.normalizedRules(
+            completeRules
+        ) != Self.normalizedRules(
+            savedRules
+        )
     }
 
     /// Loads the persistent rules once at the beginning of the app session.
@@ -92,9 +97,14 @@ nonisolated final class RemappingRuleEditorSession {
     func insertEmptyItem(
         at requestedIndex: Int? = nil
     ) -> UUID {
-        let item = RemappingRuleEditorItem()
+        let item =
+            RemappingRuleEditorItem()
+
         let index = min(
-            max(requestedIndex ?? items.count, 0),
+            max(
+                requestedIndex ?? items.count,
+                0
+            ),
             items.count
         )
 
@@ -111,9 +121,13 @@ nonisolated final class RemappingRuleEditorSession {
     func removeItem(
         id: UUID
     ) {
-        guard let index = items.firstIndex(
-            where: { $0.id == id }
-        ) else {
+        guard
+            let index = items.firstIndex(
+                where: {
+                    $0.id == id
+                }
+            )
+        else {
             return
         }
 
@@ -126,17 +140,25 @@ nonisolated final class RemappingRuleEditorSession {
     }
 
     func updateItem(
-        _ updatedItem: RemappingRuleEditorItem
+        _ updatedItem:
+            RemappingRuleEditorItem
     ) {
-        guard let index = items.firstIndex(
-            where: { $0.id == updatedItem.id }
-        ) else {
+        guard
+            let index = items.firstIndex(
+                where: {
+                    $0.id == updatedItem.id
+                }
+            )
+        else {
             return
         }
 
-        let previousItem = items[index]
+        let previousItem =
+            items[index]
 
-        guard previousItem != updatedItem else {
+        guard
+            previousItem != updatedItem
+        else {
             return
         }
 
@@ -154,11 +176,12 @@ nonisolated final class RemappingRuleEditorSession {
             return
         }
 
-        let restoredItems = savedRules.map {
-            RemappingRuleEditorItem(
-                rule: $0
-            )
-        }
+        let restoredItems =
+            savedRules.map {
+                RemappingRuleEditorItem(
+                    rule: $0
+                )
+            }
 
         applyNewAction(
             .replaceAll(
@@ -177,7 +200,10 @@ nonisolated final class RemappingRuleEditorSession {
     }
 
     func undo() {
-        guard let action = history.takeUndoAction() else {
+        guard
+            let action =
+                history.takeUndoAction()
+        else {
             return
         }
 
@@ -189,7 +215,10 @@ nonisolated final class RemappingRuleEditorSession {
     }
 
     func redo() {
-        guard let action = history.takeRedoAction() else {
+        guard
+            let action =
+                history.takeRedoAction()
+        else {
             return
         }
 
@@ -203,29 +232,45 @@ nonisolated final class RemappingRuleEditorSession {
     private func applyNewAction(
         _ action: RuleEditorAction
     ) {
-        history.record(action)
+        history.record(
+            action
+        )
+
         items = action.applyingRedo(
             to: items
         )
+
         onChange?()
     }
 
     private static func normalizedRules(
         _ rules: [RemapRule]
     ) -> [RemapRule] {
-        let normalizedRules = rules.map { rule in
-            RemapRule(
-                source: rule.source,
-                destination: rule.destination,
-                matchingMode: rule.matchingMode,
-                overrides: normalizedOverrides(
-                    rule.overrides
-                )
-            )
-        }
+        let normalizedRules =
+            rules.map {
+                rule in
 
-        return normalizedRules.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
+                RemapRule(
+                    source:
+                        rule.source,
+                    destination:
+                        rule.destination,
+                    matchingMode:
+                        rule.matchingMode,
+                    overrides:
+                        normalizedOverrides(
+                            rule.overrides
+                        )
+                )
+            }
+
+        return normalizedRules.sorted {
+            first,
+            second in
+
+            if first.source.keyCode
+                != second.source.keyCode
+            {
                 return first.source.keyCode
                     < second.source.keyCode
             }
@@ -233,8 +278,14 @@ nonisolated final class RemappingRuleEditorSession {
             if first.source.modifiers.rawValue
                 != second.source.modifiers.rawValue
             {
-                return first.source.modifiers.rawValue
-                    < second.source.modifiers.rawValue
+                return first
+                    .source
+                    .modifiers
+                    .rawValue
+                    < second
+                        .source
+                        .modifiers
+                        .rawValue
             }
 
             if first.matchingMode.rawValue
@@ -251,16 +302,27 @@ nonisolated final class RemappingRuleEditorSession {
                     < second.destination.keyCode
             }
 
-            return first.destination.modifiers.rawValue
-                < second.destination.modifiers.rawValue
+            return first
+                .destination
+                .modifiers
+                .rawValue
+                < second
+                    .destination
+                    .modifiers
+                    .rawValue
         }
     }
 
     private static func normalizedOverrides(
         _ overrides: [RemapOverride]
     ) -> [RemapOverride] {
-        overrides.sorted { first, second in
-            if first.source.keyCode != second.source.keyCode {
+        overrides.sorted {
+            first,
+            second in
+
+            if first.source.keyCode
+                != second.source.keyCode
+            {
                 return first.source.keyCode
                     < second.source.keyCode
             }
@@ -268,12 +330,27 @@ nonisolated final class RemappingRuleEditorSession {
             if first.source.modifiers.rawValue
                 != second.source.modifiers.rawValue
             {
-                return first.source.modifiers.rawValue
-                    < second.source.modifiers.rawValue
+                return first
+                    .source
+                    .modifiers
+                    .rawValue
+                    < second
+                        .source
+                        .modifiers
+                        .rawValue
             }
 
-            return actionSortKey(first.action)
-                < actionSortKey(second.action)
+            if first.isEnabled
+                != second.isEnabled
+            {
+                return first.isEnabled == false
+            }
+
+            return actionSortKey(
+                first.action
+            ) < actionSortKey(
+                second.action
+            )
         }
     }
 
@@ -284,8 +361,12 @@ nonisolated final class RemappingRuleEditorSession {
         case .passThrough:
             return "0"
 
-        case .replaceWith(let destination):
-            return "1-\(destination.keyCode)-\(destination.modifiers.rawValue)"
+        case .replaceWith(
+            let destination
+        ):
+            return
+                "1-\(destination.keyCode)-"
+                + "\(destination.modifiers.rawValue)"
         }
     }
 }

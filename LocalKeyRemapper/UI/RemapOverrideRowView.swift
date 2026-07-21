@@ -7,8 +7,7 @@
 
 import AppKit
 
-/// Displays and edits one exact exception belonging to a
-/// modifier-preserving remapping rule.
+/// Displays and edits one stored exception belonging to a remapping rule.
 @MainActor
 final class RemapOverrideRowView: NSView {
 
@@ -17,9 +16,51 @@ final class RemapOverrideRowView: NSView {
         case destination
     }
 
-    private enum ActionKind: Equatable {
-        case passThrough
-        case replace
+    /// Complete editable state for one exception row.
+    ///
+    /// Unlike `RemapOverride`, this state can represent an incomplete row
+    /// while the user is still selecting a source or destination.
+    struct EditorState: Equatable {
+        enum ActionKind: Equatable {
+            case passThrough
+            case replace
+        }
+
+        var sourceCombination: KeyCombination?
+        var destinationCombination: KeyCombination?
+        var actionKind: ActionKind
+        var isEnabled: Bool
+
+        init(
+            sourceCombination: KeyCombination? = nil,
+            destinationCombination: KeyCombination? = nil,
+            actionKind: ActionKind = .passThrough,
+            isEnabled: Bool = true
+        ) {
+            self.sourceCombination = sourceCombination
+            self.destinationCombination = destinationCombination
+            self.actionKind = actionKind
+            self.isEnabled = isEnabled
+        }
+
+        init(
+            override: RemapOverride?
+        ) {
+            sourceCombination = override?.source
+            isEnabled = override?.isEnabled ?? true
+
+            switch override?.action {
+            case .replaceWith(
+                let destination
+            ):
+                actionKind = .replace
+                destinationCombination = destination
+
+            case .passThrough, .none:
+                actionKind = .passThrough
+                destinationCombination = nil
+            }
+        }
     }
 
     var onSourceRequested: (() -> Void)?
@@ -27,19 +68,66 @@ final class RemapOverrideRowView: NSView {
     var onRemoveRequested: (() -> Void)?
     var onChange: (() -> Void)?
 
-    private let sourceButton = NSButton()
-    private let arrowLabel = NSTextField(labelWithString: "→")
-    private let actionPopUpButton = NSPopUpButton()
-    private let destinationButton = NSButton()
-    private let removeButton = NSButton()
+    /// Returns `true` when a requested enabled-state change may be applied.
+    ///
+    /// The parent editor can reject activation when the enabled exception
+    /// would conflict with another active rule or exception.
+    var onEnabledChangeRequested:
+        ((Bool) -> Bool)?
 
-    private var rowHeightConstraint: NSLayoutConstraint?
-    private var actionKind: ActionKind
-    private var isShowingValidationError = false
+    private let enabledCheckbox =
+        NSButton(
+            checkboxWithTitle: "",
+            target: nil,
+            action: nil
+        )
+
+    private let sourceButton = NSButton()
+
+    private let arrowLabel =
+        NSTextField(
+            labelWithString: "→"
+        )
+
+    private let actionPopUpButton =
+        NSPopUpButton()
+
+    private let destinationButton =
+        NSButton()
+
+    private let removeButton =
+        NSButton()
+
+    private var rowHeightConstraint:
+        NSLayoutConstraint?
+
+    private var actionKind:
+        EditorState.ActionKind
+    private var isShowingValidationError =
+        false
+
     private var textScale: CGFloat = 1.0
 
-    private(set) var sourceCombination: KeyCombination?
-    private(set) var destinationCombination: KeyCombination?
+    private(set) var sourceCombination:
+        KeyCombination?
+
+    private(set) var destinationCombination:
+        KeyCombination?
+
+    private(set) var isEnabled: Bool
+
+    var editorState: EditorState {
+        EditorState(
+            sourceCombination:
+                sourceCombination,
+            destinationCombination:
+                destinationCombination,
+            actionKind:
+                actionKind,
+            isEnabled:
+                isEnabled
+        )
+    }
 
     var override: RemapOverride? {
         guard let sourceCombination else {
@@ -49,18 +137,30 @@ final class RemapOverrideRowView: NSView {
         switch actionKind {
         case .passThrough:
             return RemapOverride(
-                source: sourceCombination,
-                action: .passThrough
+                source:
+                    sourceCombination,
+                action:
+                    .passThrough,
+                isEnabled:
+                    isEnabled
             )
 
         case .replace:
-            guard let destinationCombination else {
+            guard
+                let destinationCombination
+            else {
                 return nil
             }
 
             return RemapOverride(
-                source: sourceCombination,
-                action: .replaceWith(destinationCombination)
+                source:
+                    sourceCombination,
+                action:
+                    .replaceWith(
+                        destinationCombination
+                    ),
+                isEnabled:
+                    isEnabled
             )
         }
     }
@@ -74,32 +174,51 @@ final class RemapOverrideRowView: NSView {
             return false
         }
 
-        return sourceCombination == destinationCombination
+        return sourceCombination
+            == destinationCombination
     }
 
-    init(override: RemapOverride? = nil) {
-        sourceCombination = override?.source
+    convenience init(
+        override: RemapOverride? = nil
+    ) {
+        self.init(
+            editorState:
+                EditorState(
+                    override: override
+                )
+        )
+    }
 
-        switch override?.action {
-        case .replaceWith(let destination):
-            actionKind = .replace
-            destinationCombination = destination
+    init(
+        editorState: EditorState
+    ) {
+        sourceCombination =
+            editorState.sourceCombination
 
-        case .passThrough, .none:
-            actionKind = .passThrough
-            destinationCombination = nil
-        }
+        destinationCombination =
+            editorState.destinationCombination
+
+        actionKind =
+            editorState.actionKind
+
+        isEnabled =
+            editorState.isEnabled
 
         super.init(frame: .zero)
 
         configureContent()
         synchronizeActionControl()
+        synchronizeEnabledControl()
         updateControls()
         updateValidationAppearance()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    required init?(
+        coder: NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -113,71 +232,107 @@ final class RemapOverrideRowView: NSView {
     ) {
         switch field {
         case .source:
-            sourceCombination = combination
+            sourceCombination =
+                combination
 
         case .destination:
-            destinationCombination = combination
+            destinationCombination =
+                combination
         }
 
         updateControls()
         onChange?()
     }
 
-    func showCapturePrompt(for field: KeyField) {
+    func showCapturePrompt(
+        for field: KeyField
+    ) {
         restoreButtonTitles()
 
         switch field {
         case .source:
-            sourceButton.title = "Press combination…"
+            sourceButton.title =
+                "Press combination…"
 
         case .destination:
-            destinationButton.title = "Press combination…"
+            destinationButton.title =
+                "Press combination…"
         }
     }
 
     func restoreButtonTitles() {
-        sourceButton.title = title(
-            for: sourceCombination,
-            fallback: "Choose Combination…"
-        )
+        sourceButton.title =
+            title(
+                for: sourceCombination,
+                fallback:
+                    "Choose Combination…"
+            )
 
-        destinationButton.title = title(
-            for: destinationCombination,
-            fallback: "Choose Destination…"
-        )
+        destinationButton.title =
+            title(
+                for:
+                    destinationCombination,
+                fallback:
+                    "Choose Destination…"
+            )
 
         if actionKind == .passThrough {
-            destinationButton.title = "Original Event"
+            destinationButton.title =
+                "Original Event"
         }
     }
 
-    func setValidationErrorVisible(_ isVisible: Bool) {
-        guard isShowingValidationError != isVisible else {
+    func setValidationErrorVisible(
+        _ isVisible: Bool
+    ) {
+        guard
+            isShowingValidationError
+                != isVisible
+        else {
             return
         }
 
-        isShowingValidationError = isVisible
+        isShowingValidationError =
+            isVisible
+
         updateValidationAppearance()
     }
 
-    func applyTextScale(_ scale: CGFloat) {
+    func applyTextScale(
+        _ scale: CGFloat
+    ) {
         textScale = scale
 
-        let controlFont = NSFont.systemFont(
-            ofSize: 13 * scale,
-            weight: .regular
-        )
+        let controlFont =
+            NSFont.systemFont(
+                ofSize: 13 * scale,
+                weight: .regular
+            )
 
-        sourceButton.font = controlFont
-        destinationButton.font = controlFont
-        actionPopUpButton.font = controlFont
-        removeButton.font = controlFont
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 19 * scale,
-            weight: .regular
-        )
+        enabledCheckbox.font =
+            controlFont
 
-        rowHeightConstraint?.constant = 42 * scale
+        sourceButton.font =
+            controlFont
+
+        destinationButton.font =
+            controlFont
+
+        actionPopUpButton.font =
+            controlFont
+
+        removeButton.font =
+            controlFont
+
+        arrowLabel.font =
+            NSFont.systemFont(
+                ofSize: 19 * scale,
+                weight: .regular
+            )
+
+        rowHeightConstraint?.constant =
+            42 * scale
+
         needsLayout = true
     }
 
@@ -186,14 +341,25 @@ final class RemapOverrideRowView: NSView {
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
 
+        enabledCheckbox.target = self
+        enabledCheckbox.action =
+            #selector(enabledChanged)
+
+        enabledCheckbox.toolTip =
+            "Enable or disable this exception without deleting it."
+
         configureButton(
             sourceButton,
-            action: #selector(requestSource)
+            action:
+                #selector(requestSource)
         )
 
         configureButton(
             destinationButton,
-            action: #selector(requestDestination)
+            action:
+                #selector(
+                    requestDestination
+                )
         )
 
         arrowLabel.alignment = .center
@@ -204,15 +370,22 @@ final class RemapOverrideRowView: NSView {
                 "Replace With"
             ]
         )
+
         actionPopUpButton.target = self
-        actionPopUpButton.action = #selector(actionChanged)
+        actionPopUpButton.action =
+            #selector(actionChanged)
 
         removeButton.title = "Remove"
-        removeButton.bezelStyle = .rounded
+        removeButton.bezelStyle =
+            .rounded
+        removeButton.hasDestructiveAction =
+            true
         removeButton.target = self
-        removeButton.action = #selector(requestRemoval)
+        removeButton.action =
+            #selector(requestRemoval)
 
         let views: [NSView] = [
+            enabledCheckbox,
             sourceButton,
             arrowLabel,
             actionPopUpButton,
@@ -221,83 +394,133 @@ final class RemapOverrideRowView: NSView {
         ]
 
         for view in views {
-            view.translatesAutoresizingMaskIntoConstraints = false
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
             addSubview(view)
         }
 
-        let rowHeightConstraint = heightAnchor.constraint(
-            equalToConstant: 42
-        )
-        self.rowHeightConstraint = rowHeightConstraint
+        let rowHeightConstraint =
+            heightAnchor.constraint(
+                equalToConstant: 42
+            )
+
+        self.rowHeightConstraint =
+            rowHeightConstraint
 
         NSLayoutConstraint.activate(
             [
-                sourceButton.leadingAnchor.constraint(
+                enabledCheckbox.leadingAnchor.constraint(
                     equalTo: leadingAnchor,
                     constant: 6
                 ),
+
+                enabledCheckbox.centerYAnchor.constraint(
+                    equalTo: centerYAnchor
+                ),
+
+                enabledCheckbox.widthAnchor.constraint(
+                    equalToConstant: 24
+                ),
+
+                sourceButton.leadingAnchor.constraint(
+                    equalTo: leadingAnchor,
+                    constant: 74
+                ),
+
                 sourceButton.topAnchor.constraint(
                     equalTo: topAnchor,
                     constant: 4
                 ),
+
                 sourceButton.bottomAnchor.constraint(
                     equalTo: bottomAnchor,
                     constant: -4
                 ),
 
                 arrowLabel.leadingAnchor.constraint(
-                    equalTo: sourceButton.trailingAnchor,
+                    equalTo:
+                        sourceButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 arrowLabel.centerYAnchor.constraint(
-                    equalTo: sourceButton.centerYAnchor
+                    equalTo:
+                        sourceButton
+                            .centerYAnchor
                 ),
+
                 arrowLabel.widthAnchor.constraint(
                     equalToConstant: 18
                 ),
 
                 actionPopUpButton.leadingAnchor.constraint(
-                    equalTo: arrowLabel.trailingAnchor,
+                    equalTo:
+                        arrowLabel
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 actionPopUpButton.centerYAnchor.constraint(
-                    equalTo: sourceButton.centerYAnchor
+                    equalTo:
+                        sourceButton
+                            .centerYAnchor
                 ),
+
                 actionPopUpButton.widthAnchor.constraint(
                     equalToConstant: 132
                 ),
 
                 destinationButton.leadingAnchor.constraint(
-                    equalTo: actionPopUpButton.trailingAnchor,
+                    equalTo:
+                        actionPopUpButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 destinationButton.centerYAnchor.constraint(
-                    equalTo: sourceButton.centerYAnchor
+                    equalTo:
+                        sourceButton
+                            .centerYAnchor
                 ),
 
                 removeButton.leadingAnchor.constraint(
-                    equalTo: destinationButton.trailingAnchor,
+                    equalTo:
+                        destinationButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 removeButton.trailingAnchor.constraint(
                     equalTo: trailingAnchor,
                     constant: -6
                 ),
+
                 removeButton.centerYAnchor.constraint(
-                    equalTo: sourceButton.centerYAnchor
+                    equalTo:
+                        sourceButton
+                            .centerYAnchor
                 ),
+
                 removeButton.widthAnchor.constraint(
                     equalToConstant: 82
                 ),
 
                 sourceButton.widthAnchor.constraint(
-                    equalTo: destinationButton.widthAnchor
+                    equalTo:
+                        destinationButton
+                            .widthAnchor
                 ),
+
                 sourceButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 180
+                    greaterThanOrEqualToConstant:
+                        180
                 ),
+
                 destinationButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 180
+                    greaterThanOrEqualToConstant:
+                        180
                 ),
 
                 rowHeightConstraint
@@ -319,15 +542,44 @@ final class RemapOverrideRowView: NSView {
     private func synchronizeActionControl() {
         switch actionKind {
         case .passThrough:
-            actionPopUpButton.selectItem(at: 0)
+            actionPopUpButton.selectItem(
+                at: 0
+            )
 
         case .replace:
-            actionPopUpButton.selectItem(at: 1)
+            actionPopUpButton.selectItem(
+                at: 1
+            )
         }
     }
 
+    private func synchronizeEnabledControl() {
+        enabledCheckbox.state =
+            isEnabled ? .on : .off
+    }
+
     private func updateControls() {
-        destinationButton.isEnabled = actionKind == .replace
+        destinationButton.isEnabled =
+            actionKind == .replace
+
+        let contentAlpha:
+            CGFloat =
+                isEnabled
+                ? 1.0
+                : 0.55
+
+        sourceButton.alphaValue =
+            contentAlpha
+
+        arrowLabel.alphaValue =
+            contentAlpha
+
+        actionPopUpButton.alphaValue =
+            contentAlpha
+
+        destinationButton.alphaValue =
+            contentAlpha
+
         restoreButtonTitles()
     }
 
@@ -338,19 +590,26 @@ final class RemapOverrideRowView: NSView {
 
         if isShowingValidationError {
             layer.borderWidth = 1.5
-            layer.borderColor = NSColor.systemRed.cgColor
-            layer.backgroundColor = NSColor.systemRed
-                .withAlphaComponent(0.08)
-                .cgColor
+            layer.borderColor =
+                NSColor.systemRed.cgColor
+
+            layer.backgroundColor =
+                NSColor.systemRed
+                    .withAlphaComponent(0.08)
+                    .cgColor
         } else {
             layer.borderWidth = 0
-            layer.borderColor = NSColor.clear.cgColor
-            layer.backgroundColor = NSColor.clear.cgColor
+            layer.borderColor =
+                NSColor.clear.cgColor
+
+            layer.backgroundColor =
+                NSColor.clear.cgColor
         }
     }
 
     private func title(
-        for combination: KeyCombination?,
+        for combination:
+            KeyCombination?,
         fallback: String
     ) -> String {
         guard let combination else {
@@ -363,8 +622,30 @@ final class RemapOverrideRowView: NSView {
     }
 
     @objc
+    private func enabledChanged() {
+        let requestedValue =
+            enabledCheckbox.state == .on
+
+        if let onEnabledChangeRequested,
+           !onEnabledChangeRequested(
+                requestedValue
+           )
+        {
+            synchronizeEnabledControl()
+            return
+        }
+
+        isEnabled = requestedValue
+        updateControls()
+        onChange?()
+    }
+
+    @objc
     private func actionChanged() {
-        actionKind = actionPopUpButton.indexOfSelectedItem == 1
+        actionKind =
+            actionPopUpButton
+                .indexOfSelectedItem
+                == 1
             ? .replace
             : .passThrough
 
@@ -379,7 +660,9 @@ final class RemapOverrideRowView: NSView {
 
     @objc
     private func requestDestination() {
-        guard actionKind == .replace else {
+        guard
+            actionKind == .replace
+        else {
             return
         }
 

@@ -32,9 +32,7 @@ nonisolated struct RemappingRuleEditorItem:
         self.sourceCombination = sourceCombination
         self.destinationCombination = destinationCombination
         self.matchingMode = matchingMode
-        self.overrides = matchingMode == .preserveModifiers
-            ? overrides
-            : []
+        self.overrides = overrides
     }
 
     init(
@@ -63,9 +61,7 @@ nonisolated struct RemappingRuleEditorItem:
             source: sourceCombination,
             destination: destinationCombination,
             matchingMode: matchingMode,
-            overrides: matchingMode == .preserveModifiers
-                ? overrides
-                : []
+            overrides: overrides
         )
     }
 }

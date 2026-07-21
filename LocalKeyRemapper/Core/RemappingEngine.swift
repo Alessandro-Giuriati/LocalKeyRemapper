@@ -13,7 +13,7 @@ import CoreGraphics
 /// update the user interface, or record keyboard input.
 nonisolated final class RemappingEngine {
 
-    /// Exact combination rules and exact overrides.
+    /// Exact combination rules and active exact overrides.
     private var exactMappings:
         [KeyCombination: RemapAction] = [:]
 
@@ -80,15 +80,14 @@ nonisolated final class RemappingEngine {
                     rule.source.keyCode
                 ] =
                     rule.destination.keyCode
-            }
 
-            for override in
-                rule.overrides
-            {
-                newExactMappings[
-                    override.source
-                ] =
-                    override.action
+                for override in rule.overrides
+                where override.isEnabled {
+                    newExactMappings[
+                        override.source
+                    ] =
+                        override.action
+                }
             }
         }
 
@@ -101,7 +100,7 @@ nonisolated final class RemappingEngine {
 
     /// Returns the remapping decision for a complete combination.
     ///
-    /// Exact rules and overrides always take precedence over
+    /// Exact rules and active overrides always take precedence over
     /// modifier-preserving rules.
     func decision(
         for combination:
