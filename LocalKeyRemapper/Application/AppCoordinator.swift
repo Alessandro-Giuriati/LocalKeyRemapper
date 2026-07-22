@@ -25,6 +25,8 @@ final class AppCoordinator: NSObject {
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
+    private var remappingRulesWindowController:
+        RemappingRulesWindowController?
 
     private var isObservingWorkspaceActivation = false
 
@@ -156,7 +158,17 @@ final class AppCoordinator: NSObject {
     /// The same operation is used at launch, from the menu bar,
     /// and when the user reopens the application from the Dock.
     func showMainWindow() {
+        remappingRulesWindowController?.endActiveCapture()
         getOrCreateMainWindowController().showWindow(nil)
+    }
+
+    /// Shows the one reusable remapping-rules window.
+    ///
+    /// Repeated requests bring the existing window to the front instead of
+    /// creating additional editors or additional rule sessions.
+    func showRemappingRulesWindow() {
+        mainWindowController?.endActiveCapture()
+        getOrCreateRemappingRulesWindowController().showWindow(nil)
     }
 
     /// Checks whether Accessibility permission was granted
@@ -174,7 +186,11 @@ final class AppCoordinator: NSObject {
 
         mainWindowController?
             .prepareForApplicationTermination()
+        remappingRulesWindowController?
+            .prepareForApplicationTermination()
+
         mainWindowController = nil
+        remappingRulesWindowController = nil
 
         globalShortcutController.stop()
         remappingController.disable()
@@ -325,7 +341,6 @@ final class AppCoordinator: NSObject {
             remappingController: remappingController,
             appPreferencesController: appPreferencesController,
             globalShortcutController: globalShortcutController,
-            ruleEditorSession: ruleEditorSession,
             menuBarVisibilityChangeHandler: {
                 [weak self] showsMenuBarIcon in
 
@@ -342,10 +357,67 @@ final class AppCoordinator: NSObject {
 
                 self?.permissionService
                     .openAccessibilitySettings()
-            }
+            },
+            openRemappingRulesHandler: {
+                [weak self] in
+
+                self?.showRemappingRulesWindow()
+            },
+            increaseTextSizeHandler: {
+                [weak self] in
+
+                self?.increaseTextSize()
+            },
+            decreaseTextSizeHandler: {
+                [weak self] in
+
+                self?.decreaseTextSize()
+            },
+            resetTextSizeHandler: {
+                [weak self] in
+
+                self?.resetTextSize()
+            },
+            textScale:
+                InterfaceTextScalePreference.currentScale
         )
 
         mainWindowController = controller
+        return controller
+    }
+
+    private func getOrCreateRemappingRulesWindowController() ->
+        RemappingRulesWindowController
+    {
+        if let remappingRulesWindowController {
+            return remappingRulesWindowController
+        }
+
+        let controller = RemappingRulesWindowController(
+            remappingController: remappingController,
+            appPreferencesController: appPreferencesController,
+            globalShortcutController: globalShortcutController,
+            ruleEditorSession: ruleEditorSession,
+            increaseTextSizeHandler: {
+                [weak self] in
+
+                self?.increaseTextSize()
+            },
+            decreaseTextSizeHandler: {
+                [weak self] in
+
+                self?.decreaseTextSize()
+            },
+            resetTextSizeHandler: {
+                [weak self] in
+
+                self?.resetTextSize()
+            },
+            textScale:
+                InterfaceTextScalePreference.currentScale
+        )
+
+        remappingRulesWindowController = controller
         return controller
     }
 
@@ -415,32 +487,47 @@ final class AppCoordinator: NSObject {
     }
 
     private func increaseTextSize() {
-        let controller = getOrCreateMainWindowController()
-
-        if controller.window?.isVisible != true {
-            controller.showWindow(nil)
-        }
-
-        controller.increaseTextSize()
+        ensureAnApplicationWindowIsVisible()
+        applyTextScaleToExistingWindows(
+            InterfaceTextScalePreference.increase()
+        )
     }
 
     private func decreaseTextSize() {
-        let controller = getOrCreateMainWindowController()
-
-        if controller.window?.isVisible != true {
-            controller.showWindow(nil)
-        }
-
-        controller.decreaseTextSize()
+        ensureAnApplicationWindowIsVisible()
+        applyTextScaleToExistingWindows(
+            InterfaceTextScalePreference.decrease()
+        )
     }
 
     private func resetTextSize() {
-        let controller = getOrCreateMainWindowController()
+        ensureAnApplicationWindowIsVisible()
+        applyTextScaleToExistingWindows(
+            InterfaceTextScalePreference.reset()
+        )
+    }
 
-        if controller.window?.isVisible != true {
-            controller.showWindow(nil)
+    private func ensureAnApplicationWindowIsVisible() {
+        let mainIsVisible =
+            mainWindowController?.window?.isVisible == true
+        let rulesAreVisible =
+            remappingRulesWindowController?.window?.isVisible == true
+
+        guard !mainIsVisible && !rulesAreVisible else {
+            return
         }
 
-        controller.resetTextSize()
+        showMainWindow()
+    }
+
+    private func applyTextScaleToExistingWindows(
+        _ scale: CGFloat
+    ) {
+        mainWindowController?.applyTextScale(
+            scale
+        )
+        remappingRulesWindowController?.applyTextScale(
+            scale
+        )
     }
 }
