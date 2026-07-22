@@ -53,6 +53,49 @@ nonisolated enum KeyboardKeyCatalog {
         makeKey(kVK_ANSI_8, "8"),
         makeKey(kVK_ANSI_9, "9"),
 
+        makeKey(kVK_ANSI_Keypad0, "Keypad 0"),
+        makeKey(kVK_ANSI_Keypad1, "Keypad 1"),
+        makeKey(kVK_ANSI_Keypad2, "Keypad 2"),
+        makeKey(kVK_ANSI_Keypad3, "Keypad 3"),
+        makeKey(kVK_ANSI_Keypad4, "Keypad 4"),
+        makeKey(kVK_ANSI_Keypad5, "Keypad 5"),
+        makeKey(kVK_ANSI_Keypad6, "Keypad 6"),
+        makeKey(kVK_ANSI_Keypad7, "Keypad 7"),
+        makeKey(kVK_ANSI_Keypad8, "Keypad 8"),
+        makeKey(kVK_ANSI_Keypad9, "Keypad 9"),
+        makeKey(
+            kVK_ANSI_KeypadDecimal,
+            "Keypad Decimal"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadMultiply,
+            "Keypad Multiply"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadPlus,
+            "Keypad Plus"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadClear,
+            "Keypad Clear"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadDivide,
+            "Keypad Divide"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadEnter,
+            "Keypad Enter"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadMinus,
+            "Keypad Minus"
+        ),
+        makeKey(
+            kVK_ANSI_KeypadEquals,
+            "Keypad Equals"
+        ),
+
         makeKey(kVK_Space, "Space"),
         makeKey(kVK_Return, "Return"),
         makeKey(kVK_Tab, "Tab"),

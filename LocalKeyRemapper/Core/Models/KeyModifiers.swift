@@ -9,7 +9,7 @@ import CoreGraphics
 
 /// Represents the keyboard modifiers supported by remapping rules.
 ///
-/// Only Shift, Control, Option, and Command are included for now.
+/// Shift, Control, Option, Command, and Fn are represented explicitly.
 /// Other Core Graphics event flags remain untouched when a remapping
 /// changes the supported modifiers.
 nonisolated struct KeyModifiers:
@@ -33,6 +33,10 @@ nonisolated struct KeyModifiers:
 
     static let command = KeyModifiers(
         rawValue: 1 << 3
+    )
+
+    static let fn = KeyModifiers(
+        rawValue: 1 << 4
     )
 
     init(rawValue: UInt8) {
@@ -59,6 +63,10 @@ nonisolated struct KeyModifiers:
             modifiers.insert(.command)
         }
 
+        if eventFlags.contains(.maskSecondaryFn) {
+            modifiers.insert(.fn)
+        }
+
         self = modifiers
     }
 
@@ -82,6 +90,10 @@ nonisolated struct KeyModifiers:
             flags.insert(.maskCommand)
         }
 
+        if contains(.fn) {
+            flags.insert(.maskSecondaryFn)
+        }
+
         return flags
     }
 
@@ -96,6 +108,7 @@ nonisolated struct KeyModifiers:
         updatedFlags.remove(.maskControl)
         updatedFlags.remove(.maskAlternate)
         updatedFlags.remove(.maskCommand)
+        updatedFlags.remove(.maskSecondaryFn)
 
         updatedFlags.formUnion(eventFlags)
 

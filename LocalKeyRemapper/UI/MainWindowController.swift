@@ -16,6 +16,7 @@ import CoreGraphics
 /// keyboard monitor.
 @MainActor
 private final class MainWindow: NSWindow {
+    var flagsChangedHandler: ((NSEvent) -> Void)?
     var keyDownHandler: ((NSEvent) -> Bool)?
     var undoHandler: (() -> Void)?
     var redoHandler: (() -> Void)?
@@ -25,6 +26,10 @@ private final class MainWindow: NSWindow {
     override func sendEvent(
         _ event: NSEvent
     ) {
+        if event.type == .flagsChanged {
+            flagsChangedHandler?(event)
+        }
+
         if event.type == .keyDown,
            keyDownHandler?(event) == true {
             return
@@ -232,6 +237,8 @@ final class MainWindowController:
         GlobalShortcutSettingsView.CaptureField?
     private var exceptionsWindowController:
         RemapOverridesWindowController?
+    private var fnModifierStateTracker =
+        FnModifierStateTracker()
     private var textScale: CGFloat
 
     init(
@@ -303,6 +310,9 @@ final class MainWindowController:
         super.init(window: window)
 
         window.delegate = self
+        window.flagsChangedHandler = { [weak self] event in
+            self?.handleFlagsChanged(event)
+        }
         window.keyDownHandler = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
@@ -1534,8 +1544,37 @@ final class MainWindowController:
     }
 
     private func beginCaptureSession() {
+        fnModifierStateTracker.synchronize(
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
+        )
         remappingController.beginKeyCapture()
         globalShortcutController.beginShortcutCapture()
+    }
+
+    private func handleFlagsChanged(
+        _ event: NSEvent
+    ) {
+        guard
+            captureRow != nil
+                || shortcutCaptureField != nil,
+            event.keyCode
+                == UInt16(
+                    kVK_Function
+                )
+        else {
+            return
+        }
+
+        fnModifierStateTracker.handleFlagsChanged(
+            isPressed:
+                event
+                    .modifierFlags
+                    .contains(
+                        .function
+                    )
+        )
     }
 
     private func handleKeyDown(
@@ -1578,12 +1617,21 @@ final class MainWindowController:
     private func keyCombination(
         from event: NSEvent
     ) -> KeyCombination {
-        KeyCombination(
-            keyCode: CGKeyCode(event.keyCode),
-            modifiers: KeyModifiers(
-                appKitFlags: event.modifierFlags
+        KeyCombinationInputNormalizer
+            .combination(
+                deliveredKeyCode:
+                    CGKeyCode(
+                        event.keyCode
+                    ),
+                modifiers:
+                    KeyModifiers(
+                        appKitFlags:
+                            event.modifierFlags
+                    ),
+                physicalFnIsPressed:
+                    fnModifierStateTracker
+                        .isPressed
             )
-        )
     }
 
     private func endKeyCapture() {
@@ -1791,6 +1839,15 @@ final class MainWindowController:
             return
         }
 
+        if let warning =
+            currentRuleConfigurationWarning
+        {
+            setSuggestion(
+                warning.message
+            )
+            return
+        }
+
         if !hasChanges {
             if ruleEditorSession.savedRules.isEmpty {
                 setStatus(
@@ -1894,6 +1951,24 @@ final class MainWindowController:
         }
     }
 
+    private var currentRuleConfigurationWarning:
+        KeyCombinationConfigurationWarning?
+    {
+        guard
+            let rules =
+                ruleEditorSession
+                    .completeRules
+        else {
+            return nil
+        }
+
+        return KeyCombinationConfigurationWarningPolicy
+            .warning(
+                for:
+                    rules
+            )
+    }
+
     private func setStatus(
         _ message: String,
         isError: Bool
@@ -1901,6 +1976,16 @@ final class MainWindowController:
         statusLabel.stringValue = message
         statusLabel.textColor =
             isError ? .systemRed : .secondaryLabelColor
+    }
+
+    private func setSuggestion(
+        _ message: String
+    ) {
+        statusLabel.stringValue =
+            message
+
+        statusLabel.textColor =
+            .systemOrange
     }
 
     private func setTextScale(

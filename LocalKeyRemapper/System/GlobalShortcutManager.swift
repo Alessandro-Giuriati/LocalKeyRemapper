@@ -534,6 +534,15 @@ final class GlobalShortcutManager:
                 )
         }
 
+        if modifiers.contains(
+            .fn
+        ) {
+            carbonFlags |=
+                UInt32(
+                    kEventKeyModifierFnMask
+                )
+        }
+
         return carbonFlags
     }
 }
