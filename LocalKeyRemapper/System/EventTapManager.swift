@@ -5,6 +5,7 @@
 //  Created by Alessandro Giuriati on 7/15/26.
 //
 
+import Carbon.HIToolbox
 import CoreFoundation
 import CoreGraphics
 
@@ -24,8 +25,9 @@ nonisolated enum EventTapError:
 /// Creates, installs, pauses, resumes, and removes
 /// the keyboard event tap.
 ///
-/// The event tap listens only for key-down and key-up events.
-/// It does not store, log, or transmit keyboard input.
+/// The event tap listens for key-down, key-up, and modifier-state events.
+/// Modifier-state events are used only to track the physical Fn/Globe key.
+/// It does not store, log, persist, or transmit keyboard input.
 @MainActor
 final class EventTapManager:
     EventTapManaging
@@ -58,6 +60,11 @@ final class EventTapManager:
     private var activeDecisions:
         [CGKeyCode: RemapDecision] = [:]
 
+    /// Tracks Fn from ordered modifier events instead of sampling its state
+    /// after a key event has already been delivered.
+    private var fnModifierStateTracker =
+        FnModifierStateTracker()
+
     var isRunning: Bool {
         eventTap != nil &&
         runLoopSource != nil
@@ -80,7 +87,9 @@ final class EventTapManager:
             (CGEventMask(1)
                 << CGEventType.keyDown.rawValue) |
             (CGEventMask(1)
-                << CGEventType.keyUp.rawValue)
+                << CGEventType.keyUp.rawValue) |
+            (CGEventMask(1)
+                << CGEventType.flagsChanged.rawValue)
 
         let userInfo =
             Unmanaged
@@ -143,6 +152,12 @@ final class EventTapManager:
                 true
         )
 
+        fnModifierStateTracker.synchronize(
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
+        )
+
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
             runLoopSource,
@@ -201,6 +216,8 @@ final class EventTapManager:
             keepingCapacity:
                 true
         )
+
+        fnModifierStateTracker.reset()
     }
 
     func pause() {
@@ -226,6 +243,8 @@ final class EventTapManager:
             keepingCapacity:
                 true
         )
+
+        fnModifierStateTracker.reset()
     }
 
     func resume() {
@@ -240,6 +259,12 @@ final class EventTapManager:
         activeDecisions.removeAll(
             keepingCapacity:
                 true
+        )
+
+        fnModifierStateTracker.synchronize(
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
         )
 
         CGEvent.tapEnable(
@@ -302,7 +327,21 @@ final class EventTapManager:
                     true
             )
 
+            fnModifierStateTracker.reset()
+
             scheduleInterruptionNotification()
+
+            return Unmanaged
+                .passUnretained(
+                    event
+                )
+        }
+
+        if eventType == .flagsChanged {
+            updateFnModifierState(
+                from:
+                    event
+            )
 
             return Unmanaged
                 .passUnretained(
@@ -328,15 +367,19 @@ final class EventTapManager:
             )
 
         let sourceCombination =
-            KeyCombination(
-                keyCode:
-                    sourceKeyCode,
-                modifiers:
-                    KeyModifiers(
-                        eventFlags:
-                            event.flags
-                    )
-            )
+            KeyCombinationInputNormalizer
+                .combination(
+                    deliveredKeyCode:
+                        sourceKeyCode,
+                    modifiers:
+                        KeyModifiers(
+                            eventFlags:
+                                event.flags
+                        ),
+                    physicalFnIsPressed:
+                        fnModifierStateTracker
+                            .isPressed
+                )
 
         let decision =
             decisionForEvent(
@@ -360,10 +403,38 @@ final class EventTapManager:
             )
     }
 
-    private func scheduleInterruptionNotification() {
+    private func updateFnModifierState(
+        from event:
+            CGEvent
+    ) {
+        let keyCode =
+            CGKeyCode(
+                event.getIntegerValueField(
+                    .keyboardEventKeycode
+                )
+            )
+
         guard
-            !isInterruptionNotificationPending
+            keyCode
+                == CGKeyCode(
+                    kVK_Function
+                )
         else {
+            return
+        }
+
+        fnModifierStateTracker.handleFlagsChanged(
+            isPressed:
+                event
+                    .flags
+                    .contains(
+                        .maskSecondaryFn
+                    )
+        )
+    }
+
+    private func scheduleInterruptionNotification() {
+        guard !isInterruptionNotificationPending else {
             return
         }
 

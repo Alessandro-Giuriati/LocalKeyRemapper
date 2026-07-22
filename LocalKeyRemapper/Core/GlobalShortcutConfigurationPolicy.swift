@@ -24,6 +24,9 @@ nonisolated enum GlobalShortcutConfigurationError:
 nonisolated enum GlobalShortcutConfigurationSuggestion:
     Equatable
 {
+    /// At least one shortcut combines Fn with F1 through F12.
+    case fnWithFunctionKey
+
     /// At least one shortcut uses exactly one modifier.
     case useAdditionalModifier
 
@@ -31,6 +34,11 @@ nonisolated enum GlobalShortcutConfigurationSuggestion:
         String
     {
         switch self {
+        case .fnWithFunctionKey:
+            return KeyCombinationConfigurationWarning
+                .fnWithFunctionKey
+                .message
+
         case .useAdditionalModifier:
             return "Using only one modifier may conflict with shortcuts in other applications. Two or more modifiers are recommended."
         }
@@ -83,10 +91,31 @@ nonisolated enum GlobalShortcutConfigurationPolicy {
     }
 
     /// Returns non-blocking guidance for a valid configuration.
+    ///
+    /// A specific Fn and function-key warning takes precedence over the
+    /// more general recommendation to use two or more modifiers.
     static func suggestion(
         for configuration:
             RemappingShortcutConfiguration
     ) -> GlobalShortcutConfigurationSuggestion? {
+        let usesFnWithFunctionKey =
+            configuration
+                .registrations
+                .contains {
+                    registration in
+
+                    KeyCombinationConfigurationWarningPolicy
+                        .warning(
+                            for:
+                                registration.shortcut
+                        )
+                        == .fnWithFunctionKey
+                }
+
+        if usesFnWithFunctionKey {
+            return .fnWithFunctionKey
+        }
+
         let usesOneModifier =
             configuration
                 .registrations

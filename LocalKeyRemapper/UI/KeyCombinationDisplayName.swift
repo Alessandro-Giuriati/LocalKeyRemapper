@@ -28,6 +28,13 @@ nonisolated enum KeyCombinationDisplayName {
         var result = ""
 
         if modifiers.contains(
+            .fn
+        ) {
+            result +=
+                "Fn "
+        }
+
+        if modifiers.contains(
             .control
         ) {
             result +=

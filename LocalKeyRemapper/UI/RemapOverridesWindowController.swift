@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 
 /// A sheet that edits the stored exceptions owned by one remapping rule.
@@ -20,6 +21,7 @@ final class RemapOverridesWindowController:
 {
     @MainActor
     private final class CaptureWindow: NSWindow {
+        var flagsChangedHandler: ((NSEvent) -> Void)?
         var keyDownHandler: ((NSEvent) -> Bool)?
         var undoHandler: (() -> Void)?
         var redoHandler: (() -> Void)?
@@ -29,6 +31,10 @@ final class RemapOverridesWindowController:
         override func sendEvent(
             _ event: NSEvent
         ) {
+            if event.type == .flagsChanged {
+                flagsChangedHandler?(event)
+            }
+
             if event.type == .keyDown,
                keyDownHandler?(event) == true {
                 return
@@ -190,6 +196,9 @@ final class RemapOverridesWindowController:
     private var captureField:
         RemapOverrideRowView.KeyField?
 
+    private var fnModifierStateTracker =
+        FnModifierStateTracker()
+
     private var historySnapshots:
         [EditorSnapshot] = []
 
@@ -269,6 +278,14 @@ final class RemapOverridesWindowController:
         )
 
         window.delegate = self
+
+        window.flagsChangedHandler = {
+            [weak self] event in
+
+            self?.handleFlagsChanged(
+                event
+            )
+        }
 
         window.keyDownHandler = {
             [weak self] event in
@@ -1198,6 +1215,12 @@ final class RemapOverridesWindowController:
 
         updateLocalHistoryControls()
 
+        fnModifierStateTracker.synchronize(
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
+        )
+
         remappingController
             .beginKeyCapture()
 
@@ -1228,6 +1251,29 @@ final class RemapOverridesWindowController:
         }
     }
 
+    private func handleFlagsChanged(
+        _ event: NSEvent
+    ) {
+        guard
+            captureRow != nil,
+            event.keyCode
+                == UInt16(
+                    kVK_Function
+                )
+        else {
+            return
+        }
+
+        fnModifierStateTracker.handleFlagsChanged(
+            isPressed:
+                event
+                    .modifierFlags
+                    .contains(
+                        .function
+                    )
+        )
+    }
+
     private func handleKeyDown(
         _ event: NSEvent
     ) -> Bool {
@@ -1239,18 +1285,22 @@ final class RemapOverridesWindowController:
         }
 
         let combination =
-            KeyCombination(
-                keyCode:
-                    CGKeyCode(
-                        event.keyCode
-                    ),
-                modifiers:
-                    KeyModifiers(
-                        appKitFlags:
-                            event
-                                .modifierFlags
-                    )
-            )
+            KeyCombinationInputNormalizer
+                .combination(
+                    deliveredKeyCode:
+                        CGKeyCode(
+                            event.keyCode
+                        ),
+                    modifiers:
+                        KeyModifiers(
+                            appKitFlags:
+                                event
+                                    .modifierFlags
+                        ),
+                    physicalFnIsPressed:
+                        fnModifierStateTracker
+                            .isPressed
+                )
 
         if captureField == .source,
            combination.keyCode
@@ -1683,6 +1733,16 @@ final class RemapOverridesWindowController:
             return
         }
 
+        if let warning =
+            currentExceptionConfigurationWarning
+        {
+            setSuggestion(
+                warning.message
+            )
+
+            return
+        }
+
         if rows.isEmpty {
             setStatus(
                 "No custom exceptions are configured.",
@@ -1783,6 +1843,23 @@ final class RemapOverridesWindowController:
         onClose()
     }
 
+    private var currentExceptionConfigurationWarning:
+        KeyCombinationConfigurationWarning?
+    {
+        guard
+            let overrides =
+                completeOverrides
+        else {
+            return nil
+        }
+
+        return KeyCombinationConfigurationWarningPolicy
+            .warning(
+                for:
+                    overrides
+            )
+    }
+
     private func setStatus(
         _ message: String,
         isError: Bool
@@ -1794,6 +1871,16 @@ final class RemapOverridesWindowController:
             isError
                 ? .systemRed
                 : .secondaryLabelColor
+    }
+
+    private func setSuggestion(
+        _ message: String
+    ) {
+        statusLabel.stringValue =
+            message
+
+        statusLabel.textColor =
+            .systemOrange
     }
 
     private func applyTextScale() {

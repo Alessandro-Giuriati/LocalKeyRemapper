@@ -5,6 +5,8 @@
 //  Created by Alessandro Giuriati on 7/18/26.
 //
 
+import Carbon.HIToolbox
+import CoreGraphics
 import XCTest
 @testable import LocalKeyRemapper
 
@@ -174,5 +176,103 @@ final class GlobalShortcutConfigurationPolicyTests:
                 .duplicateShortcut
             )
         }
+    }
+
+    func testFnWithFunctionKeyProducesSpecificSuggestion() {
+        let configuration =
+            RemappingShortcutConfiguration
+                .toggle(
+                    KeyCombination(
+                        keyCode:
+                            CGKeyCode(
+                                kVK_F6
+                            ),
+                        modifiers: [
+                            .command,
+                            .fn
+                        ]
+                    )
+                )
+
+        XCTAssertEqual(
+            GlobalShortcutConfigurationPolicy
+                .suggestion(
+                    for:
+                        configuration
+                ),
+            .fnWithFunctionKey
+        )
+    }
+
+    func testFnFunctionKeySuggestionTakesPrecedenceOverOneModifierSuggestion() {
+        let configuration =
+            RemappingShortcutConfiguration
+                .toggle(
+                    KeyCombination(
+                        keyCode:
+                            CGKeyCode(
+                                kVK_F6
+                            ),
+                        modifiers: [
+                            .fn
+                        ]
+                    )
+                )
+
+        XCTAssertEqual(
+            GlobalShortcutConfigurationPolicy
+                .suggestion(
+                    for:
+                        configuration
+                ),
+            .fnWithFunctionKey
+        )
+    }
+
+    func testSeparateConfigurationDetectsFnFunctionKeyInEitherShortcut() {
+        let configuration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        KeyCombination(
+                            keyCode:
+                                KeyCode.e,
+                            modifiers: [
+                                .control,
+                                .command
+                            ]
+                        ),
+                    disable:
+                        KeyCombination(
+                            keyCode:
+                                CGKeyCode(
+                                    kVK_F10
+                                ),
+                            modifiers: [
+                                .option,
+                                .fn
+                            ]
+                        )
+                )
+
+        XCTAssertEqual(
+            GlobalShortcutConfigurationPolicy
+                .suggestion(
+                    for:
+                        configuration
+                ),
+            .fnWithFunctionKey
+        )
+    }
+
+    func testFnFunctionKeySuggestionUsesSharedWarningMessage() {
+        XCTAssertEqual(
+            GlobalShortcutConfigurationSuggestion
+                .fnWithFunctionKey
+                .message,
+            KeyCombinationConfigurationWarning
+                .fnWithFunctionKey
+                .message
+        )
     }
 }
