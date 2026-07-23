@@ -35,6 +35,14 @@ private final class MainWindow: NSWindow {
     }
 }
 
+/// Keeps the scrollable Home content anchored to the top-left corner.
+@MainActor
+private final class MainContentFlippedView: NSView {
+    override var isFlipped: Bool {
+        true
+    }
+}
+
 /// Manages application-wide controls and preferences.
 ///
 /// Detailed remapping-rule editing is intentionally owned by
@@ -155,6 +163,16 @@ final class MainWindowController:
     )
 
     private let mainStack = NSStackView()
+    private let contentScrollView = NSScrollView()
+    private let contentDocumentView = MainContentFlippedView()
+
+    private var contentDocumentHeightConstraint:
+        NSLayoutConstraint?
+
+    private var mainStackTopConstraint:
+        NSLayoutConstraint?
+
+    private var isAdjustingWindowFrame = false
 
     private var shortcutCaptureField:
         GlobalShortcutSettingsView.CaptureField?
@@ -224,7 +242,7 @@ final class MainWindowController:
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(
             width: 680,
-            height: 620
+            height: 420
         )
         window.contentMaxSize = NSSize(
             width: 980,
@@ -335,6 +353,8 @@ final class MainWindowController:
         NSApplication.shared.activate(
             ignoringOtherApps: true
         )
+
+        requestWindowResizeToFitContent()
     }
 
     /// Ends local shortcut capture before another window starts its own
@@ -402,16 +422,36 @@ final class MainWindowController:
             textScale
         )
 
-        mainStack.spacing = 18 * textScale
-        remappingControlStack.spacing = 10 * textScale
-        accessibilityPermissionStack.spacing = 8 * textScale
-        launchBehaviorStack.spacing = 6 * textScale
-        rulesSectionStack.spacing = 8 * textScale
-        textSizeStack.spacing = 8 * textScale
-        interfaceStack.spacing = 10 * textScale
+        remappingControlStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for: textScale,
+                minimum: 6,
+                maximum: 12
+            )
+
+        accessibilityPermissionStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for: textScale,
+                minimum: 6,
+                maximum: 12
+            )
+
+        textSizeStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
+
+        applyLayoutMetrics()
 
         window?.contentView?.needsLayout = true
         window?.contentView?.layoutSubtreeIfNeeded()
+
+        requestWindowResizeToFitContent()
     }
 
     /// Compatibility methods retained for direct controller use. The
@@ -471,6 +511,8 @@ final class MainWindowController:
             remappingSwitch.isEnabled = canControlRemapping
             accessibilityPermissionStack.isHidden = true
         }
+
+        requestWindowResizeToFitContent()
     }
 
     /// Updates the checkbox when the preference changes elsewhere, such as
@@ -517,6 +559,16 @@ final class MainWindowController:
         _ notification: Notification
     ) {
         endShortcutCapture()
+    }
+
+    func windowDidResize(
+        _ notification: Notification
+    ) {
+        guard !isAdjustingWindowFrame else {
+            return
+        }
+
+        updateScrollableContentHeight()
     }
 
     private func configureContent() {
@@ -578,24 +630,65 @@ final class MainWindowController:
         interfaceStack.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(mainStack)
+        configureContentScrollView()
+
+        contentDocumentView.addSubview(
+            mainStack
+        )
+
+        contentView.addSubview(
+            contentScrollView
+        )
+
+        let mainStackTopConstraint =
+            mainStack.topAnchor.constraint(
+                equalTo:
+                    contentDocumentView.topAnchor
+            )
+
+        let contentDocumentHeightConstraint =
+            contentDocumentView.heightAnchor.constraint(
+                equalToConstant: 1
+            )
+
+        self.mainStackTopConstraint =
+            mainStackTopConstraint
+
+        self.contentDocumentHeightConstraint =
+            contentDocumentHeightConstraint
 
         NSLayoutConstraint.activate(
             [
-                mainStack.topAnchor.constraint(
-                    equalTo: contentView.topAnchor,
-                    constant: 28
+                contentScrollView.topAnchor.constraint(
+                    equalTo:
+                        contentView.topAnchor
                 ),
+                contentScrollView.leadingAnchor.constraint(
+                    equalTo:
+                        contentView.leadingAnchor
+                ),
+                contentScrollView.trailingAnchor.constraint(
+                    equalTo:
+                        contentView.trailingAnchor
+                ),
+                contentScrollView.bottomAnchor.constraint(
+                    equalTo:
+                        contentView.bottomAnchor
+                ),
+                contentDocumentView.widthAnchor.constraint(
+                    equalTo:
+                        contentScrollView.contentView.widthAnchor
+                ),
+                contentDocumentHeightConstraint,
+                mainStackTopConstraint,
                 mainStack.leadingAnchor.constraint(
-                    equalTo: contentView.leadingAnchor,
+                    equalTo:
+                        contentDocumentView.leadingAnchor,
                     constant: 28
                 ),
                 mainStack.trailingAnchor.constraint(
-                    equalTo: contentView.trailingAnchor,
-                    constant: -28
-                ),
-                mainStack.bottomAnchor.constraint(
-                    lessThanOrEqualTo: contentView.bottomAnchor,
+                    equalTo:
+                        contentDocumentView.trailingAnchor,
                     constant: -28
                 ),
                 remappingControlStack.widthAnchor.constraint(
@@ -621,6 +714,376 @@ final class MainWindowController:
                 )
             ]
         )
+    }
+
+    private func configureContentScrollView() {
+        contentScrollView.hasVerticalScroller = true
+        contentScrollView.autohidesScrollers = true
+        contentScrollView.borderType = .noBorder
+        contentScrollView.drawsBackground = false
+        contentScrollView.documentView = contentDocumentView
+        contentScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        contentDocumentView.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func applyLayoutMetrics() {
+        mainStackTopConstraint?.constant =
+            InterfaceLayoutMetrics.topContentMargin(
+                for: textScale
+            )
+
+        mainStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            ),
+            after: titleLabel
+        )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 9,
+                maximum: 18
+            ),
+            after: descriptionLabel
+        )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                4,
+                for: textScale,
+                minimum: 3,
+                maximum: 7
+            ),
+            after: remappingSectionTitleLabel
+        )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                6,
+                for: textScale,
+                minimum: 4,
+                maximum: 9
+            ),
+            after: remappingSectionDescriptionLabel
+        )
+
+        let sectionSpacing =
+            InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 9,
+                maximum: 18
+            )
+
+        mainStack.setCustomSpacing(
+            sectionSpacing,
+            after: remappingControlStack
+        )
+
+        mainStack.setCustomSpacing(
+            sectionSpacing,
+            after: accessibilityPermissionStack
+        )
+
+        mainStack.setCustomSpacing(
+            sectionSpacing,
+            after: launchBehaviorStack
+        )
+
+        mainStack.setCustomSpacing(
+            sectionSpacing,
+            after: globalShortcutSettingsView
+        )
+
+        mainStack.setCustomSpacing(
+            sectionSpacing,
+            after: rulesSectionStack
+        )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for: textScale,
+                minimum: 6,
+                maximum: 12
+            ),
+            after: interfaceStack
+        )
+
+        launchBehaviorStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            )
+
+        launchBehaviorStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                4,
+                for: textScale,
+                minimum: 3,
+                maximum: 7
+            ),
+            after: launchBehaviorTitleLabel
+        )
+
+        launchBehaviorStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                6,
+                for: textScale,
+                minimum: 4,
+                maximum: 9
+            ),
+            after: launchBehaviorDescriptionLabel
+        )
+
+        rulesSectionStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            )
+
+        rulesSectionStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                4,
+                for: textScale,
+                minimum: 3,
+                maximum: 7
+            ),
+            after: rulesSectionTitleLabel
+        )
+
+        rulesSectionStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                6,
+                for: textScale,
+                minimum: 4,
+                maximum: 9
+            ),
+            after: rulesSectionDescriptionLabel
+        )
+
+        interfaceStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
+
+        interfaceStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            ),
+            after: interfaceSectionTitleLabel
+        )
+    }
+
+    private var bottomContentMargin: CGFloat {
+        InterfaceLayoutMetrics.scaled(
+            15,
+            for: textScale,
+            minimum: 12,
+            maximum: 24
+        )
+    }
+
+    @discardableResult
+    private func updateScrollableContentHeight() -> CGFloat {
+        guard
+            contentDocumentHeightConstraint != nil
+        else {
+            return 0
+        }
+
+        window?.contentView?.layoutSubtreeIfNeeded()
+        contentDocumentView.layoutSubtreeIfNeeded()
+        mainStack.layoutSubtreeIfNeeded()
+
+        let requiredHeight =
+            ceil(
+                InterfaceLayoutMetrics.topContentMargin(
+                    for: textScale
+                )
+                + mainStack.fittingSize.height
+                + bottomContentMargin
+            )
+
+        let viewportHeight =
+            contentScrollView
+                .contentView
+                .bounds
+                .height
+
+        contentDocumentHeightConstraint?.constant =
+            max(
+                requiredHeight,
+                viewportHeight
+            )
+
+        return requiredHeight
+    }
+
+    private func requestWindowResizeToFitContent() {
+        DispatchQueue.main.async {
+            [weak self] in
+
+            self?.resizeWindowToFitContent()
+        }
+    }
+
+    private func resizeWindowToFitContent() {
+        guard
+            let window,
+            let screen =
+                window.screen
+                    ?? NSScreen.main
+        else {
+            return
+        }
+
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let requiredContentHeight =
+            updateScrollableContentHeight()
+
+        guard requiredContentHeight > 0 else {
+            return
+        }
+
+        let currentContentRect =
+            window.contentRect(
+                forFrameRect:
+                    window.frame
+            )
+
+        let desiredFrameRect =
+            window.frameRect(
+                forContentRect:
+                    NSRect(
+                        origin: .zero,
+                        size:
+                            NSSize(
+                                width:
+                                    currentContentRect.width,
+                                height:
+                                    requiredContentHeight
+                            )
+                    )
+            )
+
+        let minimumFrameRect =
+            window.frameRect(
+                forContentRect:
+                    NSRect(
+                        origin: .zero,
+                        size:
+                            window.contentMinSize
+                    )
+            )
+
+        let visibleFrame =
+            screen.visibleFrame
+
+        let targetHeight =
+            min(
+                max(
+                    desiredFrameRect.height,
+                    minimumFrameRect.height
+                ),
+                visibleFrame.height
+            )
+
+        let preservedTop =
+            min(
+                window.frame.maxY,
+                visibleFrame.maxY
+            )
+
+        var targetFrame =
+            window.frame
+
+        targetFrame.size.height =
+            targetHeight
+
+        targetFrame.origin.y =
+            preservedTop - targetHeight
+
+        if targetFrame.minY
+            < visibleFrame.minY
+        {
+            targetFrame.origin.y =
+                visibleFrame.minY
+        }
+
+        if targetFrame.maxY
+            > visibleFrame.maxY
+        {
+            targetFrame.origin.y =
+                visibleFrame.maxY
+                    - targetHeight
+        }
+
+        targetFrame.origin.x =
+            min(
+                max(
+                    targetFrame.origin.x,
+                    visibleFrame.minX
+                ),
+                visibleFrame.maxX
+                    - targetFrame.width
+            )
+
+        isAdjustingWindowFrame = true
+
+        window.setFrame(
+            targetFrame,
+            display: true,
+            animate: false
+        )
+
+        isAdjustingWindowFrame = false
+
+        updateScrollableContentHeight()
+
+        if requiredContentHeight
+            > contentScrollView
+                .contentView
+                .bounds
+                .height
+        {
+            contentScrollView
+                .contentView
+                .scroll(
+                    to: .zero
+                )
+
+            contentScrollView
+                .reflectScrolledClipView(
+                    contentScrollView
+                        .contentView
+                )
+        }
     }
 
     private func configureRemappingSection() {

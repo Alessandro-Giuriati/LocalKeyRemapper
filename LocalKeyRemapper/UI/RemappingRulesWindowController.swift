@@ -111,10 +111,20 @@ final class RemappingRulesWindowController:
         let invalidItemIDs: Set<UUID>
     }
 
+    private enum FilterField: Equatable {
+        case source
+        case destination
+    }
+
     private let remappingController: RemappingSettingsControlling
     private let appPreferencesController: AppPreferencesControlling
     private let globalShortcutController: GlobalShortcutController
     private let ruleEditorSession: RemappingRuleEditorSession
+
+    /// Owns presentation-only sorting and filtering state.
+    private let presentationModel =
+        RemappingRulesPresentationModel()
+
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
     private let resetTextSizeHandler: () -> Void
@@ -128,30 +138,54 @@ final class RemappingRulesWindowController:
 
     private let descriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "Record complete combinations, choose how modifiers behave, and add stored exceptions when needed."
+            "Create, filter, sort, and manage remapping rules and exceptions."
     )
 
     private let confirmRuleRemovalCheckbox = NSButton(
-        checkboxWithTitle: "Confirm before removing rules",
+        checkboxWithTitle: "Confirm rule removal",
         target: nil,
         action: nil
     )
 
-    private let sourceHeader = NSTextField(
-        labelWithString: "Source"
+    private let sourceHeaderButton =
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let destinationHeaderButton =
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let behaviorHeaderButton =
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let exceptionsHeaderButton =
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let sourceFilterControl =
+        KeyCaptureFilterControl(
+            fieldTitle: "Source"
+        )
+
+    private let destinationFilterControl =
+        KeyCaptureFilterControl(
+            fieldTitle: "Destination"
+        )
+
+    private let clearAllFiltersButton = NSButton()
+
+    private let filterSummaryLabel = NSTextField(
+        labelWithString: ""
     )
 
-    private let destinationHeader = NSTextField(
-        labelWithString: "Destination"
-    )
+    private let filterTrailingStack = NSStackView()
 
-    private let behaviorHeader = NSTextField(
-        labelWithString: "Modifier behavior"
-    )
-
-    private let exceptionsHeader = NSTextField(
-        labelWithString: "Exceptions"
-    )
+    private var filterBarView: NSView?
 
     private let rulesScrollView = NSScrollView()
     private let rulesDocumentView = RulesFlippedView()
@@ -172,17 +206,41 @@ final class RemappingRulesWindowController:
     private let increaseTextSizeButton = NSButton()
 
     private let actionsStack = NSStackView()
+
     private let statusLabel = NSTextField(
         wrappingLabelWithString: ""
     )
+
     private let mainStack = NSStackView()
+    private let headerTopRowStack = NSStackView()
+
+    private var mainStackTopConstraint:
+        NSLayoutConstraint?
+
+    private var rulesScrollTopConstraint:
+        NSLayoutConstraint?
+
+    private var rulesScrollBottomConstraint:
+        NSLayoutConstraint?
+
+    private var actionsStatusSpacingConstraint:
+        NSLayoutConstraint?
+
+    private var statusBottomConstraint:
+        NSLayoutConstraint?
 
     private var ruleRows: [RemappingRuleRowView] = []
+
     private var ruleRowsByItemID:
         [UUID: RemappingRuleRowView] = [:]
 
     private var captureRow: RemappingRuleRowView?
-    private var captureField: RemappingRuleRowView.KeyField?
+
+    private var captureField:
+        RemappingRuleRowView.KeyField?
+
+    private var captureFilterField:
+        FilterField?
 
     private var exceptionsWindowController:
         RemapOverridesWindowController?
@@ -202,75 +260,128 @@ final class RemappingRulesWindowController:
         resetTextSizeHandler: @escaping () -> Void,
         textScale: CGFloat? = nil
     ) {
-        self.remappingController = remappingController
-        self.appPreferencesController = appPreferencesController
-        self.globalShortcutController = globalShortcutController
-        self.ruleEditorSession = ruleEditorSession
-        self.increaseTextSizeHandler = increaseTextSizeHandler
-        self.decreaseTextSizeHandler = decreaseTextSizeHandler
-        self.resetTextSizeHandler = resetTextSizeHandler
-        self.textScale = InterfaceTextScalePreference.clamped(
-            textScale ?? InterfaceTextScalePreference.currentScale
-        )
+        self.remappingController =
+            remappingController
 
-        let window = RemappingRulesWindow(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: 1120,
-                height: 760
-            ),
-            styleMask: [
-                .titled,
-                .closable,
-                .miniaturizable,
-                .resizable
-            ],
-            backing: .buffered,
-            defer: false
-        )
+        self.appPreferencesController =
+            appPreferencesController
+
+        self.globalShortcutController =
+            globalShortcutController
+
+        self.ruleEditorSession =
+            ruleEditorSession
+
+        self.increaseTextSizeHandler =
+            increaseTextSizeHandler
+
+        self.decreaseTextSizeHandler =
+            decreaseTextSizeHandler
+
+        self.resetTextSizeHandler =
+            resetTextSizeHandler
+
+        self.textScale =
+            InterfaceTextScalePreference.clamped(
+                textScale
+                    ?? InterfaceTextScalePreference.currentScale
+            )
+
+        let window =
+            RemappingRulesWindow(
+                contentRect:
+                    NSRect(
+                        x: 0,
+                        y: 0,
+                        width: 1120,
+                        height: 760
+                    ),
+                styleMask: [
+                    .titled,
+                    .closable,
+                    .miniaturizable,
+                    .resizable
+                ],
+                backing: .buffered,
+                defer: false
+            )
 
         window.title = "Remapping Rules"
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(
-            width: 960,
-            height: 520
-        )
-        window.contentMaxSize = NSSize(
-            width: 1440,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+
+        window.contentMinSize =
+            NSSize(
+                width: 960,
+                height: 520
+            )
+
+        window.contentMaxSize =
+            NSSize(
+                width: 1440,
+                height:
+                    CGFloat.greatestFiniteMagnitude
+            )
+
         window.center()
 
-        super.init(window: window)
+        super.init(
+            window: window
+        )
 
         window.delegate = self
-        window.flagsChangedHandler = { [weak self] event in
-            self?.handleFlagsChanged(event)
-        }
-        window.keyDownHandler = { [weak self] event in
-            self?.handleKeyDown(event) ?? false
-        }
-        window.undoHandler = { [weak self] in
-            self?.undoRuleEditorChange()
-        }
-        window.redoHandler = { [weak self] in
-            self?.redoRuleEditorChange()
-        }
-        window.canUndoHandler = { [weak self] in
-            self?.canUndoRuleEditorChange ?? false
-        }
-        window.canRedoHandler = { [weak self] in
-            self?.canRedoRuleEditorChange ?? false
+
+        window.flagsChangedHandler = {
+            [weak self] event in
+
+            self?.handleFlagsChanged(
+                event
+            )
         }
 
-        ruleEditorSession.onChange = { [weak self] in
+        window.keyDownHandler = {
+            [weak self] event in
+
+            self?.handleKeyDown(
+                event
+            ) ?? false
+        }
+
+        window.undoHandler = {
+            [weak self] in
+
+            self?.undoRuleEditorChange()
+        }
+
+        window.redoHandler = {
+            [weak self] in
+
+            self?.redoRuleEditorChange()
+        }
+
+        window.canUndoHandler = {
+            [weak self] in
+
+            self?.canUndoRuleEditorChange
+                ?? false
+        }
+
+        window.canRedoHandler = {
+            [weak self] in
+
+            self?.canRedoRuleEditorChange
+                ?? false
+        }
+
+        ruleEditorSession.onChange = {
+            [weak self] in
+
             self?.renderRuleEditor()
         }
 
         configureContent()
         synchronizeRuleRemovalConfirmationPreference()
         initializeRuleEditorSession()
+
         applyTextScale(
             self.textScale
         )
@@ -292,8 +403,14 @@ final class RemappingRulesWindowController:
             renderRuleEditor()
         }
 
-        super.showWindow(sender)
-        window?.makeKeyAndOrderFront(sender)
+        super.showWindow(
+            sender
+        )
+
+        window?.makeKeyAndOrderFront(
+            sender
+        )
+
         NSApplication.shared.activate(
             ignoringOtherApps: true
         )
@@ -307,6 +424,7 @@ final class RemappingRulesWindowController:
 
     func prepareForApplicationTermination() {
         endKeyCapture()
+
         exceptionsWindowController?.close()
         exceptionsWindowController = nil
     }
@@ -314,56 +432,127 @@ final class RemappingRulesWindowController:
     func applyTextScale(
         _ scale: CGFloat
     ) {
-        textScale = InterfaceTextScalePreference.clamped(
-            scale
+        textScale =
+            InterfaceTextScalePreference.clamped(
+                scale
+            )
+
+        titleLabel.font =
+            NSFont.systemFont(
+                ofSize: 22 * textScale,
+                weight: .semibold
+            )
+
+        descriptionLabel.font =
+            NSFont.systemFont(
+                ofSize: 14 * textScale,
+                weight: .regular
+            )
+
+        sourceHeaderButton.applyTextScale(
+            textScale
         )
 
-        titleLabel.font = NSFont.systemFont(
-            ofSize: 22 * textScale,
-            weight: .semibold
-        )
-        descriptionLabel.font = NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
+        destinationHeaderButton.applyTextScale(
+            textScale
         )
 
-        let headerFont = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .medium
-        )
-        sourceHeader.font = headerFont
-        destinationHeader.font = headerFont
-        behaviorHeader.font = headerFont
-        exceptionsHeader.font = headerFont
-
-        let actionFont = NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
-        )
-        confirmRuleRemovalCheckbox.font = actionFont
-        addRuleButton.font = actionFont
-        undoButton.font = actionFont
-        redoButton.font = actionFont
-        saveButton.font = actionFont
-        textSizeLabel.font = actionFont
-        decreaseTextSizeButton.font = actionFont
-        resetTextSizeButton.font = actionFont
-        increaseTextSizeButton.font = actionFont
-        statusLabel.font = NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .regular
+        behaviorHeaderButton.applyTextScale(
+            textScale
         )
 
-        rulesStackView.spacing = 10 * textScale
-        actionsStack.spacing = 12 * textScale
-        mainStack.spacing = 16 * textScale
+        exceptionsHeaderButton.applyTextScale(
+            textScale
+        )
+
+        sourceFilterControl.applyTextScale(
+            textScale
+        )
+
+        destinationFilterControl.applyTextScale(
+            textScale
+        )
+
+        let actionFont =
+            NSFont.systemFont(
+                ofSize: 14 * textScale,
+                weight: .regular
+            )
+
+        confirmRuleRemovalCheckbox.font =
+            actionFont
+
+        addRuleButton.font =
+            actionFont
+
+        undoButton.font =
+            actionFont
+
+        redoButton.font =
+            actionFont
+
+        saveButton.font =
+            actionFont
+
+        textSizeLabel.font =
+            actionFont
+
+        decreaseTextSizeButton.font =
+            actionFont
+
+        resetTextSizeButton.font =
+            actionFont
+
+        increaseTextSizeButton.font =
+            actionFont
+
+        clearAllFiltersButton.font =
+            NSFont.systemFont(
+                ofSize: 13 * textScale,
+                weight: .regular
+            )
+
+        filterSummaryLabel.font =
+            NSFont.systemFont(
+                ofSize: 12 * textScale,
+                weight: .regular
+            )
+
+        statusLabel.font =
+            NSFont.systemFont(
+                ofSize: 13 * textScale,
+                weight: .regular
+            )
+
+        rulesStackView.spacing =
+            InterfaceLayoutMetrics.scaled(
+                10,
+                for: textScale,
+                minimum: 7,
+                maximum: 16
+            )
+
+        actionsStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 8,
+                maximum: 18
+            )
+
+        applyLayoutMetrics()
 
         for row in ruleRows {
-            row.applyTextScale(textScale)
+            row.applyTextScale(
+                textScale
+            )
         }
 
-        window?.contentView?.needsLayout = true
-        window?.contentView?.layoutSubtreeIfNeeded()
+        window?.contentView?.needsLayout =
+            true
+
+        window?.contentView?
+            .layoutSubtreeIfNeeded()
     }
 
     func windowShouldClose(
@@ -371,25 +560,43 @@ final class RemappingRulesWindowController:
     ) -> Bool {
         endKeyCapture()
 
-        guard ruleEditorSession.hasUnsavedChanges else {
+        guard
+            ruleEditorSession
+                .hasUnsavedChanges
+        else {
             return true
         }
 
         let alert = NSAlert()
-        alert.messageText = "Save changes before closing?"
+
+        alert.messageText =
+            "Save changes before closing?"
+
         alert.informativeText =
             "Your remapping rules have been modified."
+
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard Changes")
-        alert.addButton(withTitle: "Cancel")
+
+        alert.addButton(
+            withTitle: "Save"
+        )
+
+        alert.addButton(
+            withTitle: "Discard Changes"
+        )
+
+        alert.addButton(
+            withTitle: "Cancel"
+        )
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             return persistRules()
 
         case .alertSecondButtonReturn:
-            ruleEditorSession.restoreSavedRules()
+            ruleEditorSession
+                .restoreSavedRules()
+
             return true
 
         default:
@@ -405,211 +612,790 @@ final class RemappingRulesWindowController:
     }
 
     private func configureContent() {
-        guard let contentView = window?.contentView else {
+        guard
+            let contentView =
+                window?.contentView
+        else {
             return
         }
 
-        descriptionLabel.textColor = .secondaryLabelColor
-        sourceHeader.textColor = .secondaryLabelColor
-        destinationHeader.textColor = .secondaryLabelColor
-        behaviorHeader.textColor = .secondaryLabelColor
-        exceptionsHeader.textColor = .secondaryLabelColor
+        descriptionLabel.textColor =
+            .secondaryLabelColor
 
+        configureSortHeaderButtons()
+        configureFilterControls()
         configureRuleRemovalConfirmationPreference()
         configureRulesScrollView()
         configureActionButtons()
         configureTextSizeControls()
 
-        let rulesHeaderView = makeRulesHeaderView()
+        let filterBarView =
+            makeFilterBarView()
+
+        self.filterBarView =
+            filterBarView
+
+        let rulesHeaderView =
+            makeRulesHeaderView()
+
+        configureHeaderTopRow()
 
         mainStack.setViews(
             [
-                titleLabel,
+                headerTopRowStack,
                 descriptionLabel,
-                confirmRuleRemovalCheckbox,
+                filterBarView,
                 rulesHeaderView
             ],
             in: .leading
         )
-        mainStack.orientation = .vertical
-        mainStack.alignment = .leading
-        mainStack.translatesAutoresizingMaskIntoConstraints = false
 
-        rulesScrollView.translatesAutoresizingMaskIntoConstraints = false
-        actionsStack.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.orientation =
+            .vertical
 
-        contentView.addSubview(mainStack)
-        contentView.addSubview(rulesScrollView)
-        contentView.addSubview(actionsStack)
-        contentView.addSubview(statusLabel)
+        mainStack.alignment =
+            .leading
+
+        mainStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        headerTopRowStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesScrollView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        actionsStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        contentView.addSubview(
+            mainStack
+        )
+
+        contentView.addSubview(
+            rulesScrollView
+        )
+
+        contentView.addSubview(
+            actionsStack
+        )
+
+        contentView.addSubview(
+            statusLabel
+        )
+
+        let mainStackTopConstraint =
+            mainStack.topAnchor.constraint(
+                equalTo:
+                    contentView.topAnchor
+            )
+
+        let rulesScrollTopConstraint =
+            rulesScrollView.topAnchor.constraint(
+                equalTo:
+                    mainStack.bottomAnchor
+            )
+
+        let rulesScrollBottomConstraint =
+            rulesScrollView.bottomAnchor.constraint(
+                equalTo:
+                    actionsStack.topAnchor
+            )
+
+        let actionsStatusSpacingConstraint =
+            actionsStack.bottomAnchor.constraint(
+                equalTo:
+                    statusLabel.topAnchor
+            )
+
+        let statusBottomConstraint =
+            statusLabel.bottomAnchor.constraint(
+                equalTo:
+                    contentView.bottomAnchor
+            )
+
+        self.mainStackTopConstraint =
+            mainStackTopConstraint
+
+        self.rulesScrollTopConstraint =
+            rulesScrollTopConstraint
+
+        self.rulesScrollBottomConstraint =
+            rulesScrollBottomConstraint
+
+        self.actionsStatusSpacingConstraint =
+            actionsStatusSpacingConstraint
+
+        self.statusBottomConstraint =
+            statusBottomConstraint
 
         NSLayoutConstraint.activate(
             [
-                mainStack.topAnchor.constraint(
-                    equalTo: contentView.topAnchor,
-                    constant: 28
-                ),
+                mainStackTopConstraint,
+
                 mainStack.leadingAnchor.constraint(
-                    equalTo: contentView.leadingAnchor,
+                    equalTo:
+                        contentView.leadingAnchor,
                     constant: 28
                 ),
+
                 mainStack.trailingAnchor.constraint(
-                    equalTo: contentView.trailingAnchor,
+                    equalTo:
+                        contentView.trailingAnchor,
                     constant: -28
+                ),
+
+                headerTopRowStack.widthAnchor.constraint(
+                    equalTo:
+                        mainStack.widthAnchor
+                ),
+
+                filterBarView.widthAnchor.constraint(
+                    equalTo:
+                        mainStack.widthAnchor
                 ),
 
                 rulesHeaderView.widthAnchor.constraint(
-                    equalTo: mainStack.widthAnchor
+                    equalTo:
+                        mainStack.widthAnchor
                 ),
 
-                rulesScrollView.topAnchor.constraint(
-                    equalTo: mainStack.bottomAnchor,
-                    constant: 16
-                ),
+                rulesScrollTopConstraint,
+
                 rulesScrollView.leadingAnchor.constraint(
-                    equalTo: contentView.leadingAnchor,
+                    equalTo:
+                        contentView.leadingAnchor,
                     constant: 28
                 ),
+
                 rulesScrollView.trailingAnchor.constraint(
-                    equalTo: contentView.trailingAnchor,
+                    equalTo:
+                        contentView.trailingAnchor,
                     constant: -28
                 ),
-                rulesScrollView.bottomAnchor.constraint(
-                    equalTo: actionsStack.topAnchor,
-                    constant: -16
-                ),
+
+                rulesScrollBottomConstraint,
 
                 actionsStack.leadingAnchor.constraint(
-                    equalTo: contentView.leadingAnchor,
+                    equalTo:
+                        contentView.leadingAnchor,
                     constant: 28
                 ),
+
                 actionsStack.trailingAnchor.constraint(
-                    equalTo: contentView.trailingAnchor,
+                    equalTo:
+                        contentView.trailingAnchor,
                     constant: -28
                 ),
-                actionsStack.bottomAnchor.constraint(
-                    equalTo: statusLabel.topAnchor,
-                    constant: -8
-                ),
+
+                actionsStatusSpacingConstraint,
 
                 statusLabel.leadingAnchor.constraint(
-                    equalTo: contentView.leadingAnchor,
+                    equalTo:
+                        contentView.leadingAnchor,
                     constant: 28
                 ),
+
                 statusLabel.trailingAnchor.constraint(
-                    equalTo: contentView.trailingAnchor,
+                    equalTo:
+                        contentView.trailingAnchor,
                     constant: -28
                 ),
-                statusLabel.bottomAnchor.constraint(
-                    equalTo: contentView.bottomAnchor,
-                    constant: -28
-                )
+
+                statusBottomConstraint
             ]
         )
+
+        applyLayoutMetrics()
     }
 
-    private func makeRulesHeaderView() -> NSView {
-        let headerView = NSView()
+    private func configureHeaderTopRow() {
+        titleLabel.setContentHuggingPriority(
+            .required,
+            for: .horizontal
+        )
+
+        confirmRuleRemovalCheckbox
+            .setContentHuggingPriority(
+                .required,
+                for: .horizontal
+            )
+
+        let spacer = NSView()
+
+        spacer.setContentHuggingPriority(
+            .defaultLow,
+            for: .horizontal
+        )
+
+        spacer
+            .setContentCompressionResistancePriority(
+                .defaultLow,
+                for: .horizontal
+            )
+
+        headerTopRowStack.setViews(
+            [
+                titleLabel,
+                spacer,
+                confirmRuleRemovalCheckbox
+            ],
+            in: .leading
+        )
+
+        headerTopRowStack.orientation =
+            .horizontal
+
+        headerTopRowStack.alignment =
+            .centerY
+
+        headerTopRowStack.distribution =
+            .fill
+    }
+
+    private func applyLayoutMetrics() {
+        mainStackTopConstraint?.constant =
+            InterfaceLayoutMetrics.topContentMargin(
+                for: textScale
+            )
+
+        mainStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 9
+            ),
+            after: headerTopRowStack
+        )
+
+        mainStack.setCustomSpacing(
+            InterfaceLayoutMetrics.scaled(
+                9,
+                for: textScale,
+                minimum: 7,
+                maximum: 14
+            ),
+            after: descriptionLabel
+        )
+
+        if let filterBarView {
+            mainStack.setCustomSpacing(
+                InterfaceLayoutMetrics.scaled(
+                    6,
+                    for: textScale,
+                    minimum: 4,
+                    maximum: 10
+                ),
+                after: filterBarView
+            )
+        }
+
+        rulesScrollTopConstraint?.constant =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
+
+        rulesScrollBottomConstraint?.constant =
+            -InterfaceLayoutMetrics.scaled(
+                10,
+                for: textScale,
+                minimum: 7,
+                maximum: 15
+            )
+
+        actionsStatusSpacingConstraint?.constant =
+            -InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            )
+
+        statusBottomConstraint?.constant =
+            -InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 9,
+                maximum: 18
+            )
+    }
+
+    private func makeFilterBarView() -> NSView {
+        let filterBarView = NSView()
         let arrowSpacer = NSView()
-        let removeSpacer = NSView()
 
         let views: [NSView] = [
-            sourceHeader,
+            sourceFilterControl,
             arrowSpacer,
-            destinationHeader,
-            behaviorHeader,
-            exceptionsHeader,
-            removeSpacer
+            destinationFilterControl,
+            filterTrailingStack
         ]
 
         for view in views {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            headerView.addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
+            filterBarView.addSubview(
+                view
+            )
         }
 
-        headerView.translatesAutoresizingMaskIntoConstraints = false
+        filterBarView.translatesAutoresizingMaskIntoConstraints =
+            false
 
         NSLayoutConstraint.activate(
             [
-                sourceHeader.leadingAnchor.constraint(
-                    equalTo: headerView.leadingAnchor,
-                    constant: 18
+                sourceFilterControl.leadingAnchor.constraint(
+                    equalTo:
+                        filterBarView.leadingAnchor,
+                    constant: 12
                 ),
-                sourceHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+
+                sourceFilterControl.topAnchor.constraint(
+                    equalTo:
+                        filterBarView.topAnchor
                 ),
-                sourceHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+
+                sourceFilterControl.bottomAnchor.constraint(
+                    equalTo:
+                        filterBarView.bottomAnchor
                 ),
 
                 arrowSpacer.leadingAnchor.constraint(
-                    equalTo: sourceHeader.trailingAnchor,
+                    equalTo:
+                        sourceFilterControl.trailingAnchor,
                     constant: 10
                 ),
+
                 arrowSpacer.widthAnchor.constraint(
                     equalToConstant: 18
                 ),
 
-                destinationHeader.leadingAnchor.constraint(
-                    equalTo: arrowSpacer.trailingAnchor,
+                destinationFilterControl.leadingAnchor.constraint(
+                    equalTo:
+                        arrowSpacer.trailingAnchor,
                     constant: 10
-                ),
-                destinationHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
-                ),
-                destinationHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
                 ),
 
-                behaviorHeader.leadingAnchor.constraint(
-                    equalTo: destinationHeader.trailingAnchor,
+                destinationFilterControl.topAnchor.constraint(
+                    equalTo:
+                        filterBarView.topAnchor
+                ),
+
+                destinationFilterControl.bottomAnchor.constraint(
+                    equalTo:
+                        filterBarView.bottomAnchor
+                ),
+
+                filterTrailingStack.leadingAnchor.constraint(
+                    equalTo:
+                        destinationFilterControl.trailingAnchor,
                     constant: 10
                 ),
-                behaviorHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+
+                filterTrailingStack.trailingAnchor.constraint(
+                    equalTo:
+                        filterBarView.trailingAnchor,
+                    constant: -12
                 ),
-                behaviorHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+
+                filterTrailingStack.centerYAnchor.constraint(
+                    equalTo:
+                        destinationFilterControl.centerYAnchor
                 ),
-                behaviorHeader.widthAnchor.constraint(
+
+                filterTrailingStack.widthAnchor.constraint(
+                    equalToConstant: 386
+                ),
+
+                sourceFilterControl.widthAnchor.constraint(
+                    equalTo:
+                        destinationFilterControl.widthAnchor
+                ),
+
+                sourceFilterControl.widthAnchor.constraint(
+                    greaterThanOrEqualToConstant:
+                        120
+                ),
+
+                filterBarView.heightAnchor.constraint(
+                    greaterThanOrEqualToConstant:
+                        32
+                )
+            ]
+        )
+
+        return filterBarView
+    }
+
+    private func configureFilterControls() {
+        sourceFilterControl.onCaptureRequested = {
+            [weak self] in
+
+            self?.beginFilterKeyCapture(
+                .source
+            )
+        }
+
+        sourceFilterControl.onClearRequested = {
+            [weak self] in
+
+            self?.clearSourceFilter()
+        }
+
+        destinationFilterControl.onCaptureRequested = {
+            [weak self] in
+
+            self?.beginFilterKeyCapture(
+                .destination
+            )
+        }
+
+        destinationFilterControl.onClearRequested = {
+            [weak self] in
+
+            self?.clearDestinationFilter()
+        }
+
+        clearAllFiltersButton.title =
+            "Clear Filters"
+
+        clearAllFiltersButton.image =
+            NSImage(
+                systemSymbolName:
+                    "xmark.circle",
+                accessibilityDescription:
+                    "Clear all filters"
+            )
+
+        clearAllFiltersButton.imagePosition =
+            .imageLeading
+
+        clearAllFiltersButton.bezelStyle =
+            .rounded
+
+        clearAllFiltersButton.target =
+            self
+
+        clearAllFiltersButton.action =
+            #selector(
+                clearAllFilters
+            )
+
+        clearAllFiltersButton.toolTip =
+            "Clear the Source and Destination filters."
+
+        filterSummaryLabel.textColor =
+            .secondaryLabelColor
+
+        filterSummaryLabel.alignment =
+            .right
+
+        filterSummaryLabel.lineBreakMode =
+            .byTruncatingTail
+
+        let flexibleSpacer = NSView()
+
+        flexibleSpacer.setContentHuggingPriority(
+            .defaultLow,
+            for: .horizontal
+        )
+
+        flexibleSpacer
+            .setContentCompressionResistancePriority(
+                .defaultLow,
+                for: .horizontal
+            )
+
+        filterTrailingStack.setViews(
+            [
+                flexibleSpacer,
+                filterSummaryLabel,
+                clearAllFiltersButton
+            ],
+            in: .leading
+        )
+
+        filterTrailingStack.orientation =
+            .horizontal
+
+        filterTrailingStack.alignment =
+            .centerY
+
+        filterTrailingStack.distribution =
+            .fill
+
+        filterTrailingStack.spacing =
+            8
+
+        updateFilterControls()
+    }
+
+    private func updateFilterControls() {
+        sourceFilterControl.setFilterKeyCode(
+            presentationModel.sourceFilterKeyCode
+        )
+
+        destinationFilterControl.setFilterKeyCode(
+            presentationModel.destinationFilterKeyCode
+        )
+
+        clearAllFiltersButton.isHidden =
+            !presentationModel.hasActiveFilters
+    }
+
+    private func updateFilterSummary(
+        visibleCount: Int
+    ) {
+        let totalCount =
+            ruleEditorSession.items.count
+
+        if presentationModel.hasActiveFilters {
+            filterSummaryLabel.stringValue =
+                "\(visibleCount) of \(totalCount) rules"
+        } else {
+            filterSummaryLabel.stringValue =
+                totalCount == 1
+                    ? "1 rule"
+                    : "\(totalCount) rules"
+        }
+    }
+
+    private func beginFilterKeyCapture(
+        _ field: FilterField
+    ) {
+        if captureFilterField == field,
+           captureRow == nil {
+            endKeyCapture()
+            refreshChangeState()
+            return
+        }
+
+        endKeyCapture()
+
+        captureFilterField = field
+
+        beginCaptureSession()
+
+        filterControl(
+            for: field
+        ).showCapturePrompt()
+
+        updateRuleEditorHistoryControls()
+
+        let fieldName =
+            field == .source
+                ? "Source"
+                : "Destination"
+
+        setStatus(
+            "Press a physical key to filter \(fieldName). Modifiers are ignored. Press Escape or click the same filter again to cancel.",
+            isError: false
+        )
+    }
+
+    private func filterControl(
+        for field: FilterField
+    ) -> KeyCaptureFilterControl {
+        switch field {
+        case .source:
+            return sourceFilterControl
+
+        case .destination:
+            return destinationFilterControl
+        }
+    }
+
+    private func clearSourceFilter() {
+        endKeyCapture()
+        presentationModel.clearSourceFilter()
+        renderRuleEditor()
+    }
+
+    private func clearDestinationFilter() {
+        endKeyCapture()
+        presentationModel.clearDestinationFilter()
+        renderRuleEditor()
+    }
+
+    @objc
+    private func clearAllFilters() {
+        endKeyCapture()
+        presentationModel.clearAllFilters()
+        renderRuleEditor()
+    }
+
+    private func makeRulesHeaderView() -> NSView {
+        let headerView =
+            RulesHeaderBackgroundView(
+                frame: .zero
+            )
+
+        let arrowSpacer = NSView()
+        let removeSpacer = NSView()
+
+        let views: [NSView] = [
+            sourceHeaderButton,
+            arrowSpacer,
+            destinationHeaderButton,
+            behaviorHeaderButton,
+            exceptionsHeaderButton,
+            removeSpacer
+        ]
+
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints =
+                false
+
+            headerView.addSubview(
+                view
+            )
+        }
+
+        headerView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        NSLayoutConstraint.activate(
+            [
+                sourceHeaderButton.leadingAnchor.constraint(
+                    equalTo:
+                        headerView.leadingAnchor,
+                    constant: 12
+                ),
+
+                sourceHeaderButton.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 4
+                ),
+
+                sourceHeaderButton.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -4
+                ),
+
+                arrowSpacer.leadingAnchor.constraint(
+                    equalTo:
+                        sourceHeaderButton
+                            .trailingAnchor,
+                    constant: 10
+                ),
+
+                arrowSpacer.widthAnchor.constraint(
+                    equalToConstant: 18
+                ),
+
+                destinationHeaderButton.leadingAnchor.constraint(
+                    equalTo:
+                        arrowSpacer.trailingAnchor,
+                    constant: 10
+                ),
+
+                destinationHeaderButton.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 4
+                ),
+
+                destinationHeaderButton.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -4
+                ),
+
+                behaviorHeaderButton.leadingAnchor.constraint(
+                    equalTo:
+                        destinationHeaderButton
+                            .trailingAnchor,
+                    constant: 10
+                ),
+
+                behaviorHeaderButton.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 4
+                ),
+
+                behaviorHeaderButton.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -4
+                ),
+
+                behaviorHeaderButton.widthAnchor.constraint(
                     equalToConstant: 168
                 ),
 
-                exceptionsHeader.leadingAnchor.constraint(
-                    equalTo: behaviorHeader.trailingAnchor,
+                exceptionsHeaderButton.leadingAnchor.constraint(
+                    equalTo:
+                        behaviorHeaderButton
+                            .trailingAnchor,
                     constant: 10
                 ),
-                exceptionsHeader.topAnchor.constraint(
-                    equalTo: headerView.topAnchor
+
+                exceptionsHeaderButton.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 4
                 ),
-                exceptionsHeader.bottomAnchor.constraint(
-                    equalTo: headerView.bottomAnchor
+
+                exceptionsHeaderButton.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -4
                 ),
-                exceptionsHeader.widthAnchor.constraint(
+
+                exceptionsHeaderButton.widthAnchor.constraint(
                     equalToConstant: 116
                 ),
 
                 removeSpacer.leadingAnchor.constraint(
-                    equalTo: exceptionsHeader.trailingAnchor,
+                    equalTo:
+                        exceptionsHeaderButton
+                            .trailingAnchor,
                     constant: 10
                 ),
+
                 removeSpacer.trailingAnchor.constraint(
-                    equalTo: headerView.trailingAnchor,
-                    constant: -18
+                    equalTo:
+                        headerView.trailingAnchor,
+                    constant: -12
                 ),
+
                 removeSpacer.widthAnchor.constraint(
                     equalToConstant: 82
                 ),
 
-                sourceHeader.widthAnchor.constraint(
-                    equalTo: destinationHeader.widthAnchor
+                sourceHeaderButton.widthAnchor.constraint(
+                    equalTo:
+                        destinationHeaderButton
+                            .widthAnchor
                 ),
-                sourceHeader.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
+
+                sourceHeaderButton.widthAnchor.constraint(
+                    greaterThanOrEqualToConstant:
+                        120
                 ),
+
                 headerView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 20
+                    greaterThanOrEqualToConstant:
+                        34
                 )
             ]
         )
@@ -617,48 +1403,199 @@ final class RemappingRulesWindowController:
         return headerView
     }
 
-    private func configureRuleRemovalConfirmationPreference() {
-        confirmRuleRemovalCheckbox.target = self
-        confirmRuleRemovalCheckbox.action = #selector(
-            ruleRemovalConfirmationPreferenceChanged
+    private func configureSortHeaderButtons() {
+        configureSortHeaderButton(
+            sourceHeaderButton,
+            title: "Source",
+            action: #selector(sortBySource)
         )
+
+        configureSortHeaderButton(
+            destinationHeaderButton,
+            title: "Destination",
+            action:
+                #selector(sortByDestination)
+        )
+
+        configureSortHeaderButton(
+            behaviorHeaderButton,
+            title: "Modifier behavior",
+            action:
+                #selector(sortByModifierBehavior)
+        )
+
+        configureSortHeaderButton(
+            exceptionsHeaderButton,
+            title: "Exceptions",
+            action:
+                #selector(sortByExceptions)
+        )
+
+        updateSortHeaderButtons()
+    }
+
+    private func configureSortHeaderButton(
+        _ button: SortableHeaderButton,
+        title: String,
+        action: Selector
+    ) {
+        button.title = title
+        button.target = self
+        button.action = action
+
+        button.setAccessibilityLabel(
+            "Sort by \(title)"
+        )
+    }
+
+    @objc
+    private func sortBySource() {
+        applySorting(
+            .source
+        )
+    }
+
+    @objc
+    private func sortByDestination() {
+        applySorting(
+            .destination
+        )
+    }
+
+    @objc
+    private func sortByModifierBehavior() {
+        applySorting(
+            .modifierBehavior
+        )
+    }
+
+    @objc
+    private func sortByExceptions() {
+        applySorting(
+            .exceptions
+        )
+    }
+
+    private func applySorting(
+        _ column:
+            RemappingRulesPresentationModel
+                .SortColumn
+    ) {
+        endKeyCapture()
+
+        presentationModel.selectSortColumn(
+            column
+        )
+
+        renderRuleEditor()
+    }
+
+    private func updateSortHeaderButtons() {
+        sourceHeaderButton.setSortState(
+            sortState(
+                for: .source
+            )
+        )
+
+        destinationHeaderButton.setSortState(
+            sortState(
+                for: .destination
+            )
+        )
+
+        behaviorHeaderButton.setSortState(
+            sortState(
+                for: .modifierBehavior
+            )
+        )
+
+        exceptionsHeaderButton.setSortState(
+            sortState(
+                for: .exceptions
+            )
+        )
+    }
+
+    private func sortState(
+        for column:
+            RemappingRulesPresentationModel
+                .SortColumn
+    ) -> SortableHeaderButton.SortState {
+        guard
+            let descriptor =
+                presentationModel.sortDescriptor,
+            descriptor.column == column
+        else {
+            return .none
+        }
+
+        switch descriptor.direction {
+        case .ascending:
+            return .ascending
+
+        case .descending:
+            return .descending
+        }
+    }
+
+    private func configureRuleRemovalConfirmationPreference() {
+        confirmRuleRemovalCheckbox.target =
+            self
+
+        confirmRuleRemovalCheckbox.action =
+            #selector(
+                ruleRemovalConfirmationPreferenceChanged
+            )
+
         confirmRuleRemovalCheckbox.toolTip =
             "Ask for confirmation before removing a remapping rule."
-        confirmRuleRemovalCheckbox.setContentHuggingPriority(
-            .required,
-            for: .vertical
-        )
+
+        confirmRuleRemovalCheckbox
+            .setContentHuggingPriority(
+                .required,
+                for: .vertical
+            )
     }
 
     private func synchronizeRuleRemovalConfirmationPreference() {
         confirmRuleRemovalCheckbox.state =
-            appPreferencesController.preferences.confirmsRuleRemoval
-                ? .on
-                : .off
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
+                    ? .on
+                    : .off
     }
 
     @objc
     private func ruleRemovalConfirmationPreferenceChanged() {
         let previousValue =
-            appPreferencesController.preferences.confirmsRuleRemoval
-        let requestedValue =
-            confirmRuleRemovalCheckbox.state == .on
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
 
-        guard ruleRemovalConfirmationController
-            .shouldApplyPreferenceChange(
-                from: previousValue,
-                to: requestedValue
-            ) else {
+        let requestedValue =
+            confirmRuleRemovalCheckbox.state
+                == .on
+
+        guard
+            ruleRemovalConfirmationController
+                .shouldApplyPreferenceChange(
+                    from: previousValue,
+                    to: requestedValue
+                )
+        else {
             synchronizeRuleRemovalConfirmationPreference()
             return
         }
 
         do {
-            try appPreferencesController.setConfirmsRuleRemoval(
-                requestedValue
-            )
+            try appPreferencesController
+                .setConfirmsRuleRemoval(
+                    requestedValue
+                )
         } catch {
             synchronizeRuleRemovalConfirmationPreference()
+
             setStatus(
                 "The rule removal confirmation preference could not be saved.",
                 isError: true
@@ -667,131 +1604,232 @@ final class RemappingRulesWindowController:
     }
 
     private func configureRulesScrollView() {
-        rulesStackView.orientation = .vertical
-        rulesStackView.alignment = .leading
-        rulesStackView.distribution = .fill
-        rulesStackView.translatesAutoresizingMaskIntoConstraints = false
+        rulesStackView.orientation =
+            .vertical
 
-        rulesFlexibleSpacer.translatesAutoresizingMaskIntoConstraints = false
-        rulesFlexibleSpacer.setContentHuggingPriority(
-            .defaultLow,
-            for: .vertical
-        )
-        rulesFlexibleSpacer.setContentCompressionResistancePriority(
-            .defaultLow,
-            for: .vertical
-        )
+        rulesStackView.alignment =
+            .leading
+
+        rulesStackView.distribution =
+            .fill
+
+        rulesStackView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesFlexibleSpacer.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesFlexibleSpacer
+            .setContentHuggingPriority(
+                .defaultLow,
+                for: .vertical
+            )
+
+        rulesFlexibleSpacer
+            .setContentCompressionResistancePriority(
+                .defaultLow,
+                for: .vertical
+            )
 
         rulesStackView.addArrangedSubview(
             rulesFlexibleSpacer
         )
 
-        rulesDocumentView.translatesAutoresizingMaskIntoConstraints = false
+        rulesDocumentView.translatesAutoresizingMaskIntoConstraints =
+            false
+
         rulesDocumentView.addSubview(
             rulesStackView
         )
 
-        rulesScrollView.hasVerticalScroller = true
-        rulesScrollView.autohidesScrollers = true
-        rulesScrollView.borderType = .bezelBorder
-        rulesScrollView.drawsBackground = false
-        rulesScrollView.documentView = rulesDocumentView
-        rulesScrollView.translatesAutoresizingMaskIntoConstraints = false
-        rulesScrollView.setContentHuggingPriority(
-            .defaultLow,
-            for: .vertical
-        )
-        rulesScrollView.setContentCompressionResistancePriority(
-            .defaultLow,
-            for: .vertical
-        )
+        rulesScrollView.hasVerticalScroller =
+            true
+
+        rulesScrollView.autohidesScrollers =
+            true
+
+        rulesScrollView.borderType =
+            .bezelBorder
+
+        rulesScrollView.drawsBackground =
+            false
+
+        rulesScrollView.documentView =
+            rulesDocumentView
+
+        rulesScrollView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        rulesScrollView
+            .setContentHuggingPriority(
+                .defaultLow,
+                for: .vertical
+            )
+
+        rulesScrollView
+            .setContentCompressionResistancePriority(
+                .defaultLow,
+                for: .vertical
+            )
 
         NSLayoutConstraint.activate(
             [
                 rulesStackView.topAnchor.constraint(
-                    equalTo: rulesDocumentView.topAnchor,
+                    equalTo:
+                        rulesDocumentView.topAnchor,
                     constant: 12
                 ),
+
                 rulesStackView.leadingAnchor.constraint(
-                    equalTo: rulesDocumentView.leadingAnchor,
+                    equalTo:
+                        rulesDocumentView
+                            .leadingAnchor,
                     constant: 12
                 ),
+
                 rulesStackView.trailingAnchor.constraint(
-                    equalTo: rulesDocumentView.trailingAnchor,
+                    equalTo:
+                        rulesDocumentView
+                            .trailingAnchor,
                     constant: -12
                 ),
+
                 rulesStackView.bottomAnchor.constraint(
-                    equalTo: rulesDocumentView.bottomAnchor,
+                    equalTo:
+                        rulesDocumentView
+                            .bottomAnchor,
                     constant: -12
                 ),
 
                 rulesFlexibleSpacer.widthAnchor.constraint(
-                    equalTo: rulesStackView.widthAnchor
+                    equalTo:
+                        rulesStackView.widthAnchor
                 ),
+
                 rulesFlexibleSpacer.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 0
+                    greaterThanOrEqualToConstant:
+                        0
                 ),
 
                 rulesDocumentView.widthAnchor.constraint(
-                    equalTo: rulesScrollView.contentView.widthAnchor
+                    equalTo:
+                        rulesScrollView
+                            .contentView
+                            .widthAnchor
                 ),
+
                 rulesDocumentView.heightAnchor.constraint(
                     greaterThanOrEqualTo:
-                        rulesScrollView.contentView.heightAnchor
+                        rulesScrollView
+                            .contentView
+                            .heightAnchor
                 ),
+
                 rulesScrollView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant: 260
+                    greaterThanOrEqualToConstant:
+                        260
                 )
             ]
         )
     }
 
     private func configureActionButtons() {
-        addRuleButton.title = "Add Rule"
-        addRuleButton.image = NSImage(
-            systemSymbolName: "plus",
-            accessibilityDescription: "Add Rule"
-        )
-        addRuleButton.imagePosition = .imageLeading
-        addRuleButton.bezelStyle = .rounded
-        addRuleButton.target = self
-        addRuleButton.action = #selector(addEmptyRule)
+        addRuleButton.title =
+            "Add Rule"
 
-        undoButton.title = "Undo"
-        undoButton.image = NSImage(
-            systemSymbolName: "arrow.uturn.backward",
-            accessibilityDescription: "Undo"
-        )
-        undoButton.imagePosition = .imageLeading
-        undoButton.bezelStyle = .rounded
-        undoButton.target = self
-        undoButton.action = #selector(undoButtonPressed)
+        addRuleButton.image =
+            NSImage(
+                systemSymbolName: "plus",
+                accessibilityDescription:
+                    "Add Rule"
+            )
+
+        addRuleButton.imagePosition =
+            .imageLeading
+
+        addRuleButton.bezelStyle =
+            .rounded
+
+        addRuleButton.target =
+            self
+
+        addRuleButton.action =
+            #selector(addEmptyRule)
+
+        undoButton.title =
+            "Undo"
+
+        undoButton.image =
+            NSImage(
+                systemSymbolName:
+                    "arrow.uturn.backward",
+                accessibilityDescription:
+                    "Undo"
+            )
+
+        undoButton.imagePosition =
+            .imageLeading
+
+        undoButton.bezelStyle =
+            .rounded
+
+        undoButton.target =
+            self
+
+        undoButton.action =
+            #selector(undoButtonPressed)
+
         undoButton.toolTip =
             "Undo the last rule editor change (Command-Z)."
 
-        redoButton.title = "Redo"
-        redoButton.image = NSImage(
-            systemSymbolName: "arrow.uturn.forward",
-            accessibilityDescription: "Redo"
-        )
-        redoButton.imagePosition = .imageLeading
-        redoButton.bezelStyle = .rounded
-        redoButton.target = self
-        redoButton.action = #selector(redoButtonPressed)
+        redoButton.title =
+            "Redo"
+
+        redoButton.image =
+            NSImage(
+                systemSymbolName:
+                    "arrow.uturn.forward",
+                accessibilityDescription:
+                    "Redo"
+            )
+
+        redoButton.imagePosition =
+            .imageLeading
+
+        redoButton.bezelStyle =
+            .rounded
+
+        redoButton.target =
+            self
+
+        redoButton.action =
+            #selector(redoButtonPressed)
+
         redoButton.toolTip =
             "Redo the last undone rule editor change (Shift-Command-Z)."
 
-        saveButton.title = "Save Rules"
-        saveButton.bezelStyle = .rounded
-        saveButton.keyEquivalent = "\r"
-        saveButton.target = self
-        saveButton.action = #selector(saveRules)
+        saveButton.title =
+            "Save Rules"
+
+        saveButton.bezelStyle =
+            .rounded
+
+        saveButton.keyEquivalent =
+            "\r"
+
+        saveButton.target =
+            self
+
+        saveButton.action =
+            #selector(saveRules)
 
         let spacer = NSView()
+
         spacer.setContentHuggingPriority(
             .defaultLow,
             for: .horizontal
         )
+
         spacer.setContentCompressionResistancePriority(
             .defaultLow,
             for: .horizontal
@@ -811,39 +1849,71 @@ final class RemappingRulesWindowController:
             ],
             in: .leading
         )
-        actionsStack.orientation = .horizontal
-        actionsStack.alignment = .centerY
-        actionsStack.distribution = .fill
-        actionsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        actionsStack.orientation =
+            .horizontal
+
+        actionsStack.alignment =
+            .centerY
+
+        actionsStack.distribution =
+            .fill
+
+        actionsStack.translatesAutoresizingMaskIntoConstraints =
+            false
 
         updateRuleEditorHistoryControls()
     }
 
     private func configureTextSizeControls() {
-        decreaseTextSizeButton.title = "−"
-        decreaseTextSizeButton.bezelStyle = .rounded
-        decreaseTextSizeButton.target = self
-        decreaseTextSizeButton.action = #selector(
-            decreaseTextSizeButtonPressed
-        )
+        decreaseTextSizeButton.title =
+            "−"
+
+        decreaseTextSizeButton.bezelStyle =
+            .rounded
+
+        decreaseTextSizeButton.target =
+            self
+
+        decreaseTextSizeButton.action =
+            #selector(
+                decreaseTextSizeButtonPressed
+            )
+
         decreaseTextSizeButton.toolTip =
             "Decrease application text size."
 
-        resetTextSizeButton.title = "Reset"
-        resetTextSizeButton.bezelStyle = .rounded
-        resetTextSizeButton.target = self
-        resetTextSizeButton.action = #selector(
-            resetTextSizeButtonPressed
-        )
+        resetTextSizeButton.title =
+            "Reset"
+
+        resetTextSizeButton.bezelStyle =
+            .rounded
+
+        resetTextSizeButton.target =
+            self
+
+        resetTextSizeButton.action =
+            #selector(
+                resetTextSizeButtonPressed
+            )
+
         resetTextSizeButton.toolTip =
             "Restore the default application text size."
 
-        increaseTextSizeButton.title = "+"
-        increaseTextSizeButton.bezelStyle = .rounded
-        increaseTextSizeButton.target = self
-        increaseTextSizeButton.action = #selector(
-            increaseTextSizeButtonPressed
-        )
+        increaseTextSizeButton.title =
+            "+"
+
+        increaseTextSizeButton.bezelStyle =
+            .rounded
+
+        increaseTextSizeButton.target =
+            self
+
+        increaseTextSizeButton.action =
+            #selector(
+                increaseTextSizeButtonPressed
+            )
+
         increaseTextSizeButton.toolTip =
             "Increase application text size."
     }
@@ -864,13 +1934,18 @@ final class RemappingRulesWindowController:
     }
 
     private func initializeRuleEditorSession() {
-        guard !ruleEditorSession.isInitialized else {
+        guard
+            !ruleEditorSession.isInitialized
+        else {
             renderRuleEditor()
             return
         }
 
         do {
-            let rules = try remappingController.loadConfiguredRules()
+            let rules =
+                try remappingController
+                    .loadConfiguredRules()
+
             ruleEditorSession.initialize(
                 with: rules
             )
@@ -878,11 +1953,14 @@ final class RemappingRulesWindowController:
             ruleEditorSession.initialize(
                 with: []
             )
+
             setStatus(
                 "The configured rules could not be loaded.",
                 isError: true
             )
-            saveButton.isEnabled = false
+
+            saveButton.isEnabled =
+                false
         }
     }
 
@@ -892,25 +1970,43 @@ final class RemappingRulesWindowController:
     private func renderRuleEditor() {
         endKeyCapture()
         removeAllRuleRows()
+        updateSortHeaderButtons()
+        updateFilterControls()
 
-        for item in ruleEditorSession.items {
+        let visibleItems =
+            presentationModel.visibleItems(
+                from:
+                    ruleEditorSession.items
+            )
+
+        updateFilterSummary(
+            visibleCount:
+                visibleItems.count
+        )
+
+        for item in visibleItems {
             addRuleRow(
                 item: item
             )
         }
 
         refreshChangeState()
-        window?.contentView?.needsLayout = true
+
+        window?.contentView?.needsLayout =
+            true
     }
 
     private func addRuleRow(
         item: RemappingRuleEditorItem
     ) {
-        let row = RemappingRuleRowView(
-            item: item
-        )
+        let row =
+            RemappingRuleRowView(
+                item: item
+            )
 
-        row.applyTextScale(textScale)
+        row.applyTextScale(
+            textScale
+        )
 
         row.onSourceKeyRequested = {
             [weak self, weak row] in
@@ -965,26 +2061,39 @@ final class RemappingRulesWindowController:
         row.onRuleChanged = {
             [weak self] updatedItem in
 
-            self?.ruleEditorSession.updateItem(
-                updatedItem
-            )
+            self?.ruleEditorSession
+                .updateItem(
+                    updatedItem
+                )
         }
 
-        ruleRows.append(row)
-        ruleRowsByItemID[item.id] = row
-
-        let insertionIndex = max(
-            rulesStackView.arrangedSubviews.count - 1,
-            0
+        ruleRows.append(
+            row
         )
+
+        ruleRowsByItemID[
+            item.id
+        ] = row
+
+        let insertionIndex =
+            max(
+                rulesStackView
+                    .arrangedSubviews
+                    .count - 1,
+                0
+            )
 
         rulesStackView.insertArrangedSubview(
             row,
             at: insertionIndex
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
+
+        row.translatesAutoresizingMaskIntoConstraints =
+            false
+
         row.widthAnchor.constraint(
-            equalTo: rulesStackView.widthAnchor
+            equalTo:
+                rulesStackView.widthAnchor
         ).isActive = true
     }
 
@@ -993,42 +2102,58 @@ final class RemappingRulesWindowController:
     ) {
         endKeyCapture()
 
-        guard exceptionsWindowController == nil,
-              let parentWindow = window,
-              let rule = row.rule else {
+        guard
+            exceptionsWindowController == nil,
+            let parentWindow = window,
+            let rule = row.rule
+        else {
             return
         }
 
-        let editorItemID = row.editorItemID
+        let editorItemID =
+            row.editorItemID
 
-        let controller = RemapOverridesWindowController(
-            parentWindow: parentWindow,
-            rule: rule,
-            remappingController: remappingController,
-            textScale: textScale,
-            validateCandidateOverrides: {
-                [weak self] candidateOverrides in
+        let controller =
+            RemapOverridesWindowController(
+                parentWindow:
+                    parentWindow,
+                rule:
+                    rule,
+                remappingController:
+                    remappingController,
+                textScale:
+                    textScale,
+                validateCandidateOverrides: {
+                    [weak self] candidateOverrides in
 
-                self?.validateCandidateOverrides(
-                    candidateOverrides,
-                    replacingOverridesFor: editorItemID
-                )
-            },
-            onSave: {
-                [weak row] overrides in
+                    self?.validateCandidateOverrides(
+                        candidateOverrides,
+                        replacingOverridesFor:
+                            editorItemID
+                    )
+                },
+                onSave: {
+                    [weak row] overrides in
 
-                row?.setOverrides(overrides)
-            },
-            onClose: {
-                [weak self] in
+                    row?.setOverrides(
+                        overrides
+                    )
+                },
+                onClose: {
+                    [weak self] in
 
-                self?.exceptionsWindowController = nil
-                self?.updateRuleEditorHistoryControls()
-            }
-        )
+                    self?.exceptionsWindowController =
+                        nil
 
-        exceptionsWindowController = controller
+                    self?.updateRuleEditorHistoryControls()
+                }
+            )
+
+        exceptionsWindowController =
+            controller
+
         updateRuleEditorHistoryControls()
+
         controller.showAsSheet()
     }
 
@@ -1036,31 +2161,45 @@ final class RemappingRulesWindowController:
         _ candidateOverrides: [RemapOverride],
         replacingOverridesFor editorItemID: UUID
     ) -> String? {
-        var replacedTargetItem = false
+        var replacedTargetItem =
+            false
 
-        let candidateRules = ruleEditorSession.items.compactMap {
-            item -> RemapRule? in
+        let candidateRules =
+            ruleEditorSession
+                .items
+                .compactMap {
+                    item -> RemapRule? in
 
-            var candidateItem = item
+                    var candidateItem =
+                        item
 
-            if candidateItem.id == editorItemID {
-                candidateItem.overrides = candidateOverrides
-                replacedTargetItem = true
-            }
+                    if candidateItem.id
+                        == editorItemID
+                    {
+                        candidateItem.overrides =
+                            candidateOverrides
 
-            return candidateItem.rule
-        }
+                        replacedTargetItem =
+                            true
+                    }
+
+                    return candidateItem.rule
+                }
 
         guard replacedTargetItem else {
             return "The parent remapping rule is no longer available."
         }
 
         do {
-            try RemappingRulesValidator().validate(
-                candidateRules
-            )
+            try RemappingRulesValidator()
+                .validate(
+                    candidateRules
+                )
+
             return nil
-        } catch let error as RemappingRulesValidationError {
+        } catch let error
+            as RemappingRulesValidationError
+        {
             return candidateOverrideValidationMessage(
                 for: error
             )
@@ -1070,7 +2209,8 @@ final class RemappingRulesWindowController:
     }
 
     private func candidateOverrideValidationMessage(
-        for error: RemappingRulesValidationError
+        for error:
+            RemappingRulesValidationError
     ) -> String {
         switch error {
         case .duplicateSourceKey,
@@ -1098,13 +2238,17 @@ final class RemappingRulesWindowController:
     private func scrollToRuleRow(
         _ row: RemappingRuleRowView
     ) {
-        rulesDocumentView.layoutSubtreeIfNeeded()
-        rulesStackView.layoutSubtreeIfNeeded()
+        rulesDocumentView
+            .layoutSubtreeIfNeeded()
 
-        let visibleRect = row.convert(
-            row.bounds,
-            to: rulesDocumentView
-        )
+        rulesStackView
+            .layoutSubtreeIfNeeded()
+
+        let visibleRect =
+            row.convert(
+                row.bounds,
+                to: rulesDocumentView
+            )
 
         rulesDocumentView.scrollToVisible(
             visibleRect
@@ -1115,11 +2259,17 @@ final class RemappingRulesWindowController:
         _ row: RemappingRuleRowView
     ) {
         let confirmationRequired =
-            appPreferencesController.preferences.confirmsRuleRemoval
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
 
-        guard ruleRemovalConfirmationController.shouldRemoveRule(
-            confirmationRequired: confirmationRequired
-        ) else {
+        guard
+            ruleRemovalConfirmationController
+                .shouldRemoveRule(
+                    confirmationRequired:
+                        confirmationRequired
+                )
+        else {
             return
         }
 
@@ -1134,7 +2284,11 @@ final class RemappingRulesWindowController:
 
     private func removeAllRuleRows() {
         for row in ruleRows {
-            rulesStackView.removeArrangedSubview(row)
+            rulesStackView
+                .removeArrangedSubview(
+                    row
+                )
+
             row.removeFromSuperview()
         }
 
@@ -1144,16 +2298,27 @@ final class RemappingRulesWindowController:
 
     @objc
     private func addEmptyRule() {
-        let itemID = ruleEditorSession.insertEmptyItem()
+        if presentationModel.hasActiveFilters {
+            presentationModel.clearAllFilters()
+        }
 
-        if let row = ruleRowsByItemID[itemID] {
-            scrollToRuleRow(row)
+        let itemID =
+            ruleEditorSession
+                .insertEmptyItem()
+
+        if let row =
+            ruleRowsByItemID[itemID]
+        {
+            scrollToRuleRow(
+                row
+            )
         }
     }
 
     private func beginRuleKeyCapture(
         in row: RemappingRuleRowView,
-        field: RemappingRuleRowView.KeyField
+        field:
+            RemappingRuleRowView.KeyField
     ) {
         if captureRow === row,
            captureField == field {
@@ -1163,15 +2328,21 @@ final class RemappingRulesWindowController:
         }
 
         endKeyCapture()
+
         captureRow = row
         captureField = field
+
         beginCaptureSession()
+
         row.showCapturePrompt(
             for: field
         )
+
         updateRuleEditorHistoryControls()
 
-        if row.matchingMode == .preserveModifiers {
+        if row.matchingMode
+            == .preserveModifiers
+        {
             setStatus(
                 "Press a physical key. Modifiers are ignored in Preserve Modifiers mode. Click the same field again to cancel.",
                 isError: false
@@ -1186,76 +2357,142 @@ final class RemappingRulesWindowController:
 
     private func beginCaptureSession() {
         fnModifierStateTracker.synchronize(
-            isPressed: PhysicalFnKeyState.isPressed()
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
         )
-        remappingController.beginKeyCapture()
-        globalShortcutController.beginShortcutCapture()
+
+        remappingController
+            .beginKeyCapture()
+
+        globalShortcutController
+            .beginShortcutCapture()
     }
 
     private func handleFlagsChanged(
         _ event: NSEvent
     ) {
-        guard captureRow != nil,
-              event.keyCode == UInt16(kVK_Function) else {
+        guard
+            isCapturingAnyKey,
+            event.keyCode
+                == UInt16(kVK_Function)
+        else {
             return
         }
 
-        fnModifierStateTracker.handleFlagsChanged(
-            isPressed:
-                event.modifierFlags.contains(.function)
-        )
+        fnModifierStateTracker
+            .handleFlagsChanged(
+                isPressed:
+                    event
+                        .modifierFlags
+                        .contains(
+                            .function
+                        )
+            )
     }
 
     private func handleKeyDown(
         _ event: NSEvent
     ) -> Bool {
-        guard let captureRow,
-              let captureField else {
+        guard isCapturingAnyKey else {
             return false
         }
 
-        if event.keyCode == UInt16(kVK_Escape) {
+        if event.keyCode
+            == UInt16(kVK_Escape)
+        {
             endKeyCapture()
             refreshChangeState()
+
             return true
         }
 
-        let combination = keyCombination(
-            from: event
-        )
+        let combination =
+            keyCombination(
+                from: event
+            )
+
+        if let captureFilterField {
+            switch captureFilterField {
+            case .source:
+                presentationModel.setSourceFilter(
+                    combination
+                )
+
+            case .destination:
+                presentationModel.setDestinationFilter(
+                    combination
+                )
+            }
+
+            endKeyCapture()
+            renderRuleEditor()
+
+            return true
+        }
+
+        guard
+            let captureRow,
+            let captureField
+        else {
+            endKeyCapture()
+            return true
+        }
+
         captureRow.setCombination(
             combination,
             for: captureField
         )
+
         endKeyCapture()
         refreshChangeState()
+
         return true
     }
 
     private func keyCombination(
         from event: NSEvent
     ) -> KeyCombination {
-        KeyCombinationInputNormalizer.combination(
-            deliveredKeyCode: CGKeyCode(event.keyCode),
-            modifiers: KeyModifiers(
-                appKitFlags: event.modifierFlags
-            ),
-            physicalFnIsPressed:
-                fnModifierStateTracker.isPressed
-        )
+        KeyCombinationInputNormalizer
+            .combination(
+                deliveredKeyCode:
+                    CGKeyCode(
+                        event.keyCode
+                    ),
+                modifiers:
+                    KeyModifiers(
+                        appKitFlags:
+                            event
+                                .modifierFlags
+                    ),
+                physicalFnIsPressed:
+                    fnModifierStateTracker
+                        .isPressed
+            )
+    }
+
+    private var isCapturingAnyKey: Bool {
+        captureRow != nil
+            || captureFilterField != nil
     }
 
     private func endKeyCapture() {
-        guard captureRow != nil else {
+        guard isCapturingAnyKey else {
             return
         }
 
-        captureRow?.restoreButtonTitles()
+        captureRow?
+            .restoreButtonTitles()
+
         captureRow = nil
         captureField = nil
+        captureFilterField = nil
+
+        updateFilterControls()
 
         do {
-            try globalShortcutController.endShortcutCapture()
+            try globalShortcutController
+                .endShortcutCapture()
         } catch {
             setStatus(
                 "The previous global shortcut could not be restored after key capture.",
@@ -1263,19 +2500,27 @@ final class RemappingRulesWindowController:
             )
         }
 
-        remappingController.endKeyCapture()
-        fnModifierStateTracker.reset()
+        remappingController
+            .endKeyCapture()
+
+        fnModifierStateTracker
+            .reset()
+
         updateRuleEditorHistoryControls()
     }
 
-    private var canUndoRuleEditorChange: Bool {
-        captureRow == nil
+    private var canUndoRuleEditorChange:
+        Bool
+    {
+        !isCapturingAnyKey
             && exceptionsWindowController == nil
             && ruleEditorSession.canUndo
     }
 
-    private var canRedoRuleEditorChange: Bool {
-        captureRow == nil
+    private var canRedoRuleEditorChange:
+        Bool
+    {
+        !isCapturingAnyKey
             && exceptionsWindowController == nil
             && ruleEditorSession.canRedo
     }
@@ -1291,7 +2536,9 @@ final class RemappingRulesWindowController:
     }
 
     private func undoRuleEditorChange() {
-        guard canUndoRuleEditorChange else {
+        guard
+            canUndoRuleEditorChange
+        else {
             return
         }
 
@@ -1299,7 +2546,9 @@ final class RemappingRulesWindowController:
     }
 
     private func redoRuleEditorChange() {
-        guard canRedoRuleEditorChange else {
+        guard
+            canRedoRuleEditorChange
+        else {
             return
         }
 
@@ -1307,22 +2556,45 @@ final class RemappingRulesWindowController:
     }
 
     private func updateRuleEditorHistoryControls() {
-        undoButton.isEnabled = canUndoRuleEditorChange
-        redoButton.isEnabled = canRedoRuleEditorChange
+        undoButton.isEnabled =
+            canUndoRuleEditorChange
+
+        redoButton.isEnabled =
+            canRedoRuleEditorChange
     }
 
-    private func validationSnapshot() -> ValidationSnapshot {
-        var invalidItemIDs = Set<UUID>()
-        var exactOwners: [KeyCombination: [UUID]] = [:]
-        var preservingOwners: [CGKeyCode: [UUID]] = [:]
-        var hasIncompleteRule = false
-        var hasIdentityRule = false
-        var hasDuplicateSource = false
+    private func validationSnapshot()
+        -> ValidationSnapshot
+    {
+        var invalidItemIDs =
+            Set<UUID>()
+
+        var exactOwners:
+            [KeyCombination: [UUID]] = [:]
+
+        var preservingOwners:
+            [CGKeyCode: [UUID]] = [:]
+
+        var hasIncompleteRule =
+            false
+
+        var hasIdentityRule =
+            false
+
+        var hasDuplicateSource =
+            false
 
         for item in ruleEditorSession.items {
-            guard let rule = item.rule else {
-                hasIncompleteRule = true
-                invalidItemIDs.insert(item.id)
+            guard
+                let rule = item.rule
+            else {
+                hasIncompleteRule =
+                    true
+
+                invalidItemIDs.insert(
+                    item.id
+                )
+
                 continue
             }
 
@@ -1331,24 +2603,38 @@ final class RemappingRulesWindowController:
                 exactOwners[
                     rule.source,
                     default: []
-                ].append(item.id)
+                ].append(
+                    item.id
+                )
 
-                if rule.source == rule.destination {
-                    hasIdentityRule = true
-                    invalidItemIDs.insert(item.id)
+                if rule.source
+                    == rule.destination
+                {
+                    hasIdentityRule =
+                        true
+
+                    invalidItemIDs.insert(
+                        item.id
+                    )
                 }
 
             case .preserveModifiers:
                 preservingOwners[
                     rule.source.keyCode,
                     default: []
-                ].append(item.id)
+                ].append(
+                    item.id
+                )
 
                 if rule.source.keyCode
                     == rule.destination.keyCode
                 {
-                    hasIdentityRule = true
-                    invalidItemIDs.insert(item.id)
+                    hasIdentityRule =
+                        true
+
+                    invalidItemIDs.insert(
+                        item.id
+                    )
                 }
 
                 for override in rule.overrides
@@ -1356,13 +2642,22 @@ final class RemappingRulesWindowController:
                     exactOwners[
                         override.source,
                         default: []
-                    ].append(item.id)
+                    ].append(
+                        item.id
+                    )
 
-                    if case .replaceWith(let destination) =
-                        override.action,
-                       override.source == destination {
-                        hasIdentityRule = true
-                        invalidItemIDs.insert(item.id)
+                    if case .replaceWith(
+                        let destination
+                    ) = override.action,
+                       override.source
+                        == destination
+                    {
+                        hasIdentityRule =
+                            true
+
+                        invalidItemIDs.insert(
+                            item.id
+                        )
                     }
                 }
             }
@@ -1370,22 +2665,32 @@ final class RemappingRulesWindowController:
 
         for owners in exactOwners.values
         where owners.count > 1 {
-            hasDuplicateSource = true
-            invalidItemIDs.formUnion(owners)
+            hasDuplicateSource =
+                true
+
+            invalidItemIDs.formUnion(
+                owners
+            )
         }
 
         for owners in preservingOwners.values
         where owners.count > 1 {
-            hasDuplicateSource = true
-            invalidItemIDs.formUnion(owners)
+            hasDuplicateSource =
+                true
+
+            invalidItemIDs.formUnion(
+                owners
+            )
         }
 
-        let issue: EditorValidationIssue?
+        let issue:
+            EditorValidationIssue?
 
         if hasDuplicateSource {
             issue = .duplicateSource
         } else if hasIdentityRule {
-            issue = .identicalSourceAndDestination
+            issue =
+                .identicalSourceAndDestination
         } else if hasIncompleteRule {
             issue = .incompleteRule
         } else {
@@ -1394,47 +2699,72 @@ final class RemappingRulesWindowController:
 
         return ValidationSnapshot(
             issue: issue,
-            invalidItemIDs: invalidItemIDs
+            invalidItemIDs:
+                invalidItemIDs
         )
     }
 
     private func applyValidationAppearance(
         _ snapshot: ValidationSnapshot
     ) {
-        for (itemID, row) in ruleRowsByItemID {
+        for (
+            itemID,
+            row
+        ) in ruleRowsByItemID {
             row.setValidationErrorVisible(
-                snapshot.invalidItemIDs.contains(itemID)
+                snapshot
+                    .invalidItemIDs
+                    .contains(
+                        itemID
+                    )
             )
         }
     }
 
     private func refreshChangeState() {
-        let snapshot = validationSnapshot()
-        applyValidationAppearance(snapshot)
+        let snapshot =
+            validationSnapshot()
+
+        applyValidationAppearance(
+            snapshot
+        )
+
         updateRuleEditorHistoryControls()
 
         let hasChanges =
-            ruleEditorSession.hasUnsavedChanges
-        saveButton.isEnabled =
-            snapshot.issue == nil && hasChanges
+            ruleEditorSession
+                .hasUnsavedChanges
 
-        if let issue = snapshot.issue {
+        saveButton.isEnabled =
+            snapshot.issue == nil
+                && hasChanges
+
+        if let issue =
+            snapshot.issue
+        {
             setStatus(
                 issue.message,
                 isError: true
             )
+
             return
         }
 
-        if let warning = currentRuleConfigurationWarning {
+        if let warning =
+            currentRuleConfigurationWarning
+        {
             setSuggestion(
                 warning.message
             )
+
             return
         }
 
         if !hasChanges {
-            if ruleEditorSession.savedRules.isEmpty {
+            if ruleEditorSession
+                .savedRules
+                .isEmpty
+            {
                 setStatus(
                     "No remapping rules are configured.",
                     isError: false
@@ -1445,6 +2775,7 @@ final class RemappingRulesWindowController:
                     isError: false
                 )
             }
+
             return
         }
 
@@ -1461,35 +2792,54 @@ final class RemappingRulesWindowController:
 
     @discardableResult
     private func persistRules() -> Bool {
-        let snapshot = validationSnapshot()
-        applyValidationAppearance(snapshot)
+        let snapshot =
+            validationSnapshot()
 
-        if let issue = snapshot.issue {
+        applyValidationAppearance(
+            snapshot
+        )
+
+        if let issue =
+            snapshot.issue
+        {
             setStatus(
                 issue.message,
                 isError: true
             )
+
             return false
         }
 
-        guard let rules = ruleEditorSession.completeRules else {
+        guard
+            let rules =
+                ruleEditorSession
+                    .completeRules
+        else {
             setStatus(
                 "Complete every highlighted rule before saving.",
                 isError: true
             )
+
             return false
         }
 
         do {
-            try remappingController.replaceConfiguredRules(
-                rules
-            )
-            ruleEditorSession.markCurrentRulesAsSaved(
-                rules
-            )
+            try remappingController
+                .replaceConfiguredRules(
+                    rules
+                )
+
+            ruleEditorSession
+                .markCurrentRulesAsSaved(
+                    rules
+                )
+
             refreshChangeState()
+
             return true
-        } catch let error as RemappingRulesValidationError {
+        } catch let error
+            as RemappingRulesValidationError
+        {
             switch error {
             case .duplicateSourceKey,
                  .duplicateSourceCombination,
@@ -1531,6 +2881,7 @@ final class RemappingRulesWindowController:
                 "The remapping rules could not be saved.",
                 isError: true
             )
+
             return false
         }
     }
@@ -1538,28 +2889,41 @@ final class RemappingRulesWindowController:
     private var currentRuleConfigurationWarning:
         KeyCombinationConfigurationWarning?
     {
-        guard let rules = ruleEditorSession.completeRules else {
+        guard
+            let rules =
+                ruleEditorSession
+                    .completeRules
+        else {
             return nil
         }
 
-        return KeyCombinationConfigurationWarningPolicy.warning(
-            for: rules
-        )
+        return
+            KeyCombinationConfigurationWarningPolicy
+                .warning(
+                    for: rules
+                )
     }
 
     private func setStatus(
         _ message: String,
         isError: Bool
     ) {
-        statusLabel.stringValue = message
+        statusLabel.stringValue =
+            message
+
         statusLabel.textColor =
-            isError ? .systemRed : .secondaryLabelColor
+            isError
+                ? .systemRed
+                : .secondaryLabelColor
     }
 
     private func setSuggestion(
         _ message: String
     ) {
-        statusLabel.stringValue = message
-        statusLabel.textColor = .systemOrange
+        statusLabel.stringValue =
+            message
+
+        statusLabel.textColor =
+            .systemOrange
     }
 }

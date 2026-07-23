@@ -654,6 +654,16 @@ final class RemappingRuleRowView: NSView {
 
         arrowLabel.alignment = .center
 
+        arrowLabel.setContentHuggingPriority(
+            .required,
+            for: .horizontal
+        )
+
+        arrowLabel.setContentCompressionResistancePriority(
+            .required,
+            for: .horizontal
+        )
+
         configureBehaviorMenu()
 
         behaviorPopUpButton.toolTip =
@@ -732,10 +742,6 @@ final class RemappingRuleRowView: NSView {
                     equalTo:
                         sourceKeyButton
                             .centerYAnchor
-                ),
-
-                arrowLabel.widthAnchor.constraint(
-                    equalToConstant: 18
                 ),
 
                 destinationKeyButton.leadingAnchor.constraint(
