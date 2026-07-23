@@ -403,10 +403,21 @@ final class RemappingRuleRowView: NSView {
         )
 
     private let exceptionsButton = NSButton()
+
+    private let warningIndicatorImageView =
+        NSImageView()
+
     private let removeButton = NSButton()
 
-    private var rowHeightConstraint: NSLayoutConstraint?
-    private var isShowingValidationError = false
+    private var rowHeightConstraint:
+        NSLayoutConstraint?
+
+    private var isShowingValidationError =
+        false
+
+    private var configurationWarning:
+        KeyCombinationConfigurationWarning?
+
     private var textScale: CGFloat = 1.0
 
     let editorItemID: UUID
@@ -415,6 +426,12 @@ final class RemappingRuleRowView: NSView {
     private(set) var destinationCombination: KeyCombination?
     private(set) var matchingMode: RemapMatchingMode
     private(set) var overrides: [RemapOverride]
+
+    private var rememberedExactSourceCombination:
+        KeyCombination?
+
+    private var rememberedExactDestinationCombination:
+        KeyCombination?
 
     var sourceKeyCode: CGKeyCode? {
         sourceCombination?.keyCode
@@ -430,7 +447,11 @@ final class RemappingRuleRowView: NSView {
             sourceCombination: sourceCombination,
             destinationCombination: destinationCombination,
             matchingMode: matchingMode,
-            overrides: overrides
+            overrides: overrides,
+            rememberedExactSourceCombination:
+                rememberedExactSourceCombination,
+            rememberedExactDestinationCombination:
+                rememberedExactDestinationCombination
         )
     }
 
@@ -446,6 +467,10 @@ final class RemappingRuleRowView: NSView {
         destinationCombination = item.destinationCombination
         matchingMode = item.matchingMode
         overrides = item.overrides
+        rememberedExactSourceCombination =
+            item.rememberedExactSourceCombination
+        rememberedExactDestinationCombination =
+            item.rememberedExactDestinationCombination
 
         super.init(frame: .zero)
 
@@ -481,45 +506,33 @@ final class RemappingRuleRowView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+
         updateValidationAppearance()
+        updateWarningIndicatorAppearance()
     }
 
     func setCombination(
         _ combination: KeyCombination,
         for field: KeyField
     ) {
-        let normalizedCombination: KeyCombination
-
-        if matchingMode == .preserveModifiers {
-            normalizedCombination = KeyCombination(
-                keyCode: combination.keyCode
-            )
-        } else {
-            normalizedCombination = combination
-        }
+        var updatedItem =
+            editorItem
 
         switch field {
         case .source:
-            let previousKeyCode =
-                sourceCombination?.keyCode
-
-            sourceCombination =
-                normalizedCombination
-
-            if let previousKeyCode,
-               previousKeyCode
-                != normalizedCombination.keyCode
-            {
-                retargetOverrides(
-                    to:
-                        normalizedCombination.keyCode
-                )
-            }
+            updatedItem.setSourceCombination(
+                combination
+            )
 
         case .destination:
-            destinationCombination =
-                normalizedCombination
+            updatedItem.setDestinationCombination(
+                combination
+            )
         }
+
+        applyEditorItem(
+            updatedItem
+        )
 
         updateControls()
         onRuleChanged?(editorItem)
@@ -578,6 +591,18 @@ final class RemappingRuleRowView: NSView {
         updateValidationAppearance()
     }
 
+    /// Shows a small informational warning indicator without changing the
+    /// row's validation state or editable data.
+    func setConfigurationWarning(
+        _ warning:
+            KeyCombinationConfigurationWarning?
+    ) {
+        configurationWarning =
+            warning
+
+        updateWarningIndicatorAppearance()
+    }
+
     func applyTextScale(
         _ scale: CGFloat
     ) {
@@ -629,6 +654,8 @@ final class RemappingRuleRowView: NSView {
 
         rowHeightConstraint?.constant =
             42 * scale
+
+        updateWarningIndicatorAppearance()
 
         needsLayout = true
     }
@@ -682,6 +709,27 @@ final class RemappingRuleRowView: NSView {
         exceptionsButton.toolTip =
             "View and edit stored exceptions. They are active only in Preserve Modifiers mode."
 
+        warningIndicatorImageView.imageScaling =
+            .scaleProportionallyDown
+
+        warningIndicatorImageView.setContentHuggingPriority(
+            .required,
+            for: .horizontal
+        )
+
+        warningIndicatorImageView
+            .setContentCompressionResistancePriority(
+                .required,
+                for: .horizontal
+            )
+
+        warningIndicatorImageView.setAccessibilityLabel(
+            "Configuration warning"
+        )
+
+        warningIndicatorImageView.isHidden =
+            true
+
         removeButton.title = "Remove"
         removeButton.bezelStyle = .rounded
         removeButton.hasDestructiveAction =
@@ -696,6 +744,7 @@ final class RemappingRuleRowView: NSView {
             destinationKeyButton,
             behaviorPopUpButton,
             exceptionsButton,
+            warningIndicatorImageView,
             removeButton
         ]
 
@@ -795,11 +844,34 @@ final class RemappingRuleRowView: NSView {
                     equalToConstant: 116
                 ),
 
-                removeButton.leadingAnchor.constraint(
+                warningIndicatorImageView.leadingAnchor.constraint(
                     equalTo:
                         exceptionsButton
                             .trailingAnchor,
-                    constant: 10
+                    constant: 6
+                ),
+
+                warningIndicatorImageView.centerYAnchor.constraint(
+                    equalTo:
+                        destinationKeyButton
+                            .centerYAnchor
+                ),
+
+                warningIndicatorImageView.widthAnchor.constraint(
+                    equalToConstant: 22
+                ),
+
+                warningIndicatorImageView.heightAnchor.constraint(
+                    equalTo:
+                        warningIndicatorImageView
+                            .widthAnchor
+                ),
+
+                removeButton.leadingAnchor.constraint(
+                    equalTo:
+                        warningIndicatorImageView
+                            .trailingAnchor,
+                    constant: 6
                 ),
 
                 removeButton.trailingAnchor.constraint(
@@ -966,6 +1038,38 @@ final class RemappingRuleRowView: NSView {
         }
     }
 
+    private func updateWarningIndicatorAppearance() {
+        warningIndicatorImageView.image =
+            NSImage(
+                systemSymbolName:
+                    "exclamationmark.triangle.fill",
+                accessibilityDescription:
+                    "Configuration warning"
+            )?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(
+                    pointSize:
+                        13 * textScale,
+                    weight:
+                        .medium
+                )
+            )
+
+        warningIndicatorImageView.contentTintColor =
+            .systemOrange
+
+        warningIndicatorImageView.isHidden =
+            configurationWarning == nil
+
+        warningIndicatorImageView.toolTip =
+            configurationWarning?.message
+
+        warningIndicatorImageView.setAccessibilityValue(
+            configurationWarning?.message
+                ?? "No configuration warning"
+        )
+    }
+
     private func buttonTitle(
         for combination:
             KeyCombination?
@@ -998,9 +1102,20 @@ final class RemappingRuleRowView: NSView {
     private func behaviorPreviewLines(
         for mode: RemapMatchingMode
     ) -> [String] {
+        let currentEditorItem =
+            editorItem
+
         guard
-            let sourceCombination,
-            let destinationCombination
+            let sourceCombination =
+                currentEditorItem
+                    .sourceCombinationForPreview(
+                        in: mode
+                    ),
+            let destinationCombination =
+                currentEditorItem
+                    .destinationCombinationForPreview(
+                        in: mode
+                    )
         else {
             return [
                 "Choose source and destination to preview."
@@ -1214,11 +1329,12 @@ final class RemappingRuleRowView: NSView {
             return
         }
 
-        let candidateItem =
-            editorItem(
-                applying:
-                    requestedMode
-            )
+        var candidateItem =
+            editorItem
+
+        candidateItem.setMatchingMode(
+            requestedMode
+        )
 
         if let onMatchingModeChangeRequested,
            !onMatchingModeChangeRequested(
@@ -1229,70 +1345,36 @@ final class RemappingRuleRowView: NSView {
             return
         }
 
-        sourceCombination =
+        applyEditorItem(
             candidateItem
-                .sourceCombination
-
-        destinationCombination =
-            candidateItem
-                .destinationCombination
-
-        matchingMode =
-            candidateItem
-                .matchingMode
-
-        overrides =
-            candidateItem
-                .overrides
+        )
 
         synchronizeBehaviorControl()
         updateControls()
         onRuleChanged?(editorItem)
     }
 
-    private func editorItem(
-        applying requestedMode:
-            RemapMatchingMode
-    ) -> RemappingRuleEditorItem {
-        var candidateSource =
-            sourceCombination
+    private func applyEditorItem(
+        _ item:
+            RemappingRuleEditorItem
+    ) {
+        sourceCombination =
+            item.sourceCombination
 
-        var candidateDestination =
-            destinationCombination
+        destinationCombination =
+            item.destinationCombination
 
-        if requestedMode
-            == .preserveModifiers
-        {
-            if let sourceCombination {
-                candidateSource =
-                    KeyCombination(
-                        keyCode:
-                            sourceCombination
-                                .keyCode
-                    )
-            }
+        matchingMode =
+            item.matchingMode
 
-            if let destinationCombination {
-                candidateDestination =
-                    KeyCombination(
-                        keyCode:
-                            destinationCombination
-                                .keyCode
-                    )
-            }
-        }
+        overrides =
+            item.overrides
 
-        return RemappingRuleEditorItem(
-            id: editorItemID,
-            sourceCombination:
-                candidateSource,
-            destinationCombination:
-                candidateDestination,
-            matchingMode:
-                requestedMode,
-            overrides:
-                overrides
-        )
+        rememberedExactSourceCombination =
+            item.rememberedExactSourceCombination
+
+        rememberedExactDestinationCombination =
+            item.rememberedExactDestinationCombination
     }
 
     @objc
