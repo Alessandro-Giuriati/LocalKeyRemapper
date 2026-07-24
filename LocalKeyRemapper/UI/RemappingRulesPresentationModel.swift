@@ -21,6 +21,7 @@ nonisolated final class RemappingRulesPresentationModel {
         case destination
         case modifierBehavior
         case exceptions
+        case issues
     }
 
     enum SortDirection: Equatable {
@@ -46,22 +47,27 @@ nonisolated final class RemappingRulesPresentationModel {
     private(set) var sortDescriptor: SortDescriptor?
 
     /// Filters use only the physical key code.
-    ///
-    /// Captured modifiers are intentionally ignored so capturing Shift + V
-    /// still finds V, Command + V, Control + Option + V, and other
-    /// combinations containing the physical V key.
     private(set) var sourceFilterKeyCode: CGKeyCode?
     private(set) var destinationFilterKeyCode: CGKeyCode?
+
+    /// Issue filters are presentation-only and never change rule validity.
+    private(set) var showsOnlyValidationIssues =
+        false
+
+    private(set) var showsOnlyConfigurationWarnings =
+        false
+
+    var hasActiveIssueFilters: Bool {
+        showsOnlyValidationIssues
+            || showsOnlyConfigurationWarnings
+    }
 
     var hasActiveFilters: Bool {
         sourceFilterKeyCode != nil
             || destinationFilterKeyCode != nil
+            || hasActiveIssueFilters
     }
 
-    /// Selects a sortable column.
-    ///
-    /// Selecting a new column starts in ascending order. Selecting the
-    /// currently active column reverses its direction.
     @discardableResult
     func selectSortColumn(
         _ column: SortColumn
@@ -112,24 +118,55 @@ nonisolated final class RemappingRulesPresentationModel {
         destinationFilterKeyCode = nil
     }
 
+    func toggleValidationIssueFilter() {
+        showsOnlyValidationIssues.toggle()
+    }
+
+    func toggleConfigurationWarningFilter() {
+        showsOnlyConfigurationWarnings.toggle()
+    }
+
+    func clearIssueFilters() {
+        showsOnlyValidationIssues =
+            false
+
+        showsOnlyConfigurationWarnings =
+            false
+    }
+
     func clearAllFilters() {
         sourceFilterKeyCode = nil
         destinationFilterKeyCode = nil
+        clearIssueFilters()
     }
 
-    /// Returns the items that should currently be displayed.
-    ///
-    /// The supplied collection is never modified. Filtering and sorting are
-    /// performed on a derived array containing the same editor items and IDs.
+    /// When both issue filters are enabled, a rule is visible when it has a
+    /// validation issue OR a configuration warning.
     func visibleItems(
-        from items: [RemappingRuleEditorItem]
+        from items:
+            [RemappingRuleEditorItem],
+        validationIssueItemIDs:
+            Set<UUID> = [],
+        configurationWarningItemIDs:
+            Set<UUID> = []
     ) -> [RemappingRuleEditorItem] {
         let filteredItems =
             items.filter {
                 item in
 
-                matchesSourceFilter(item)
-                    && matchesDestinationFilter(item)
+                matchesSourceFilter(
+                    item
+                )
+                    && matchesDestinationFilter(
+                        item
+                    )
+                    && matchesIssueFilters(
+                        item,
+                        validationIssueItemIDs:
+                            validationIssueItemIDs,
+                        configurationWarningItemIDs:
+                            configurationWarningItemIDs
+                    )
             }
 
         guard let sortDescriptor else {
@@ -146,18 +183,25 @@ nonisolated final class RemappingRulesPresentationModel {
                     Self.compare(
                         first.element,
                         second.element,
-                        using: sortDescriptor
+                        using:
+                            sortDescriptor,
+                        validationIssueItemIDs:
+                            validationIssueItemIDs,
+                        configurationWarningItemIDs:
+                            configurationWarningItemIDs
                     )
 
                 if comparison == .orderedSame {
-                    // A stable tie-breaker preserves the original session
-                    // order when two presentation values are equal.
-                    return first.offset < second.offset
+                    return first.offset
+                        < second.offset
                 }
 
-                return comparison == .orderedAscending
+                return comparison
+                    == .orderedAscending
             }
-            .map(\.element)
+            .map(
+                \.element
+            )
     }
 
     private func matchesSourceFilter(
@@ -186,24 +230,59 @@ nonisolated final class RemappingRulesPresentationModel {
             == destinationFilterKeyCode
     }
 
+    private func matchesIssueFilters(
+        _ item: RemappingRuleEditorItem,
+        validationIssueItemIDs:
+            Set<UUID>,
+        configurationWarningItemIDs:
+            Set<UUID>
+    ) -> Bool {
+        guard hasActiveIssueFilters else {
+            return true
+        }
+
+        let hasValidationIssue =
+            showsOnlyValidationIssues
+                && validationIssueItemIDs
+                    .contains(
+                        item.id
+                    )
+
+        let hasConfigurationWarning =
+            showsOnlyConfigurationWarnings
+                && configurationWarningItemIDs
+                    .contains(
+                        item.id
+                    )
+
+        return hasValidationIssue
+            || hasConfigurationWarning
+    }
+
     private static func compare(
         _ first: RemappingRuleEditorItem,
         _ second: RemappingRuleEditorItem,
-        using descriptor: SortDescriptor
+        using descriptor: SortDescriptor,
+        validationIssueItemIDs:
+            Set<UUID>,
+        configurationWarningItemIDs:
+            Set<UUID>
     ) -> ComparisonResult {
         switch descriptor.column {
         case .source:
             return compareOptionalCombinations(
                 first.sourceCombination,
                 second.sourceCombination,
-                direction: descriptor.direction
+                direction:
+                    descriptor.direction
             )
 
         case .destination:
             return compareOptionalCombinations(
                 first.destinationCombination,
                 second.destinationCombination,
-                direction: descriptor.direction
+                direction:
+                    descriptor.direction
             )
 
         case .modifierBehavior:
@@ -219,7 +298,8 @@ nonisolated final class RemappingRulesPresentationModel {
 
             return applying(
                 descriptor.direction,
-                to: comparison
+                to:
+                    comparison
             )
 
         case .exceptions:
@@ -231,26 +311,99 @@ nonisolated final class RemappingRulesPresentationModel {
 
             return applying(
                 descriptor.direction,
-                to: comparison
+                to:
+                    comparison
+            )
+
+        case .issues:
+            let comparison =
+                compareValues(
+                    issueSortValue(
+                        for: first.id,
+                        validationIssueItemIDs:
+                            validationIssueItemIDs,
+                        configurationWarningItemIDs:
+                            configurationWarningItemIDs
+                    ),
+                    issueSortValue(
+                        for: second.id,
+                        validationIssueItemIDs:
+                            validationIssueItemIDs,
+                        configurationWarningItemIDs:
+                            configurationWarningItemIDs
+                    )
+                )
+
+            return applying(
+                descriptor.direction,
+                to:
+                    comparison
             )
         }
     }
 
-    /// Incomplete source or destination values always remain after complete
-    /// values, including when the selected direction is descending.
+    /// Sort order used by the Issues column:
+    /// no issue, warning, validation error, validation error + warning.
+    private static func issueSortValue(
+        for itemID: UUID,
+        validationIssueItemIDs:
+            Set<UUID>,
+        configurationWarningItemIDs:
+            Set<UUID>
+    ) -> Int {
+        let hasValidationIssue =
+            validationIssueItemIDs.contains(
+                itemID
+            )
+
+        let hasConfigurationWarning =
+            configurationWarningItemIDs.contains(
+                itemID
+            )
+
+        switch (
+            hasValidationIssue,
+            hasConfigurationWarning
+        ) {
+        case (false, false):
+            return 0
+
+        case (false, true):
+            return 1
+
+        case (true, false):
+            return 2
+
+        case (true, true):
+            return 3
+        }
+    }
+
     private static func compareOptionalCombinations(
         _ first: KeyCombination?,
         _ second: KeyCombination?,
         direction: SortDirection
     ) -> ComparisonResult {
-        switch (first, second) {
-        case (nil, nil):
+        switch (
+            first,
+            second
+        ) {
+        case (
+            nil,
+            nil
+        ):
             return .orderedSame
 
-        case (nil, _):
+        case (
+            nil,
+            _
+        ):
             return .orderedDescending
 
-        case (_, nil):
+        case (
+            _,
+            nil
+        ):
             return .orderedAscending
 
         case (
@@ -268,31 +421,31 @@ nonisolated final class RemappingRulesPresentationModel {
         }
     }
 
-    /// Combinations are grouped by their visible physical key name first and
-    /// by modifiers second.
-    ///
-    /// This produces a logical order such as:
-    /// V, Shift + V, Command + V, W.
     private static func compareCombinations(
         _ first: KeyCombination,
         _ second: KeyCombination
     ) -> ComparisonResult {
         let firstKeyName =
             KeyboardLayoutKeyName.name(
-                for: first.keyCode
+                for:
+                    first.keyCode
             )
 
         let secondKeyName =
             KeyboardLayoutKeyName.name(
-                for: second.keyCode
+                for:
+                    second.keyCode
             )
 
         let nameComparison =
-            firstKeyName.localizedStandardCompare(
-                secondKeyName
-            )
+            firstKeyName
+                .localizedStandardCompare(
+                    secondKeyName
+                )
 
-        if nameComparison != .orderedSame {
+        if nameComparison
+            != .orderedSame
+        {
             return nameComparison
         }
 
@@ -302,7 +455,9 @@ nonisolated final class RemappingRulesPresentationModel {
                 second.keyCode
             )
 
-        if keyCodeComparison != .orderedSame {
+        if keyCodeComparison
+            != .orderedSame
+        {
             return keyCodeComparison
         }
 
@@ -313,7 +468,8 @@ nonisolated final class RemappingRulesPresentationModel {
     }
 
     private static func modifierBehaviorSortValue(
-        _ matchingMode: RemapMatchingMode
+        _ matchingMode:
+            RemapMatchingMode
     ) -> String {
         switch matchingMode {
         case .exact:
@@ -324,7 +480,10 @@ nonisolated final class RemappingRulesPresentationModel {
         }
     }
 
-    private static func compareValues<Value: Comparable>(
+    private static func compareValues<
+        Value:
+            Comparable
+    >(
         _ first: Value,
         _ second: Value
     ) -> ComparisonResult {
@@ -340,10 +499,15 @@ nonisolated final class RemappingRulesPresentationModel {
     }
 
     private static func applying(
-        _ direction: SortDirection,
-        to comparison: ComparisonResult
+        _ direction:
+            SortDirection,
+        to comparison:
+            ComparisonResult
     ) -> ComparisonResult {
-        guard direction == .descending else {
+        guard
+            direction
+                == .descending
+        else {
             return comparison
         }
 

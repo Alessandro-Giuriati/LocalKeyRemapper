@@ -95,6 +95,9 @@ final class RemapOverrideRowView: NSView {
     private let destinationButton =
         NSButton()
 
+    private let warningImageView =
+        NSImageView()
+
     private let removeButton =
         NSButton()
 
@@ -103,8 +106,12 @@ final class RemapOverrideRowView: NSView {
 
     private var actionKind:
         EditorState.ActionKind
+
     private var isShowingValidationError =
         false
+
+    private var configurationWarning:
+        KeyCombinationConfigurationWarning?
 
     private var textScale: CGFloat = 1.0
 
@@ -178,6 +185,39 @@ final class RemapOverrideRowView: NSView {
             == destinationCombination
     }
 
+    /// Returns the first informational warning currently produced by this
+    /// editable exception, including incomplete rows.
+    ///
+    /// Warning assessment is read-only and does not modify the editor state,
+    /// persistence, validation, or Undo/Redo history.
+    var currentConfigurationWarning:
+        KeyCombinationConfigurationWarning?
+    {
+        if let sourceCombination,
+           let warning =
+            KeyCombinationConfigurationWarningPolicy
+                .warning(
+                    for:
+                        sourceCombination
+                )
+        {
+            return warning
+        }
+
+        guard
+            actionKind == .replace,
+            let destinationCombination
+        else {
+            return nil
+        }
+
+        return KeyCombinationConfigurationWarningPolicy
+            .warning(
+                for:
+                    destinationCombination
+            )
+    }
+
     convenience init(
         override: RemapOverride? = nil
     ) {
@@ -211,6 +251,7 @@ final class RemapOverrideRowView: NSView {
         synchronizeEnabledControl()
         updateControls()
         updateValidationAppearance()
+        updateConfigurationWarningAppearance()
     }
 
     required init?(
@@ -224,6 +265,7 @@ final class RemapOverrideRowView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateValidationAppearance()
+        updateConfigurationWarningAppearance()
     }
 
     func setCombination(
@@ -296,6 +338,21 @@ final class RemapOverrideRowView: NSView {
             isVisible
 
         updateValidationAppearance()
+        updateConfigurationWarningAppearance()
+    }
+
+    /// Shows a non-blocking warning indicator for this exception.
+    ///
+    /// The indicator is hidden while a blocking validation error is visible so
+    /// that the error remains the row's primary feedback.
+    func setConfigurationWarning(
+        _ warning:
+            KeyCombinationConfigurationWarning?
+    ) {
+        configurationWarning =
+            warning
+
+        updateConfigurationWarningAppearance()
     }
 
     func applyTextScale(
@@ -329,6 +386,8 @@ final class RemapOverrideRowView: NSView {
                 ofSize: 19 * scale,
                 weight: .regular
             )
+
+        updateWarningSymbol()
 
         rowHeightConstraint?.constant =
             42 * scale
@@ -375,6 +434,13 @@ final class RemapOverrideRowView: NSView {
         actionPopUpButton.action =
             #selector(actionChanged)
 
+        warningImageView.imageScaling =
+            .scaleProportionallyDown
+
+        warningImageView.setAccessibilityLabel(
+            "Configuration warning"
+        )
+
         removeButton.title = "Remove"
         removeButton.bezelStyle =
             .rounded
@@ -390,6 +456,7 @@ final class RemapOverrideRowView: NSView {
             arrowLabel,
             actionPopUpButton,
             destinationButton,
+            warningImageView,
             removeButton
         ]
 
@@ -485,11 +552,34 @@ final class RemapOverrideRowView: NSView {
                             .centerYAnchor
                 ),
 
-                removeButton.leadingAnchor.constraint(
+                warningImageView.leadingAnchor.constraint(
                     equalTo:
                         destinationButton
                             .trailingAnchor,
-                    constant: 10
+                    constant: 8
+                ),
+
+                warningImageView.centerYAnchor.constraint(
+                    equalTo:
+                        sourceButton
+                            .centerYAnchor
+                ),
+
+                warningImageView.widthAnchor.constraint(
+                    equalToConstant: 24
+                ),
+
+                warningImageView.heightAnchor.constraint(
+                    equalTo:
+                        warningImageView
+                            .widthAnchor
+                ),
+
+                removeButton.leadingAnchor.constraint(
+                    equalTo:
+                        warningImageView
+                            .trailingAnchor,
+                    constant: 8
                 ),
 
                 removeButton.trailingAnchor.constraint(
@@ -515,12 +605,12 @@ final class RemapOverrideRowView: NSView {
 
                 sourceButton.widthAnchor.constraint(
                     greaterThanOrEqualToConstant:
-                        180
+                        160
                 ),
 
                 destinationButton.widthAnchor.constraint(
                     greaterThanOrEqualToConstant:
-                        180
+                        160
                 ),
 
                 rowHeightConstraint
@@ -605,6 +695,54 @@ final class RemapOverrideRowView: NSView {
             layer.backgroundColor =
                 NSColor.clear.cgColor
         }
+    }
+
+    private func updateWarningSymbol() {
+        warningImageView.image =
+            NSImage(
+                systemSymbolName:
+                    "exclamationmark.triangle.fill",
+                accessibilityDescription:
+                    "Configuration warning"
+            )?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(
+                    pointSize:
+                        13 * textScale,
+                    weight:
+                        .medium
+                )
+            )
+    }
+
+    private func updateConfigurationWarningAppearance() {
+        updateWarningSymbol()
+
+        let shouldShowWarning =
+            configurationWarning != nil
+            && !isShowingValidationError
+
+        warningImageView.contentTintColor =
+            .systemOrange
+
+        warningImageView.alphaValue =
+            shouldShowWarning
+                ? 1
+                : 0
+
+        warningImageView.toolTip =
+            configurationWarning?
+                .message
+
+        warningImageView.setAccessibilityHidden(
+            !shouldShowWarning
+        )
+
+        warningImageView.setAccessibilityValue(
+            configurationWarning?
+                .message
+                ?? "No configuration warning"
+        )
     }
 
     private func title(

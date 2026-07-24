@@ -73,8 +73,6 @@ final class ConfigurationWarningBannerView: NSView {
         updateAppearance()
     }
 
-    /// Shows guidance for the supplied warning, or hides the banner when the
-    /// warning is `nil`.
     func setWarning(
         _ warning:
             KeyCombinationConfigurationWarning?
@@ -84,9 +82,6 @@ final class ConfigurationWarningBannerView: NSView {
         )
     }
 
-    /// Shows an explicitly supplied informational message.
-    ///
-    /// Passing `nil` or an empty string hides the banner.
     func setMessage(
         _ message: String?
     ) {
@@ -129,42 +124,42 @@ final class ConfigurationWarningBannerView: NSView {
         messageLabel.font =
             NSFont.systemFont(
                 ofSize:
-                    13 * textScale,
+                    11 * textScale,
                 weight:
                     .regular
             )
 
         contentStack.spacing =
             InterfaceLayoutMetrics.scaled(
-                9,
+                6,
                 for:
                     textScale,
                 minimum:
-                    7,
+                    4,
                 maximum:
-                    14
+                    9
             )
 
         let verticalPadding =
             InterfaceLayoutMetrics.scaled(
-                10,
+                5,
                 for:
                     textScale,
                 minimum:
-                    8,
+                    4,
                 maximum:
-                    15
+                    8
             )
 
         let horizontalPadding =
             InterfaceLayoutMetrics.scaled(
-                12,
+                8,
                 for:
                     textScale,
                 minimum:
-                    10,
+                    6,
                 maximum:
-                    18
+                    12
             )
 
         contentTopConstraint?.constant =
@@ -190,7 +185,7 @@ final class ConfigurationWarningBannerView: NSView {
             true
 
         layer?.cornerRadius =
-            8
+            6
 
         layer?.masksToBounds =
             true
@@ -262,7 +257,7 @@ final class ConfigurationWarningBannerView: NSView {
             .horizontal
 
         contentStack.alignment =
-            .top
+            .centerY
 
         contentStack.distribution =
             .fill
@@ -333,14 +328,14 @@ final class ConfigurationWarningBannerView: NSView {
             .withSymbolConfiguration(
                 NSImage.SymbolConfiguration(
                     pointSize:
-                        14 * textScale,
+                        11 * textScale,
                     weight:
                         .semibold
                 )
             )
 
         iconImageView.contentTintColor =
-            .systemOrange
+            .systemYellow
     }
 
     private func updateAppearance() {
@@ -348,10 +343,10 @@ final class ConfigurationWarningBannerView: NSView {
             .labelColor
 
         iconImageView.contentTintColor =
-            .systemOrange
+            .systemYellow
 
         layer?.backgroundColor =
-            NSColor.systemOrange
+            NSColor.systemYellow
                 .withAlphaComponent(
                     0.10
                 )
@@ -361,9 +356,9 @@ final class ConfigurationWarningBannerView: NSView {
             1
 
         layer?.borderColor =
-            NSColor.systemOrange
+            NSColor.systemYellow
                 .withAlphaComponent(
-                    0.28
+                    0.30
                 )
                 .cgColor
     }

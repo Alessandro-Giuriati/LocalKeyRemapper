@@ -79,6 +79,321 @@ private final class RulesFlippedView: NSView {
     }
 }
 
+/// Draws the rules header while preserving normal hit testing for all child
+/// controls, including the Issues filters.
+@MainActor
+private final class InteractiveRulesHeaderView: NSView {
+
+    override init(
+        frame frameRect: NSRect
+    ) {
+        super.init(
+            frame: frameRect
+        )
+
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+        layer?.borderWidth = 1
+        updateAppearance()
+    }
+
+    required init?(
+        coder: NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor =
+            NSColor.controlBackgroundColor
+                .withAlphaComponent(
+                    0.35
+                )
+                .cgColor
+
+        layer?.borderColor =
+            NSColor.separatorColor
+                .cgColor
+    }
+}
+
+
+/// Presents editor status as plain secondary text during normal operation and
+/// as a full-width red banner when a blocking validation or persistence error
+/// is active.
+@MainActor
+private final class RulesEditorStatusView: NSView {
+    private let iconView = NSImageView()
+
+    private let messageLabel =
+        NSTextField(
+            wrappingLabelWithString: ""
+        )
+
+    private let contentStack = NSStackView()
+
+    private var isShowingError = false
+    private var textScale: CGFloat = 1.0
+
+    override init(
+        frame frameRect: NSRect
+    ) {
+        super.init(
+            frame: frameRect
+        )
+
+        configureContent()
+        applyTextScale(
+            textScale
+        )
+        updateAppearance()
+    }
+
+    convenience init() {
+        self.init(
+            frame: .zero
+        )
+    }
+
+    required init?(
+        coder: NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    func setMessage(
+        _ message: String,
+        isError: Bool
+    ) {
+        messageLabel.stringValue =
+            message
+
+        isShowingError =
+            isError
+
+        updateAppearance()
+    }
+
+    func applyTextScale(
+        _ scale: CGFloat
+    ) {
+        textScale =
+            InterfaceTextScalePreference.clamped(
+                scale
+            )
+
+        messageLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    13 * textScale,
+                weight:
+                    .regular
+            )
+
+        iconView.image =
+            NSImage(
+                systemSymbolName:
+                    "xmark.octagon.fill",
+                accessibilityDescription:
+                    "Validation error"
+            )?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(
+                    pointSize:
+                        12 * textScale,
+                    weight:
+                        .semibold
+                )
+            )
+
+        contentStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for:
+                    textScale,
+                minimum:
+                    5,
+                maximum:
+                    10
+            )
+
+        needsLayout =
+            true
+    }
+
+    private func configureContent() {
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        layer?.masksToBounds = true
+
+        iconView.imageScaling =
+            .scaleProportionallyDown
+
+        iconView.setContentHuggingPriority(
+            .required,
+            for:
+                .horizontal
+        )
+
+        iconView
+            .setContentCompressionResistancePriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        messageLabel.maximumNumberOfLines =
+            2
+
+        messageLabel.lineBreakMode =
+            .byWordWrapping
+
+        messageLabel.setContentHuggingPriority(
+            .defaultLow,
+            for:
+                .horizontal
+        )
+
+        contentStack.setViews(
+            [
+                iconView,
+                messageLabel
+            ],
+            in:
+                .leading
+        )
+
+        contentStack.orientation =
+            .horizontal
+
+        contentStack.alignment =
+            .centerY
+
+        contentStack.distribution =
+            .fill
+
+        contentStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        addSubview(
+            contentStack
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                contentStack.leadingAnchor.constraint(
+                    equalTo:
+                        leadingAnchor,
+                    constant:
+                        9
+                ),
+
+                contentStack.trailingAnchor.constraint(
+                    equalTo:
+                        trailingAnchor,
+                    constant:
+                        -9
+                ),
+
+                contentStack.topAnchor.constraint(
+                    equalTo:
+                        topAnchor,
+                    constant:
+                        4
+                ),
+
+                contentStack.bottomAnchor.constraint(
+                    equalTo:
+                        bottomAnchor,
+                    constant:
+                        -4
+                ),
+
+                heightAnchor.constraint(
+                    greaterThanOrEqualToConstant:
+                        24
+                )
+            ]
+        )
+    }
+
+    private func updateAppearance() {
+        if isShowingError {
+            iconView.isHidden =
+                false
+
+            iconView.contentTintColor =
+                .systemRed
+
+            messageLabel.textColor =
+                .systemRed
+
+            layer?.borderWidth =
+                1
+
+            layer?.borderColor =
+                NSColor.systemRed
+                    .withAlphaComponent(
+                        0.45
+                    )
+                    .cgColor
+
+            layer?.backgroundColor =
+                NSColor.systemRed
+                    .withAlphaComponent(
+                        0.08
+                    )
+                    .cgColor
+        } else {
+            iconView.isHidden =
+                true
+
+            messageLabel.textColor =
+                .secondaryLabelColor
+
+            layer?.borderWidth =
+                0
+
+            layer?.borderColor =
+                NSColor.clear
+                    .cgColor
+
+            layer?.backgroundColor =
+                NSColor.clear
+                    .cgColor
+        }
+
+        setAccessibilityRole(
+            .staticText
+        )
+
+        setAccessibilityLabel(
+            isShowingError
+                ? "Remapping rules error"
+                : "Remapping rules status"
+        )
+
+        setAccessibilityValue(
+            messageLabel.stringValue
+        )
+    }
+}
+
 /// Owns the complete remapping-rules interface while the shared
 /// `RemappingRuleEditorSession` owns the actual editable data and Undo/Redo
 /// history for the lifetime of the application process.
@@ -109,6 +424,9 @@ final class RemappingRulesWindowController:
     private struct ValidationSnapshot {
         let issue: EditorValidationIssue?
         let invalidItemIDs: Set<UUID>
+
+        let messagesByItemID:
+            [UUID: String]
     }
 
     private enum FilterField: Equatable {
@@ -123,14 +441,14 @@ final class RemappingRulesWindowController:
 
     /// Owns presentation-only sorting and filtering state.
     private let presentationModel =
-    RemappingRulesPresentationModel()
+        RemappingRulesPresentationModel()
 
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
     private let resetTextSizeHandler: () -> Void
 
     private let ruleRemovalConfirmationController =
-    RuleRemovalConfirmationController()
+        RuleRemovalConfirmationController()
 
     private let titleLabel = NSTextField(
         labelWithString: "Remapping Rules"
@@ -142,43 +460,52 @@ final class RemappingRulesWindowController:
     )
 
     private let warningBanner =
-    ConfigurationWarningBannerView()
+        ConfigurationWarningBannerView()
 
-    private let confirmRuleRemovalCheckbox = NSButton(
-        checkboxWithTitle: "Confirm rule removal",
-        target: nil,
-        action: nil
-    )
+    private let confirmRuleRemovalLabel =
+        NSTextField(
+            labelWithString:
+                "Confirm rule removal"
+        )
+
+    private let confirmRuleRemovalSwitch =
+        NSSwitch()
+
+    private let confirmRuleRemovalStack =
+        NSStackView()
 
     private let sourceHeaderButton =
-    SortableHeaderButton(
-        frame: .zero
-    )
+        SortableHeaderButton(
+            frame: .zero
+        )
 
     private let destinationHeaderButton =
-    SortableHeaderButton(
-        frame: .zero
-    )
+        SortableHeaderButton(
+            frame: .zero
+        )
 
     private let behaviorHeaderButton =
-    SortableHeaderButton(
-        frame: .zero
-    )
+        SortableHeaderButton(
+            frame: .zero
+        )
 
     private let exceptionsHeaderButton =
-    SortableHeaderButton(
-        frame: .zero
-    )
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let issuesFilterView =
+        RemappingRulesIssuesFilterView()
 
     private let sourceFilterControl =
-    KeyCaptureFilterControl(
-        fieldTitle: "Source"
-    )
+        KeyCaptureFilterControl(
+            fieldTitle: "Source"
+        )
 
     private let destinationFilterControl =
-    KeyCaptureFilterControl(
-        fieldTitle: "Destination"
-    )
+        KeyCaptureFilterControl(
+            fieldTitle: "Destination"
+        )
 
     private let clearAllFiltersButton = NSButton()
 
@@ -210,46 +537,48 @@ final class RemappingRulesWindowController:
 
     private let actionsStack = NSStackView()
 
-    private let statusLabel = NSTextField(
-        wrappingLabelWithString: ""
-    )
+    private let statusView =
+        RulesEditorStatusView()
 
     private let mainStack = NSStackView()
     private let headerTopRowStack = NSStackView()
 
     private var mainStackTopConstraint:
-    NSLayoutConstraint?
+        NSLayoutConstraint?
 
     private var rulesScrollTopConstraint:
-    NSLayoutConstraint?
+        NSLayoutConstraint?
 
     private var rulesScrollBottomConstraint:
-    NSLayoutConstraint?
+        NSLayoutConstraint?
 
     private var actionsStatusSpacingConstraint:
-    NSLayoutConstraint?
+        NSLayoutConstraint?
 
     private var statusBottomConstraint:
-    NSLayoutConstraint?
+        NSLayoutConstraint?
 
     private var ruleRows: [RemappingRuleRowView] = []
 
     private var ruleRowsByItemID:
-    [UUID: RemappingRuleRowView] = [:]
+        [UUID: RemappingRuleRowView] = [:]
 
     private var captureRow: RemappingRuleRowView?
 
     private var captureField:
-    RemappingRuleRowView.KeyField?
+        RemappingRuleRowView.KeyField?
 
     private var captureFilterField:
-    FilterField?
+        FilterField?
 
     private var exceptionsWindowController:
-    RemapOverridesWindowController?
+        RemapOverridesWindowController?
 
     private var fnModifierStateTracker =
-    FnModifierStateTracker()
+        FnModifierStateTracker()
+
+    private var nonFnModifierStateTracker =
+        NonFnModifierStateTracker()
 
     private var textScale: CGFloat
 
@@ -264,66 +593,66 @@ final class RemappingRulesWindowController:
         textScale: CGFloat? = nil
     ) {
         self.remappingController =
-        remappingController
+            remappingController
 
         self.appPreferencesController =
-        appPreferencesController
+            appPreferencesController
 
         self.globalShortcutController =
-        globalShortcutController
+            globalShortcutController
 
         self.ruleEditorSession =
-        ruleEditorSession
+            ruleEditorSession
 
         self.increaseTextSizeHandler =
-        increaseTextSizeHandler
+            increaseTextSizeHandler
 
         self.decreaseTextSizeHandler =
-        decreaseTextSizeHandler
+            decreaseTextSizeHandler
 
         self.resetTextSizeHandler =
-        resetTextSizeHandler
+            resetTextSizeHandler
 
         self.textScale =
-        InterfaceTextScalePreference.clamped(
-            textScale
-            ?? InterfaceTextScalePreference.currentScale
-        )
+            InterfaceTextScalePreference.clamped(
+                textScale
+                    ?? InterfaceTextScalePreference.currentScale
+            )
 
         let window =
-        RemappingRulesWindow(
-            contentRect:
-                NSRect(
-                    x: 0,
-                    y: 0,
-                    width: 1120,
-                    height: 760
-                ),
-            styleMask: [
-                .titled,
-                .closable,
-                .miniaturizable,
-                .resizable
-            ],
-            backing: .buffered,
-            defer: false
-        )
+            RemappingRulesWindow(
+                contentRect:
+                    NSRect(
+                        x: 0,
+                        y: 0,
+                        width: 1120,
+                        height: 760
+                    ),
+                styleMask: [
+                    .titled,
+                    .closable,
+                    .miniaturizable,
+                    .resizable
+                ],
+                backing: .buffered,
+                defer: false
+            )
 
         window.title = "Remapping Rules"
         window.isReleasedWhenClosed = false
 
         window.contentMinSize =
-        NSSize(
-            width: 960,
-            height: 520
-        )
+            NSSize(
+                width: 960,
+                height: 520
+            )
 
         window.contentMaxSize =
-        NSSize(
-            width: 1440,
-            height:
-                CGFloat.greatestFiniteMagnitude
-        )
+            NSSize(
+                width: 1440,
+                height:
+                    CGFloat.greatestFiniteMagnitude
+            )
 
         window.center()
 
@@ -365,14 +694,14 @@ final class RemappingRulesWindowController:
             [weak self] in
 
             self?.canUndoRuleEditorChange
-            ?? false
+                ?? false
         }
 
         window.canRedoHandler = {
             [weak self] in
 
             self?.canRedoRuleEditorChange
-            ?? false
+                ?? false
         }
 
         ruleEditorSession.onChange = {
@@ -436,21 +765,21 @@ final class RemappingRulesWindowController:
         _ scale: CGFloat
     ) {
         textScale =
-        InterfaceTextScalePreference.clamped(
-            scale
-        )
+            InterfaceTextScalePreference.clamped(
+                scale
+            )
 
         titleLabel.font =
-        NSFont.systemFont(
-            ofSize: 22 * textScale,
-            weight: .semibold
-        )
+            NSFont.systemFont(
+                ofSize: 22 * textScale,
+                weight: .semibold
+            )
 
         descriptionLabel.font =
-        NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
-        )
+            NSFont.systemFont(
+                ofSize: 14 * textScale,
+                weight: .regular
+            )
 
         sourceHeaderButton.applyTextScale(
             textScale
@@ -468,6 +797,10 @@ final class RemappingRulesWindowController:
             textScale
         )
 
+        issuesFilterView.applyTextScale(
+            textScale
+        )
+
         sourceFilterControl.applyTextScale(
             textScale
         )
@@ -481,71 +814,80 @@ final class RemappingRulesWindowController:
         )
 
         let actionFont =
-        NSFont.systemFont(
-            ofSize: 14 * textScale,
-            weight: .regular
-        )
+            NSFont.systemFont(
+                ofSize: 14 * textScale,
+                weight: .regular
+            )
 
-        confirmRuleRemovalCheckbox.font =
-        actionFont
+        confirmRuleRemovalLabel.font =
+            actionFont
+
+        confirmRuleRemovalStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for:
+                    textScale,
+                minimum:
+                    6,
+                maximum:
+                    12
+            )
 
         addRuleButton.font =
-        actionFont
+            actionFont
 
         undoButton.font =
-        actionFont
+            actionFont
 
         redoButton.font =
-        actionFont
+            actionFont
 
         saveButton.font =
-        actionFont
+            actionFont
 
         textSizeLabel.font =
-        actionFont
+            actionFont
 
         decreaseTextSizeButton.font =
-        actionFont
+            actionFont
 
         resetTextSizeButton.font =
-        actionFont
+            actionFont
 
         increaseTextSizeButton.font =
-        actionFont
+            actionFont
 
         clearAllFiltersButton.font =
-        NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .regular
-        )
+            NSFont.systemFont(
+                ofSize: 13 * textScale,
+                weight: .regular
+            )
 
         filterSummaryLabel.font =
-        NSFont.systemFont(
-            ofSize: 12 * textScale,
-            weight: .regular
-        )
+            NSFont.systemFont(
+                ofSize: 12 * textScale,
+                weight: .regular
+            )
 
-        statusLabel.font =
-        NSFont.systemFont(
-            ofSize: 13 * textScale,
-            weight: .regular
+        statusView.applyTextScale(
+            textScale
         )
 
         rulesStackView.spacing =
-        InterfaceLayoutMetrics.scaled(
-            10,
-            for: textScale,
-            minimum: 7,
-            maximum: 16
-        )
+            InterfaceLayoutMetrics.scaled(
+                10,
+                for: textScale,
+                minimum: 7,
+                maximum: 16
+            )
 
         actionsStack.spacing =
-        InterfaceLayoutMetrics.scaled(
-            12,
-            for: textScale,
-            minimum: 8,
-            maximum: 18
-        )
+            InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 8,
+                maximum: 18
+            )
 
         applyLayoutMetrics()
 
@@ -556,7 +898,7 @@ final class RemappingRulesWindowController:
         }
 
         window?.contentView?.needsLayout =
-        true
+            true
 
         window?.contentView?
             .layoutSubtreeIfNeeded()
@@ -577,10 +919,10 @@ final class RemappingRulesWindowController:
         let alert = NSAlert()
 
         alert.messageText =
-        "Save changes before closing?"
+            "Save changes before closing?"
 
         alert.informativeText =
-        "Your remapping rules have been modified."
+            "Your remapping rules have been modified."
 
         alert.alertStyle = .warning
 
@@ -631,19 +973,20 @@ final class RemappingRulesWindowController:
 
         configureSortHeaderButtons()
         configureFilterControls()
+        configureIssuesFilterView()
         configureRuleRemovalConfirmationPreference()
         configureRulesScrollView()
         configureActionButtons()
         configureTextSizeControls()
 
         let filterBarView =
-        makeFilterBarView()
+            makeFilterBarView()
 
         self.filterBarView =
-        filterBarView
+            filterBarView
 
         let rulesHeaderView =
-        makeRulesHeaderView()
+            makeRulesHeaderView()
 
         configureHeaderTopRow()
 
@@ -665,22 +1008,22 @@ final class RemappingRulesWindowController:
             .leading
 
         mainStack.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         headerTopRowStack.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         warningBanner.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         rulesScrollView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         actionsStack.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
-        statusLabel.translatesAutoresizingMaskIntoConstraints =
-        false
+        statusView.translatesAutoresizingMaskIntoConstraints =
+            false
 
         contentView.addSubview(
             mainStack
@@ -695,53 +1038,53 @@ final class RemappingRulesWindowController:
         )
 
         contentView.addSubview(
-            statusLabel
+            statusView
         )
 
         let mainStackTopConstraint =
-        mainStack.topAnchor.constraint(
-            equalTo:
-                contentView.topAnchor
-        )
+            mainStack.topAnchor.constraint(
+                equalTo:
+                    contentView.topAnchor
+            )
 
         let rulesScrollTopConstraint =
-        rulesScrollView.topAnchor.constraint(
-            equalTo:
-                mainStack.bottomAnchor
-        )
+            rulesScrollView.topAnchor.constraint(
+                equalTo:
+                    mainStack.bottomAnchor
+            )
 
         let rulesScrollBottomConstraint =
-        rulesScrollView.bottomAnchor.constraint(
-            equalTo:
-                actionsStack.topAnchor
-        )
+            rulesScrollView.bottomAnchor.constraint(
+                equalTo:
+                    actionsStack.topAnchor
+            )
 
         let actionsStatusSpacingConstraint =
-        actionsStack.bottomAnchor.constraint(
-            equalTo:
-                statusLabel.topAnchor
-        )
+            actionsStack.bottomAnchor.constraint(
+                equalTo:
+                    statusView.topAnchor
+            )
 
         let statusBottomConstraint =
-        statusLabel.bottomAnchor.constraint(
-            equalTo:
-                contentView.bottomAnchor
-        )
+            statusView.bottomAnchor.constraint(
+                equalTo:
+                    contentView.bottomAnchor
+            )
 
         self.mainStackTopConstraint =
-        mainStackTopConstraint
+            mainStackTopConstraint
 
         self.rulesScrollTopConstraint =
-        rulesScrollTopConstraint
+            rulesScrollTopConstraint
 
         self.rulesScrollBottomConstraint =
-        rulesScrollBottomConstraint
+            rulesScrollBottomConstraint
 
         self.actionsStatusSpacingConstraint =
-        actionsStatusSpacingConstraint
+            actionsStatusSpacingConstraint
 
         self.statusBottomConstraint =
-        statusBottomConstraint
+            statusBottomConstraint
 
         NSLayoutConstraint.activate(
             [
@@ -809,13 +1152,13 @@ final class RemappingRulesWindowController:
 
                 actionsStatusSpacingConstraint,
 
-                statusLabel.leadingAnchor.constraint(
+                statusView.leadingAnchor.constraint(
                     equalTo:
                         contentView.leadingAnchor,
                     constant: 28
                 ),
 
-                statusLabel.trailingAnchor.constraint(
+                statusView.trailingAnchor.constraint(
                     equalTo:
                         contentView.trailingAnchor,
                     constant: -28
@@ -834,11 +1177,43 @@ final class RemappingRulesWindowController:
             for: .horizontal
         )
 
-        confirmRuleRemovalCheckbox
+        confirmRuleRemovalLabel
             .setContentHuggingPriority(
                 .required,
-                for: .horizontal
+                for:
+                    .horizontal
             )
+
+        confirmRuleRemovalSwitch
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        confirmRuleRemovalStack.setViews(
+            [
+                confirmRuleRemovalLabel,
+                confirmRuleRemovalSwitch
+            ],
+            in:
+                .leading
+        )
+
+        confirmRuleRemovalStack.orientation =
+            .horizontal
+
+        confirmRuleRemovalStack.alignment =
+            .centerY
+
+        confirmRuleRemovalStack.distribution =
+            .fill
+
+        confirmRuleRemovalStack.setContentHuggingPriority(
+            .required,
+            for:
+                .horizontal
+        )
 
         let spacer = NSView()
 
@@ -857,7 +1232,7 @@ final class RemappingRulesWindowController:
             [
                 titleLabel,
                 spacer,
-                confirmRuleRemovalCheckbox
+                confirmRuleRemovalStack
             ],
             in: .leading
         )
@@ -874,17 +1249,17 @@ final class RemappingRulesWindowController:
 
     private func applyLayoutMetrics() {
         mainStackTopConstraint?.constant =
-        InterfaceLayoutMetrics.topContentMargin(
-            for: textScale
-        )
+            InterfaceLayoutMetrics.topContentMargin(
+                for: textScale
+            )
 
         mainStack.spacing =
-        InterfaceLayoutMetrics.scaled(
-            7,
-            for: textScale,
-            minimum: 5,
-            maximum: 11
-        )
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
 
         mainStack.setCustomSpacing(
             InterfaceLayoutMetrics.scaled(
@@ -929,36 +1304,36 @@ final class RemappingRulesWindowController:
         }
 
         rulesScrollTopConstraint?.constant =
-        InterfaceLayoutMetrics.scaled(
-            7,
-            for: textScale,
-            minimum: 5,
-            maximum: 11
-        )
+            InterfaceLayoutMetrics.scaled(
+                7,
+                for: textScale,
+                minimum: 5,
+                maximum: 11
+            )
 
         rulesScrollBottomConstraint?.constant =
-        -InterfaceLayoutMetrics.scaled(
-            10,
-            for: textScale,
-            minimum: 7,
-            maximum: 15
-        )
+            -InterfaceLayoutMetrics.scaled(
+                10,
+                for: textScale,
+                minimum: 7,
+                maximum: 15
+            )
 
         actionsStatusSpacingConstraint?.constant =
-        -InterfaceLayoutMetrics.scaled(
-            5,
-            for: textScale,
-            minimum: 4,
-            maximum: 8
-        )
+            -InterfaceLayoutMetrics.scaled(
+                5,
+                for: textScale,
+                minimum: 4,
+                maximum: 8
+            )
 
         statusBottomConstraint?.constant =
-        -InterfaceLayoutMetrics.scaled(
-            12,
-            for: textScale,
-            minimum: 9,
-            maximum: 18
-        )
+            -InterfaceLayoutMetrics.scaled(
+                12,
+                for: textScale,
+                minimum: 9,
+                maximum: 18
+            )
     }
 
     private func makeFilterBarView() -> NSView {
@@ -974,7 +1349,7 @@ final class RemappingRulesWindowController:
 
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints =
-            false
+                false
 
             filterBarView.addSubview(
                 view
@@ -982,7 +1357,7 @@ final class RemappingRulesWindowController:
         }
 
         filterBarView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         NSLayoutConstraint.activate(
             [
@@ -1099,15 +1474,15 @@ final class RemappingRulesWindowController:
         }
 
         clearAllFiltersButton.title =
-        "Clear Filters"
+            "Clear Filters"
 
         clearAllFiltersButton.image =
-        NSImage(
-            systemSymbolName:
-                "xmark.circle",
-            accessibilityDescription:
-                "Clear all filters"
-        )
+            NSImage(
+                systemSymbolName:
+                    "xmark.circle",
+                accessibilityDescription:
+                    "Clear all filters"
+            )
 
         clearAllFiltersButton.imagePosition =
             .imageLeading
@@ -1116,15 +1491,15 @@ final class RemappingRulesWindowController:
             .rounded
 
         clearAllFiltersButton.target =
-        self
+            self
 
         clearAllFiltersButton.action =
-        #selector(
-            clearAllFilters
-        )
+            #selector(
+                clearAllFilters
+            )
 
         clearAllFiltersButton.toolTip =
-        "Clear the Source and Destination filters."
+            "Clear Source, Destination, and Issues filters."
 
         filterSummaryLabel.textColor =
             .secondaryLabelColor
@@ -1167,7 +1542,7 @@ final class RemappingRulesWindowController:
             .fill
 
         filterTrailingStack.spacing =
-        8
+            8
 
         updateFilterControls()
     }
@@ -1181,24 +1556,31 @@ final class RemappingRulesWindowController:
             presentationModel.destinationFilterKeyCode
         )
 
+        issuesFilterView.setFilterState(
+            validationIsActive:
+                presentationModel.showsOnlyValidationIssues,
+            warningIsActive:
+                presentationModel.showsOnlyConfigurationWarnings
+        )
+
         clearAllFiltersButton.isHidden =
-        !presentationModel.hasActiveFilters
+            !presentationModel.hasActiveFilters
     }
 
     private func updateFilterSummary(
         visibleCount: Int
     ) {
         let totalCount =
-        ruleEditorSession.items.count
+            ruleEditorSession.items.count
 
         if presentationModel.hasActiveFilters {
             filterSummaryLabel.stringValue =
-            "\(visibleCount) of \(totalCount) rules"
+                "\(visibleCount) of \(totalCount) rules"
         } else {
             filterSummaryLabel.stringValue =
-            totalCount == 1
-            ? "1 rule"
-            : "\(totalCount) rules"
+                totalCount == 1
+                    ? "1 rule"
+                    : "\(totalCount) rules"
         }
     }
 
@@ -1225,9 +1607,9 @@ final class RemappingRulesWindowController:
         updateRuleEditorHistoryControls()
 
         let fieldName =
-        field == .source
-        ? "Source"
-        : "Destination"
+            field == .source
+                ? "Source"
+                : "Destination"
 
         setStatus(
             "Press a physical key to filter \(fieldName). Modifiers are ignored. Press Escape or click the same filter again to cancel.",
@@ -1259,6 +1641,40 @@ final class RemappingRulesWindowController:
         renderRuleEditor()
     }
 
+    private func configureIssuesFilterView() {
+        issuesFilterView.onSortRequested = {
+            [weak self] in
+
+            self?.applySorting(
+                .issues
+            )
+        }
+
+        issuesFilterView.onValidationFilterToggle = {
+            [weak self] in
+
+            self?.toggleValidationIssueFilter()
+        }
+
+        issuesFilterView.onWarningFilterToggle = {
+            [weak self] in
+
+            self?.toggleConfigurationWarningFilter()
+        }
+    }
+
+    private func toggleValidationIssueFilter() {
+        endKeyCapture()
+        presentationModel.toggleValidationIssueFilter()
+        renderRuleEditor()
+    }
+
+    private func toggleConfigurationWarningFilter() {
+        endKeyCapture()
+        presentationModel.toggleConfigurationWarningFilter()
+        renderRuleEditor()
+    }
+
     @objc
     private func clearAllFilters() {
         endKeyCapture()
@@ -1268,12 +1684,11 @@ final class RemappingRulesWindowController:
 
     private func makeRulesHeaderView() -> NSView {
         let headerView =
-        RulesHeaderBackgroundView(
-            frame: .zero
-        )
+            InteractiveRulesHeaderView(
+                frame: .zero
+            )
 
         let arrowSpacer = NSView()
-        let warningSpacer = NSView()
         let removeSpacer = NSView()
 
         let views: [NSView] = [
@@ -1282,13 +1697,13 @@ final class RemappingRulesWindowController:
             destinationHeaderButton,
             behaviorHeaderButton,
             exceptionsHeaderButton,
-            warningSpacer,
+            issuesFilterView,
             removeSpacer
         ]
 
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints =
-            false
+                false
 
             headerView.addSubview(
                 view
@@ -1296,7 +1711,7 @@ final class RemappingRulesWindowController:
         }
 
         headerView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         NSLayoutConstraint.activate(
             [
@@ -1321,7 +1736,7 @@ final class RemappingRulesWindowController:
                 arrowSpacer.leadingAnchor.constraint(
                     equalTo:
                         sourceHeaderButton
-                        .trailingAnchor,
+                            .trailingAnchor,
                     constant: 10
                 ),
 
@@ -1350,7 +1765,7 @@ final class RemappingRulesWindowController:
                 behaviorHeaderButton.leadingAnchor.constraint(
                     equalTo:
                         destinationHeaderButton
-                        .trailingAnchor,
+                            .trailingAnchor,
                     constant: 10
                 ),
 
@@ -1373,7 +1788,7 @@ final class RemappingRulesWindowController:
                 exceptionsHeaderButton.leadingAnchor.constraint(
                     equalTo:
                         behaviorHeaderButton
-                        .trailingAnchor,
+                            .trailingAnchor,
                     constant: 10
                 ),
 
@@ -1393,21 +1808,33 @@ final class RemappingRulesWindowController:
                     equalToConstant: 116
                 ),
 
-                warningSpacer.leadingAnchor.constraint(
+                issuesFilterView.leadingAnchor.constraint(
                     equalTo:
                         exceptionsHeaderButton
-                        .trailingAnchor,
+                            .trailingAnchor,
                     constant: 6
                 ),
 
-                warningSpacer.widthAnchor.constraint(
-                    equalToConstant: 22
+                issuesFilterView.widthAnchor.constraint(
+                    equalToConstant: 72
+                ),
+
+                issuesFilterView.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 4
+                ),
+
+                issuesFilterView.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -4
                 ),
 
                 removeSpacer.leadingAnchor.constraint(
                     equalTo:
-                        warningSpacer
-                        .trailingAnchor,
+                        issuesFilterView
+                            .trailingAnchor,
                     constant: 6
                 ),
 
@@ -1424,7 +1851,7 @@ final class RemappingRulesWindowController:
                 sourceHeaderButton.widthAnchor.constraint(
                     equalTo:
                         destinationHeaderButton
-                        .widthAnchor
+                            .widthAnchor
                 ),
 
                 sourceHeaderButton.widthAnchor.constraint(
@@ -1434,7 +1861,7 @@ final class RemappingRulesWindowController:
 
                 headerView.heightAnchor.constraint(
                     greaterThanOrEqualToConstant:
-                        34
+                        54
                 )
             ]
         )
@@ -1517,8 +1944,8 @@ final class RemappingRulesWindowController:
 
     private func applySorting(
         _ column:
-        RemappingRulesPresentationModel
-            .SortColumn
+            RemappingRulesPresentationModel
+                .SortColumn
     ) {
         endKeyCapture()
 
@@ -1553,12 +1980,18 @@ final class RemappingRulesWindowController:
                 for: .exceptions
             )
         )
+
+        issuesFilterView.setSortState(
+            sortState(
+                for: .issues
+            )
+        )
     }
 
     private func sortState(
         for column:
-        RemappingRulesPresentationModel
-            .SortColumn
+            RemappingRulesPresentationModel
+                .SortColumn
     ) -> SortableHeaderButton.SortState {
         guard
             let descriptor =
@@ -1578,43 +2011,66 @@ final class RemappingRulesWindowController:
     }
 
     private func configureRuleRemovalConfirmationPreference() {
-        confirmRuleRemovalCheckbox.target =
-        self
+        confirmRuleRemovalSwitch.controlSize =
+            .small
 
-        confirmRuleRemovalCheckbox.action =
-        #selector(
-            ruleRemovalConfirmationPreferenceChanged
+        // Keep the native macOS switch while making this secondary control
+        // slightly more compact than the main remapping switch.
+        confirmRuleRemovalSwitch.wantsLayer =
+            true
+
+        confirmRuleRemovalSwitch.layer?
+            .setAffineTransform(
+                CGAffineTransform(
+                    scaleX:
+                        0.88,
+                    y:
+                        0.88
+                )
+            )
+
+        confirmRuleRemovalSwitch.target =
+            self
+
+        confirmRuleRemovalSwitch.action =
+            #selector(
+                ruleRemovalConfirmationPreferenceChanged
+            )
+
+        confirmRuleRemovalSwitch.toolTip =
+            "Ask for confirmation before removing a remapping rule."
+
+        confirmRuleRemovalSwitch.setAccessibilityLabel(
+            "Confirm rule removal"
         )
 
-        confirmRuleRemovalCheckbox.toolTip =
-        "Ask for confirmation before removing a remapping rule."
-
-        confirmRuleRemovalCheckbox
+        confirmRuleRemovalSwitch
             .setContentHuggingPriority(
                 .required,
-                for: .vertical
+                for:
+                    .vertical
             )
     }
 
     private func synchronizeRuleRemovalConfirmationPreference() {
-        confirmRuleRemovalCheckbox.state =
-        appPreferencesController
-            .preferences
-            .confirmsRuleRemoval
-        ? .on
-        : .off
+        confirmRuleRemovalSwitch.state =
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
+                    ? .on
+                    : .off
     }
 
     @objc
     private func ruleRemovalConfirmationPreferenceChanged() {
         let previousValue =
-        appPreferencesController
-            .preferences
-            .confirmsRuleRemoval
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
 
         let requestedValue =
-        confirmRuleRemovalCheckbox.state
-        == .on
+            confirmRuleRemovalSwitch.state
+                == .on
 
         guard
             ruleRemovalConfirmationController
@@ -1653,10 +2109,10 @@ final class RemappingRulesWindowController:
             .fill
 
         rulesStackView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         rulesFlexibleSpacer.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         rulesFlexibleSpacer
             .setContentHuggingPriority(
@@ -1675,29 +2131,29 @@ final class RemappingRulesWindowController:
         )
 
         rulesDocumentView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         rulesDocumentView.addSubview(
             rulesStackView
         )
 
         rulesScrollView.hasVerticalScroller =
-        true
+            true
 
         rulesScrollView.autohidesScrollers =
-        true
+            true
 
         rulesScrollView.borderType =
             .bezelBorder
 
         rulesScrollView.drawsBackground =
-        false
+            false
 
         rulesScrollView.documentView =
-        rulesDocumentView
+            rulesDocumentView
 
         rulesScrollView.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         rulesScrollView
             .setContentHuggingPriority(
@@ -1722,21 +2178,21 @@ final class RemappingRulesWindowController:
                 rulesStackView.leadingAnchor.constraint(
                     equalTo:
                         rulesDocumentView
-                        .leadingAnchor,
+                            .leadingAnchor,
                     constant: 12
                 ),
 
                 rulesStackView.trailingAnchor.constraint(
                     equalTo:
                         rulesDocumentView
-                        .trailingAnchor,
+                            .trailingAnchor,
                     constant: -12
                 ),
 
                 rulesStackView.bottomAnchor.constraint(
                     equalTo:
                         rulesDocumentView
-                        .bottomAnchor,
+                            .bottomAnchor,
                     constant: -12
                 ),
 
@@ -1753,15 +2209,15 @@ final class RemappingRulesWindowController:
                 rulesDocumentView.widthAnchor.constraint(
                     equalTo:
                         rulesScrollView
-                        .contentView
-                        .widthAnchor
+                            .contentView
+                            .widthAnchor
                 ),
 
                 rulesDocumentView.heightAnchor.constraint(
                     greaterThanOrEqualTo:
                         rulesScrollView
-                        .contentView
-                        .heightAnchor
+                            .contentView
+                            .heightAnchor
                 ),
 
                 rulesScrollView.heightAnchor.constraint(
@@ -1774,14 +2230,14 @@ final class RemappingRulesWindowController:
 
     private func configureActionButtons() {
         addRuleButton.title =
-        "Add Rule"
+            "Add Rule"
 
         addRuleButton.image =
-        NSImage(
-            systemSymbolName: "plus",
-            accessibilityDescription:
-                "Add Rule"
-        )
+            NSImage(
+                systemSymbolName: "plus",
+                accessibilityDescription:
+                    "Add Rule"
+            )
 
         addRuleButton.imagePosition =
             .imageLeading
@@ -1790,21 +2246,21 @@ final class RemappingRulesWindowController:
             .rounded
 
         addRuleButton.target =
-        self
+            self
 
         addRuleButton.action =
-        #selector(addEmptyRule)
+            #selector(addEmptyRule)
 
         undoButton.title =
-        "Undo"
+            "Undo"
 
         undoButton.image =
-        NSImage(
-            systemSymbolName:
-                "arrow.uturn.backward",
-            accessibilityDescription:
-                "Undo"
-        )
+            NSImage(
+                systemSymbolName:
+                    "arrow.uturn.backward",
+                accessibilityDescription:
+                    "Undo"
+            )
 
         undoButton.imagePosition =
             .imageLeading
@@ -1813,24 +2269,24 @@ final class RemappingRulesWindowController:
             .rounded
 
         undoButton.target =
-        self
+            self
 
         undoButton.action =
-        #selector(undoButtonPressed)
+            #selector(undoButtonPressed)
 
         undoButton.toolTip =
-        "Undo the last rule editor change (Command-Z)."
+            "Undo the last rule editor change (Command-Z)."
 
         redoButton.title =
-        "Redo"
+            "Redo"
 
         redoButton.image =
-        NSImage(
-            systemSymbolName:
-                "arrow.uturn.forward",
-            accessibilityDescription:
-                "Redo"
-        )
+            NSImage(
+                systemSymbolName:
+                    "arrow.uturn.forward",
+                accessibilityDescription:
+                    "Redo"
+            )
 
         redoButton.imagePosition =
             .imageLeading
@@ -1839,28 +2295,28 @@ final class RemappingRulesWindowController:
             .rounded
 
         redoButton.target =
-        self
+            self
 
         redoButton.action =
-        #selector(redoButtonPressed)
+            #selector(redoButtonPressed)
 
         redoButton.toolTip =
-        "Redo the last undone rule editor change (Shift-Command-Z)."
+            "Redo the last undone rule editor change (Shift-Command-Z)."
 
         saveButton.title =
-        "Save Rules"
+            "Save Rules"
 
         saveButton.bezelStyle =
             .rounded
 
         saveButton.keyEquivalent =
-        "\r"
+            "\r"
 
         saveButton.target =
-        self
+            self
 
         saveButton.action =
-        #selector(saveRules)
+            #selector(saveRules)
 
         let spacer = NSView()
 
@@ -1899,62 +2355,62 @@ final class RemappingRulesWindowController:
             .fill
 
         actionsStack.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         updateRuleEditorHistoryControls()
     }
 
     private func configureTextSizeControls() {
         decreaseTextSizeButton.title =
-        "−"
+            "−"
 
         decreaseTextSizeButton.bezelStyle =
             .rounded
 
         decreaseTextSizeButton.target =
-        self
+            self
 
         decreaseTextSizeButton.action =
-        #selector(
-            decreaseTextSizeButtonPressed
-        )
+            #selector(
+                decreaseTextSizeButtonPressed
+            )
 
         decreaseTextSizeButton.toolTip =
-        "Decrease application text size."
+            "Decrease application text size."
 
         resetTextSizeButton.title =
-        "Reset"
+            "Reset"
 
         resetTextSizeButton.bezelStyle =
             .rounded
 
         resetTextSizeButton.target =
-        self
+            self
 
         resetTextSizeButton.action =
-        #selector(
-            resetTextSizeButtonPressed
-        )
+            #selector(
+                resetTextSizeButtonPressed
+            )
 
         resetTextSizeButton.toolTip =
-        "Restore the default application text size."
+            "Restore the default application text size."
 
         increaseTextSizeButton.title =
-        "+"
+            "+"
 
         increaseTextSizeButton.bezelStyle =
             .rounded
 
         increaseTextSizeButton.target =
-        self
+            self
 
         increaseTextSizeButton.action =
-        #selector(
-            increaseTextSizeButtonPressed
-        )
+            #selector(
+                increaseTextSizeButtonPressed
+            )
 
         increaseTextSizeButton.toolTip =
-        "Increase application text size."
+            "Increase application text size."
     }
 
     @objc
@@ -1982,8 +2438,8 @@ final class RemappingRulesWindowController:
 
         do {
             let rules =
-            try remappingController
-                .loadConfiguredRules()
+                try remappingController
+                    .loadConfiguredRules()
 
             ruleEditorSession.initialize(
                 with: rules
@@ -1999,7 +2455,7 @@ final class RemappingRulesWindowController:
             )
 
             saveButton.isEnabled =
-            false
+                false
         }
     }
 
@@ -2012,11 +2468,24 @@ final class RemappingRulesWindowController:
         updateSortHeaderButtons()
         updateFilterControls()
 
+        let validationSnapshot =
+            validationSnapshot()
+
+        let warningAssessment =
+            RemappingConfigurationWarningAssessment(
+                items:
+                    ruleEditorSession.items
+            )
+
         let visibleItems =
-        presentationModel.visibleItems(
-            from:
-                ruleEditorSession.items
-        )
+            presentationModel.visibleItems(
+                from:
+                    ruleEditorSession.items,
+                validationIssueItemIDs:
+                    validationSnapshot.invalidItemIDs,
+                configurationWarningItemIDs:
+                    warningAssessment.affectedRuleIDs
+            )
 
         updateFilterSummary(
             visibleCount:
@@ -2032,16 +2501,16 @@ final class RemappingRulesWindowController:
         refreshChangeState()
 
         window?.contentView?.needsLayout =
-        true
+            true
     }
 
     private func addRuleRow(
         item: RemappingRuleEditorItem
     ) {
         let row =
-        RemappingRuleRowView(
-            item: item
-        )
+            RemappingRuleRowView(
+                item: item
+            )
 
         row.applyTextScale(
             textScale
@@ -2097,6 +2566,15 @@ final class RemappingRulesWindowController:
             )
         }
 
+        row.onMatchingModeChangeRejected = {
+            [weak self] issue in
+
+            self?.setStatus(
+                issue.message,
+                isError: true
+            )
+        }
+
         row.onRuleChanged = {
             [weak self] updatedItem in
 
@@ -2115,12 +2593,12 @@ final class RemappingRulesWindowController:
         ] = row
 
         let insertionIndex =
-        max(
-            rulesStackView
-                .arrangedSubviews
-                .count - 1,
-            0
-        )
+            max(
+                rulesStackView
+                    .arrangedSubviews
+                    .count - 1,
+                0
+            )
 
         rulesStackView.insertArrangedSubview(
             row,
@@ -2128,7 +2606,7 @@ final class RemappingRulesWindowController:
         )
 
         row.translatesAutoresizingMaskIntoConstraints =
-        false
+            false
 
         row.widthAnchor.constraint(
             equalTo:
@@ -2150,46 +2628,46 @@ final class RemappingRulesWindowController:
         }
 
         let editorItemID =
-        row.editorItemID
+            row.editorItemID
 
         let controller =
-        RemapOverridesWindowController(
-            parentWindow:
-                parentWindow,
-            rule:
-                rule,
-            remappingController:
-                remappingController,
-            textScale:
-                textScale,
-            validateCandidateOverrides: {
-                [weak self] candidateOverrides in
+            RemapOverridesWindowController(
+                parentWindow:
+                    parentWindow,
+                rule:
+                    rule,
+                remappingController:
+                    remappingController,
+                textScale:
+                    textScale,
+                validateCandidateOverrides: {
+                    [weak self] candidateOverrides in
 
-                self?.validateCandidateOverrides(
-                    candidateOverrides,
-                    replacingOverridesFor:
-                        editorItemID
-                )
-            },
-            onSave: {
-                [weak row] overrides in
+                    self?.validateCandidateOverrides(
+                        candidateOverrides,
+                        replacingOverridesFor:
+                            editorItemID
+                    )
+                },
+                onSave: {
+                    [weak row] overrides in
 
-                row?.setOverrides(
-                    overrides
-                )
-            },
-            onClose: {
-                [weak self] in
+                    row?.setOverrides(
+                        overrides
+                    )
+                },
+                onClose: {
+                    [weak self] in
 
-                self?.exceptionsWindowController =
-                nil
+                    self?.exceptionsWindowController =
+                        nil
 
-                self?.updateRuleEditorHistoryControls()
-            }
-        )
+                    self?.updateRuleEditorHistoryControls()
+                }
+            )
 
         exceptionsWindowController =
-        controller
+            controller
 
         updateRuleEditorHistoryControls()
 
@@ -2201,29 +2679,29 @@ final class RemappingRulesWindowController:
         replacingOverridesFor editorItemID: UUID
     ) -> String? {
         var replacedTargetItem =
-        false
+            false
 
         let candidateRules =
-        ruleEditorSession
-            .items
-            .compactMap {
-                item -> RemapRule? in
+            ruleEditorSession
+                .items
+                .compactMap {
+                    item -> RemapRule? in
 
-                var candidateItem =
-                item
+                    var candidateItem =
+                        item
 
-                if candidateItem.id
-                    == editorItemID
-                {
-                    candidateItem.overrides =
-                    candidateOverrides
+                    if candidateItem.id
+                        == editorItemID
+                    {
+                        candidateItem.overrides =
+                            candidateOverrides
 
-                    replacedTargetItem =
-                    true
+                        replacedTargetItem =
+                            true
+                    }
+
+                    return candidateItem.rule
                 }
-
-                return candidateItem.rule
-            }
 
         guard replacedTargetItem else {
             return "The parent remapping rule is no longer available."
@@ -2237,7 +2715,7 @@ final class RemappingRulesWindowController:
 
             return nil
         } catch let error
-                    as RemappingRulesValidationError
+            as RemappingRulesValidationError
         {
             return candidateOverrideValidationMessage(
                 for: error
@@ -2249,18 +2727,18 @@ final class RemappingRulesWindowController:
 
     private func candidateOverrideValidationMessage(
         for error:
-        RemappingRulesValidationError
+            RemappingRulesValidationError
     ) -> String {
         switch error {
         case .duplicateSourceKey,
-                .duplicateSourceCombination:
+             .duplicateSourceCombination:
             return "This exception cannot be enabled because its source combination conflicts with an active exact rule or another enabled exception."
 
         case .duplicatePreservingSourceKey:
             return "The current rules contain more than one Preserve Modifiers rule for the same source key."
 
         case .identicalSourceAndDestination,
-                .identicalSourceAndDestinationCombination:
+             .identicalSourceAndDestinationCombination:
             return "An exception cannot replace a source combination with itself."
 
         case .invalidModifierPreservingEndpoints:
@@ -2284,10 +2762,10 @@ final class RemappingRulesWindowController:
             .layoutSubtreeIfNeeded()
 
         let visibleRect =
-        row.convert(
-            row.bounds,
-            to: rulesDocumentView
-        )
+            row.convert(
+                row.bounds,
+                to: rulesDocumentView
+            )
 
         rulesDocumentView.scrollToVisible(
             visibleRect
@@ -2298,9 +2776,9 @@ final class RemappingRulesWindowController:
         _ row: RemappingRuleRowView
     ) {
         let confirmationRequired =
-        appPreferencesController
-            .preferences
-            .confirmsRuleRemoval
+            appPreferencesController
+                .preferences
+                .confirmsRuleRemoval
 
         guard
             ruleRemovalConfirmationController
@@ -2342,8 +2820,8 @@ final class RemappingRulesWindowController:
         }
 
         let itemID =
-        ruleEditorSession
-            .insertEmptyItem()
+            ruleEditorSession
+                .insertEmptyItem()
 
         if let row =
             ruleRowsByItemID[itemID]
@@ -2357,7 +2835,7 @@ final class RemappingRulesWindowController:
     private func beginRuleKeyCapture(
         in row: RemappingRuleRowView,
         field:
-        RemappingRuleRowView.KeyField
+            RemappingRuleRowView.KeyField
     ) {
         if captureRow === row,
            captureField == field {
@@ -2398,7 +2876,15 @@ final class RemappingRulesWindowController:
         fnModifierStateTracker.synchronize(
             isPressed:
                 PhysicalFnKeyState
-                .isPressed()
+                    .isPressed()
+        )
+
+        nonFnModifierStateTracker.synchronize(
+            currentModifiers:
+                KeyModifiers(
+                    appKitFlags:
+                        NSEvent.modifierFlags
+                )
         )
 
         remappingController
@@ -2411,8 +2897,38 @@ final class RemappingRulesWindowController:
     private func handleFlagsChanged(
         _ event: NSEvent
     ) {
+        guard isCapturingAnyKey else {
+            return
+        }
+
+        var currentModifiers =
+            KeyModifiers(
+                appKitFlags:
+                    NSEvent.modifierFlags
+            )
+
+        currentModifiers.formUnion(
+            KeyModifiers(
+                appKitFlags:
+                    event.modifierFlags
+            )
+        )
+
+        currentModifiers.remove(
+            .fn
+        )
+
+        nonFnModifierStateTracker
+            .handleFlagsChanged(
+                keyCode:
+                    CGKeyCode(
+                        event.keyCode
+                    ),
+                currentModifiers:
+                    currentModifiers
+            )
+
         guard
-            isCapturingAnyKey,
             event.keyCode
                 == UInt16(kVK_Function)
         else {
@@ -2422,11 +2938,12 @@ final class RemappingRulesWindowController:
         fnModifierStateTracker
             .handleFlagsChanged(
                 isPressed:
-                    event
-                    .modifierFlags
-                    .contains(
-                        .function
-                    )
+                    PhysicalFnKeyState
+                        .isPressed()
+                    || event.modifierFlags
+                        .contains(
+                            .function
+                        )
             )
     }
 
@@ -2447,9 +2964,9 @@ final class RemappingRulesWindowController:
         }
 
         let combination =
-        keyCombination(
-            from: event
-        )
+            keyCombination(
+                from: event
+            )
 
         if let captureFilterField {
             switch captureFilterField {
@@ -2492,27 +3009,44 @@ final class RemappingRulesWindowController:
     private func keyCombination(
         from event: NSEvent
     ) -> KeyCombination {
-        KeyCombinationInputNormalizer
-            .combination(
+        var capturedNonFnModifiers =
+            nonFnModifierStateTracker
+                .modifiers
+
+        capturedNonFnModifiers.formUnion(
+            KeyModifiers(
+                appKitFlags:
+                    NSEvent.modifierFlags
+            )
+        )
+
+        capturedNonFnModifiers.remove(
+            .fn
+        )
+
+        return KeyCombinationInputNormalizer
+            .capturedCombination(
                 deliveredKeyCode:
                     CGKeyCode(
                         event.keyCode
                     ),
-                modifiers:
+                eventModifiers:
                     KeyModifiers(
                         appKitFlags:
                             event
-                            .modifierFlags
+                                .modifierFlags
                     ),
-                physicalFnIsPressed:
+                capturedNonFnModifiers:
+                    capturedNonFnModifiers,
+                trackedPhysicalFnIsPressed:
                     fnModifierStateTracker
-                    .isPressed
+                        .isPressed
             )
     }
 
     private var isCapturingAnyKey: Bool {
         captureRow != nil
-        || captureFilterField != nil
+            || captureFilterField != nil
     }
 
     private func endKeyCapture() {
@@ -2545,23 +3079,26 @@ final class RemappingRulesWindowController:
         fnModifierStateTracker
             .reset()
 
+        nonFnModifierStateTracker
+            .reset()
+
         updateRuleEditorHistoryControls()
     }
 
     private var canUndoRuleEditorChange:
-    Bool
+        Bool
     {
         !isCapturingAnyKey
-        && exceptionsWindowController == nil
-        && ruleEditorSession.canUndo
+            && exceptionsWindowController == nil
+            && ruleEditorSession.canUndo
     }
 
     private var canRedoRuleEditorChange:
-    Bool
+        Bool
     {
         !isCapturingAnyKey
-        && exceptionsWindowController == nil
-        && ruleEditorSession.canRedo
+            && exceptionsWindowController == nil
+            && ruleEditorSession.canRedo
     }
 
     @objc
@@ -2596,150 +3133,74 @@ final class RemappingRulesWindowController:
 
     private func updateRuleEditorHistoryControls() {
         undoButton.isEnabled =
-        canUndoRuleEditorChange
+            canUndoRuleEditorChange
 
         redoButton.isEnabled =
-        canRedoRuleEditorChange
+            canRedoRuleEditorChange
     }
 
     private func validationSnapshot()
-    -> ValidationSnapshot
+        -> ValidationSnapshot
     {
-        var invalidItemIDs =
-        Set<UUID>()
-
-        var exactOwners:
-        [KeyCombination: [UUID]] = [:]
-
-        var preservingOwners:
-        [CGKeyCode: [UUID]] = [:]
-
-        var hasIncompleteRule =
-        false
-
-        var hasIdentityRule =
-        false
-
-        var hasDuplicateSource =
-        false
-
-        for item in ruleEditorSession.items {
-            guard
-                let rule = item.rule
-            else {
-                hasIncompleteRule =
-                true
-
-                invalidItemIDs.insert(
-                    item.id
-                )
-
-                continue
-            }
-
-            switch rule.matchingMode {
-            case .exact:
-                exactOwners[
-                    rule.source,
-                    default: []
-                ].append(
-                    item.id
-                )
-
-                if rule.source
-                    == rule.destination
-                {
-                    hasIdentityRule =
-                    true
-
-                    invalidItemIDs.insert(
-                        item.id
-                    )
-                }
-
-            case .preserveModifiers:
-                preservingOwners[
-                    rule.source.keyCode,
-                    default: []
-                ].append(
-                    item.id
-                )
-
-                if rule.source.keyCode
-                    == rule.destination.keyCode
-                {
-                    hasIdentityRule =
-                    true
-
-                    invalidItemIDs.insert(
-                        item.id
-                    )
-                }
-
-                for override in rule.overrides
-                where override.isEnabled {
-                    exactOwners[
-                        override.source,
-                        default: []
-                    ].append(
-                        item.id
-                    )
-
-                    if case .replaceWith(
-                        let destination
-                    ) = override.action,
-                       override.source
-                        == destination
-                    {
-                        hasIdentityRule =
-                        true
-
-                        invalidItemIDs.insert(
-                            item.id
-                        )
-                    }
-                }
-            }
-        }
-
-        for owners in exactOwners.values
-        where owners.count > 1 {
-            hasDuplicateSource =
-            true
-
-            invalidItemIDs.formUnion(
-                owners
+        let assessment =
+            RemappingRulesValidationAssessment(
+                items:
+                    ruleEditorSession.items
             )
-        }
-
-        for owners in preservingOwners.values
-        where owners.count > 1 {
-            hasDuplicateSource =
-            true
-
-            invalidItemIDs.formUnion(
-                owners
-            )
-        }
 
         let issue:
-        EditorValidationIssue?
+            EditorValidationIssue?
 
-        if hasDuplicateSource {
-            issue = .duplicateSource
-        } else if hasIdentityRule {
+        switch assessment.primaryIssue {
+        case .duplicateSource:
+            issue =
+                .duplicateSource
+
+        case .identicalSourceAndDestination:
             issue =
                 .identicalSourceAndDestination
-        } else if hasIncompleteRule {
-            issue = .incompleteRule
-        } else {
-            issue = nil
+
+        case .incompleteRule:
+            issue =
+                .incompleteRule
+
+        case nil:
+            issue =
+                nil
         }
 
+        let messagesByItemID:
+            [UUID: String] =
+                Dictionary(
+                    uniqueKeysWithValues:
+                        assessment.invalidItemIDs
+                            .compactMap {
+                                itemID -> (UUID, String)? in
+
+                                guard
+                                    let message =
+                                        assessment.message(
+                                            forRuleID:
+                                                itemID
+                                        )
+                                else {
+                                    return nil
+                                }
+
+                                return (
+                                    itemID,
+                                    message
+                                )
+                            }
+                )
+
         return ValidationSnapshot(
-            issue: issue,
+            issue:
+                issue,
             invalidItemIDs:
-                invalidItemIDs
+                assessment.invalidItemIDs,
+            messagesByItemID:
+                messagesByItemID
         )
     }
 
@@ -2750,19 +3211,17 @@ final class RemappingRulesWindowController:
             itemID,
             row
         ) in ruleRowsByItemID {
-            row.setValidationErrorVisible(
-                snapshot
-                    .invalidItemIDs
-                    .contains(
-                        itemID
-                    )
+            row.setValidationIssueMessage(
+                snapshot.messagesByItemID[
+                    itemID
+                ]
             )
         }
     }
 
     private func applyWarningPresentation(
         _ assessment:
-        RemappingConfigurationWarningAssessment
+            RemappingConfigurationWarningAssessment
     ) {
         warningBanner.setWarning(
             assessment.warning
@@ -2773,16 +3232,16 @@ final class RemappingRulesWindowController:
             row
         ) in ruleRowsByItemID {
             let rowWarning:
-            KeyCombinationConfigurationWarning?
+                KeyCombinationConfigurationWarning?
 
             if assessment.affectsRule(
                 id: itemID
             ) {
                 rowWarning =
-                assessment.warning
+                    assessment.warning
             } else {
                 rowWarning =
-                nil
+                    nil
             }
 
             row.setConfigurationWarning(
@@ -2793,13 +3252,13 @@ final class RemappingRulesWindowController:
 
     private func refreshChangeState() {
         let validationSnapshot =
-        validationSnapshot()
+            validationSnapshot()
 
         let warningAssessment =
-        RemappingConfigurationWarningAssessment(
-            items:
-                ruleEditorSession.items
-        )
+            RemappingConfigurationWarningAssessment(
+                items:
+                    ruleEditorSession.items
+            )
 
         applyValidationAppearance(
             validationSnapshot
@@ -2812,12 +3271,12 @@ final class RemappingRulesWindowController:
         updateRuleEditorHistoryControls()
 
         let hasChanges =
-        ruleEditorSession
-            .hasUnsavedChanges
+            ruleEditorSession
+                .hasUnsavedChanges
 
         saveButton.isEnabled =
-        validationSnapshot.issue == nil
-        && hasChanges
+            validationSnapshot.issue == nil
+                && hasChanges
 
         if let issue =
             validationSnapshot.issue
@@ -2863,7 +3322,7 @@ final class RemappingRulesWindowController:
     @discardableResult
     private func persistRules() -> Bool {
         let snapshot =
-        validationSnapshot()
+            validationSnapshot()
 
         applyValidationAppearance(
             snapshot
@@ -2883,7 +3342,7 @@ final class RemappingRulesWindowController:
         guard
             let rules =
                 ruleEditorSession
-                .completeRules
+                    .completeRules
         else {
             setStatus(
                 "Complete every highlighted rule before saving.",
@@ -2908,19 +3367,19 @@ final class RemappingRulesWindowController:
 
             return true
         } catch let error
-                    as RemappingRulesValidationError
+            as RemappingRulesValidationError
         {
             switch error {
             case .duplicateSourceKey,
-                    .duplicateSourceCombination,
-                    .duplicatePreservingSourceKey:
+                 .duplicateSourceCombination,
+                 .duplicatePreservingSourceKey:
                 setStatus(
                     "Each active source key or key combination can appear only once.",
                     isError: true
                 )
 
             case .identicalSourceAndDestination,
-                    .identicalSourceAndDestinationCombination:
+                 .identicalSourceAndDestinationCombination:
                 setStatus(
                     "A source and destination combination cannot be identical.",
                     isError: true
@@ -2960,12 +3419,11 @@ final class RemappingRulesWindowController:
         _ message: String,
         isError: Bool
     ) {
-        statusLabel.stringValue =
-        message
-
-        statusLabel.textColor =
-        isError
-        ? .systemRed
-        : .secondaryLabelColor
+        statusView.setMessage(
+            message,
+            isError:
+                isError
+        )
     }
+
 }

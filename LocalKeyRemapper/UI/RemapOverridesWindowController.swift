@@ -87,6 +87,7 @@ final class RemapOverridesWindowController:
         case incomplete
         case duplicateActiveSource
         case sourceKeyMismatch
+        case parentSourceConflict
         case identityReplacement
         case externalConflict(String)
 
@@ -100,6 +101,9 @@ final class RemapOverridesWindowController:
 
             case .sourceKeyMismatch:
                 return "Every exception must use the parent rule's physical source key."
+
+            case .parentSourceConflict:
+                return "An exception cannot use the exact same source combination as its parent rule."
 
             case .identityReplacement:
                 return "An exception cannot replace a combination with itself."
@@ -115,6 +119,14 @@ final class RemapOverridesWindowController:
     private struct ValidationSnapshot {
         let issue: ValidationIssue?
         let invalidRows: Set<ObjectIdentifier>
+    }
+
+    private struct WarningSnapshot {
+        let warning:
+            KeyCombinationConfigurationWarning?
+
+        let affectedRows:
+            Set<ObjectIdentifier>
     }
 
     private struct EditorSnapshot: Equatable {
@@ -170,6 +182,9 @@ final class RemapOverridesWindowController:
         labelWithString: "Destination"
     )
 
+    private let warningBanner =
+        ConfigurationWarningBannerView()
+
     private let scrollView = NSScrollView()
     private let documentView = FlippedView()
     private let rowsStack = NSStackView()
@@ -198,6 +213,9 @@ final class RemapOverridesWindowController:
 
     private var fnModifierStateTracker =
         FnModifierStateTracker()
+
+    private var nonFnModifierStateTracker =
+        NonFnModifierStateTracker()
 
     private var historySnapshots:
         [EditorSnapshot] = []
@@ -369,19 +387,17 @@ final class RemapOverridesWindowController:
         }
 
         let sourceName =
-            KeyCodeDisplayName.name(
+            KeyCombinationDisplayName.name(
                 for:
                     parentRule
                         .source
-                        .keyCode
             )
 
         let destinationName =
-            KeyCodeDisplayName.name(
+            KeyCombinationDisplayName.name(
                 for:
                     parentRule
                         .destination
-                        .keyCode
             )
 
         if exceptionsAreRuntimeActive {
@@ -448,6 +464,7 @@ final class RemapOverridesWindowController:
             [
                 titleLabel,
                 descriptionLabel,
+                warningBanner,
                 headerView,
                 scrollView,
                 actionsStack,
@@ -499,6 +516,12 @@ final class RemapOverridesWindowController:
                     constant: -24
                 ),
 
+                warningBanner.widthAnchor.constraint(
+                    equalTo:
+                        mainStack
+                            .widthAnchor
+                ),
+
                 headerView.widthAnchor.constraint(
                     equalTo:
                         mainStack
@@ -531,6 +554,7 @@ final class RemapOverridesWindowController:
     {
         let headerView = NSView()
         let arrowSpacer = NSView()
+        let issueSpacer = NSView()
         let removeSpacer = NSView()
 
         let views: [NSView] = [
@@ -539,6 +563,7 @@ final class RemapOverridesWindowController:
             arrowSpacer,
             actionHeader,
             destinationHeader,
+            issueSpacer,
             removeSpacer
         ]
 
@@ -598,7 +623,7 @@ final class RemapOverridesWindowController:
 
                 sourceHeader.widthAnchor.constraint(
                     greaterThanOrEqualToConstant:
-                        180
+                        160
                 ),
 
                 arrowSpacer.leadingAnchor.constraint(
@@ -656,14 +681,25 @@ final class RemapOverridesWindowController:
 
                 destinationHeader.widthAnchor.constraint(
                     greaterThanOrEqualToConstant:
-                        180
+                        160
+                ),
+
+                issueSpacer.leadingAnchor.constraint(
+                    equalTo:
+                        destinationHeader
+                            .trailingAnchor,
+                    constant: 8
+                ),
+
+                issueSpacer.widthAnchor.constraint(
+                    equalToConstant: 24
                 ),
 
                 removeSpacer.leadingAnchor.constraint(
                     equalTo:
-                        destinationHeader
+                        issueSpacer
                             .trailingAnchor,
-                    constant: 10
+                    constant: 8
                 ),
 
                 removeSpacer.trailingAnchor.constraint(
@@ -1032,6 +1068,17 @@ final class RemapOverridesWindowController:
             return true
         }
 
+        if row.sourceCombination
+            == parentRule.source
+        {
+            setStatus(
+                "This exception cannot be enabled because its source combination is already used by the parent rule.",
+                isError: true
+            )
+
+            return false
+        }
+
         guard exceptionsAreRuntimeActive else {
             return true
         }
@@ -1221,6 +1268,14 @@ final class RemapOverridesWindowController:
                     .isPressed()
         )
 
+        nonFnModifierStateTracker.synchronize(
+            currentModifiers:
+                KeyModifiers(
+                    appKitFlags:
+                        NSEvent.modifierFlags
+                )
+        )
+
         remappingController
             .beginKeyCapture()
 
@@ -1231,11 +1286,14 @@ final class RemapOverridesWindowController:
         switch field {
         case .source:
             let sourceName =
-                KeyCodeDisplayName.name(
+                KeyCombinationDisplayName.name(
                     for:
-                        parentRule
-                            .source
-                            .keyCode
+                        KeyCombination(
+                            keyCode:
+                                parentRule
+                                    .source
+                                    .keyCode
+                        )
                 )
 
             setStatus(
@@ -1254,8 +1312,38 @@ final class RemapOverridesWindowController:
     private func handleFlagsChanged(
         _ event: NSEvent
     ) {
+        guard captureRow != nil else {
+            return
+        }
+
+        var currentModifiers =
+            KeyModifiers(
+                appKitFlags:
+                    NSEvent.modifierFlags
+            )
+
+        currentModifiers.formUnion(
+            KeyModifiers(
+                appKitFlags:
+                    event.modifierFlags
+            )
+        )
+
+        currentModifiers.remove(
+            .fn
+        )
+
+        nonFnModifierStateTracker
+            .handleFlagsChanged(
+                keyCode:
+                    CGKeyCode(
+                        event.keyCode
+                    ),
+                currentModifiers:
+                    currentModifiers
+            )
+
         guard
-            captureRow != nil,
             event.keyCode
                 == UInt16(
                     kVK_Function
@@ -1266,8 +1354,9 @@ final class RemapOverridesWindowController:
 
         fnModifierStateTracker.handleFlagsChanged(
             isPressed:
-                event
-                    .modifierFlags
+                PhysicalFnKeyState
+                    .isPressed()
+                || event.modifierFlags
                     .contains(
                         .function
                     )
@@ -1284,20 +1373,37 @@ final class RemapOverridesWindowController:
             return false
         }
 
+        var capturedNonFnModifiers =
+            nonFnModifierStateTracker
+                .modifiers
+
+        capturedNonFnModifiers.formUnion(
+            KeyModifiers(
+                appKitFlags:
+                    NSEvent.modifierFlags
+            )
+        )
+
+        capturedNonFnModifiers.remove(
+            .fn
+        )
+
         let combination =
             KeyCombinationInputNormalizer
-                .combination(
+                .capturedCombination(
                     deliveredKeyCode:
                         CGKeyCode(
                             event.keyCode
                         ),
-                    modifiers:
+                    eventModifiers:
                         KeyModifiers(
                             appKitFlags:
                                 event
                                     .modifierFlags
                         ),
-                    physicalFnIsPressed:
+                    capturedNonFnModifiers:
+                        capturedNonFnModifiers,
+                    trackedPhysicalFnIsPressed:
                         fnModifierStateTracker
                             .isPressed
                 )
@@ -1309,11 +1415,14 @@ final class RemapOverridesWindowController:
                     .keyCode
         {
             let sourceName =
-                KeyCodeDisplayName.name(
+                KeyCombinationDisplayName.name(
                     for:
-                        parentRule
-                            .source
-                            .keyCode
+                        KeyCombination(
+                            keyCode:
+                                parentRule
+                                    .source
+                                    .keyCode
+                        )
                 )
 
             setStatus(
@@ -1347,6 +1456,9 @@ final class RemapOverridesWindowController:
 
         remappingController
             .endKeyCapture()
+
+        fnModifierStateTracker.reset()
+        nonFnModifierStateTracker.reset()
 
         updateLocalHistoryControls()
     }
@@ -1566,6 +1678,7 @@ final class RemapOverridesWindowController:
         var hasDuplicateActiveSource =
             false
         var hasSourceMismatch = false
+        var hasParentSourceConflict = false
         var hasIdentity = false
 
         for row in rows {
@@ -1590,6 +1703,19 @@ final class RemapOverridesWindowController:
                     .keyCode
             {
                 hasSourceMismatch =
+                    true
+
+                invalidRows.insert(
+                    ObjectIdentifier(
+                        row
+                    )
+                )
+            }
+
+            if override.source
+                == parentRule.source
+            {
+                hasParentSourceConflict =
                     true
 
                 invalidRows.insert(
@@ -1647,6 +1773,9 @@ final class RemapOverridesWindowController:
         } else if hasSourceMismatch {
             issue =
                 .sourceKeyMismatch
+        } else if hasParentSourceConflict {
+            issue =
+                .parentSourceConflict
         } else if hasIdentity {
             issue =
                 .identityReplacement
@@ -1705,6 +1834,68 @@ final class RemapOverridesWindowController:
         }
     }
 
+    private func warningSnapshot()
+        -> WarningSnapshot
+    {
+        var firstWarning:
+            KeyCombinationConfigurationWarning?
+
+        var affectedRows =
+            Set<ObjectIdentifier>()
+
+        for row in rows {
+            guard
+                let warning =
+                    row.currentConfigurationWarning
+            else {
+                continue
+            }
+
+            firstWarning =
+                firstWarning
+                ?? warning
+
+            affectedRows.insert(
+                ObjectIdentifier(
+                    row
+                )
+            )
+        }
+
+        return WarningSnapshot(
+            warning:
+                firstWarning,
+            affectedRows:
+                affectedRows
+        )
+    }
+
+    private func applyWarningAppearance(
+        _ snapshot:
+            WarningSnapshot
+    ) {
+        for row in rows {
+            let rowIsAffected =
+                snapshot
+                    .affectedRows
+                    .contains(
+                        ObjectIdentifier(
+                            row
+                        )
+                    )
+
+            row.setConfigurationWarning(
+                rowIsAffected
+                    ? row.currentConfigurationWarning
+                    : nil
+            )
+        }
+
+        warningBanner.setWarning(
+            snapshot.warning
+        )
+    }
+
     private func refreshState() {
         updateLocalHistoryControls()
 
@@ -1713,6 +1904,13 @@ final class RemapOverridesWindowController:
 
         applyValidationAppearance(
             snapshot
+        )
+
+        let warningSnapshot =
+            warningSnapshot()
+
+        applyWarningAppearance(
+            warningSnapshot
         )
 
         let hasChanges =
@@ -1728,16 +1926,6 @@ final class RemapOverridesWindowController:
             setStatus(
                 issue.message,
                 isError: true
-            )
-
-            return
-        }
-
-        if let warning =
-            currentExceptionConfigurationWarning
-        {
-            setSuggestion(
-                warning.message
             )
 
             return
@@ -1843,23 +2031,6 @@ final class RemapOverridesWindowController:
         onClose()
     }
 
-    private var currentExceptionConfigurationWarning:
-        KeyCombinationConfigurationWarning?
-    {
-        guard
-            let overrides =
-                completeOverrides
-        else {
-            return nil
-        }
-
-        return KeyCombinationConfigurationWarningPolicy
-            .warning(
-                for:
-                    overrides
-            )
-    }
-
     private func setStatus(
         _ message: String,
         isError: Bool
@@ -1871,16 +2042,6 @@ final class RemapOverridesWindowController:
             isError
                 ? .systemRed
                 : .secondaryLabelColor
-    }
-
-    private func setSuggestion(
-        _ message: String
-    ) {
-        statusLabel.stringValue =
-            message
-
-        statusLabel.textColor =
-            .systemOrange
     }
 
     private func applyTextScale() {
@@ -1916,6 +2077,10 @@ final class RemapOverridesWindowController:
 
         destinationHeader.font =
             enabledHeader.font
+
+        warningBanner.applyTextScale(
+            textScale
+        )
 
         statusLabel.font =
             NSFont.systemFont(

@@ -17,6 +17,19 @@ import Foundation
 nonisolated struct RemappingRuleEditorItem:
     Equatable
 {
+    enum MatchingModeTransitionIssue:
+        Equatable
+    {
+        case endpointModifiers
+
+        var message: String {
+            switch self {
+            case .endpointModifiers:
+                return "Preserve Modifiers requires source and destination keys without modifiers. Remove Fn, Shift, Control, Option, or Command before changing this rule."
+            }
+        }
+    }
+
     let id: UUID
 
     var sourceCombination: KeyCombination?
@@ -169,12 +182,48 @@ nonisolated struct RemappingRuleEditorItem:
         }
     }
 
-    /// Changes matching mode without permanently losing Exact Only
-    /// modifiers.
+    /// Returns why the requested matching-mode transition cannot be applied.
     ///
-    /// Exact Only → Preserve Modifiers:
-    /// - remembers the complete source and destination;
-    /// - removes active endpoint modifiers as required by Preserve Modifiers.
+    /// Preserve Modifiers uses unmodified physical source and destination keys.
+    /// Converting an Exact Only rule that contains endpoint modifiers would
+    /// silently broaden the rule, so the transition is rejected instead.
+    func matchingModeTransitionIssue(
+        to requestedMode:
+            RemapMatchingMode
+    ) -> MatchingModeTransitionIssue? {
+        guard
+            requestedMode == .preserveModifiers,
+            matchingMode != .preserveModifiers
+        else {
+            return nil
+        }
+
+        let sourceHasModifiers =
+            sourceCombination?
+                .modifiers
+                .isEmpty == false
+
+        let destinationHasModifiers =
+            destinationCombination?
+                .modifiers
+                .isEmpty == false
+
+        guard
+            sourceHasModifiers
+                || destinationHasModifiers
+        else {
+            return nil
+        }
+
+        return .endpointModifiers
+    }
+
+    /// Changes matching mode without permanently losing Exact Only
+    /// combinations.
+    ///
+    /// Exact Only → Preserve Modifiers is applied only when both endpoints
+    /// already contain no modifiers. A modified endpoint is never stripped
+    /// silently because doing so would change which physical input matches.
     ///
     /// Preserve Modifiers → Exact Only:
     /// - restores the remembered Exact Only combinations when available;
@@ -186,6 +235,14 @@ nonisolated struct RemappingRuleEditorItem:
         guard
             requestedMode
                 != matchingMode
+        else {
+            return
+        }
+
+        guard
+            matchingModeTransitionIssue(
+                to: requestedMode
+            ) == nil
         else {
             return
         }

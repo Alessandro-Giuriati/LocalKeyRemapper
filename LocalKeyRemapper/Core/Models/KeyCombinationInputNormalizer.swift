@@ -17,6 +17,57 @@ import CoreGraphics
 /// the persistent remapping model.
 nonisolated enum KeyCombinationInputNormalizer {
 
+    /// Builds one capture result by combining the final key event with the
+    /// modifier state preserved throughout the active capture session.
+    ///
+    /// F1 through F12 events can omit Shift, Control, Option, or Command from
+    /// their own event metadata. `capturedNonFnModifiers` contains the ordered
+    /// state observed before the final key-down event, so those modifiers are
+    /// not lost. Fn remains separate because AppKit's `.function` flag can
+    /// describe an F-key event even when the physical Fn key is not pressed.
+    static func capturedCombination(
+        deliveredKeyCode:
+            CGKeyCode,
+        eventModifiers:
+            KeyModifiers,
+        capturedNonFnModifiers:
+            KeyModifiers,
+        trackedPhysicalFnIsPressed:
+            Bool
+    ) -> KeyCombination {
+        var mergedModifiers =
+            eventModifiers
+
+        mergedModifiers.remove(
+            .fn
+        )
+
+        var normalizedCapturedModifiers =
+            capturedNonFnModifiers
+
+        normalizedCapturedModifiers.remove(
+            .fn
+        )
+
+        mergedModifiers.formUnion(
+            normalizedCapturedModifiers
+        )
+
+        let physicalFnIsPressed =
+            trackedPhysicalFnIsPressed
+            || PhysicalFnKeyState
+                .isPressed()
+
+        return combination(
+            deliveredKeyCode:
+                deliveredKeyCode,
+            modifiers:
+                mergedModifiers,
+            physicalFnIsPressed:
+                physicalFnIsPressed
+        )
+    }
+
     static func combination(
         deliveredKeyCode:
             CGKeyCode,
@@ -30,7 +81,7 @@ nonisolated enum KeyCombinationInputNormalizer {
 
         // Event-specific function metadata is not sufficient evidence that
         // the physical Fn key is down. The physical state is supplied
-        // separately by PhysicalFnKeyState.
+        // separately by PhysicalFnKeyState or an ordered capture tracker.
         normalizedModifiers.remove(
             .fn
         )

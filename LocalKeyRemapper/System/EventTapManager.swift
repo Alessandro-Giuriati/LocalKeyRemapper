@@ -26,7 +26,8 @@ nonisolated enum EventTapError:
 /// the keyboard event tap.
 ///
 /// The event tap listens for key-down, key-up, and modifier-state events.
-/// Modifier-state events are used only to track the physical Fn/Globe key.
+/// Modifier-state events preserve the supported physical modifier state so
+/// function-key events can be matched without losing held modifiers.
 /// It does not store, log, persist, or transmit keyboard input.
 @MainActor
 final class EventTapManager:
@@ -60,10 +61,18 @@ final class EventTapManager:
     private var activeDecisions:
         [CGKeyCode: RemapDecision] = [:]
 
-    /// Tracks Fn from ordered modifier events instead of sampling its state
-    /// after a key event has already been delivered.
+    /// Tracks Fn from ordered modifier events instead of relying only on
+    /// function-key metadata attached to the final key event.
     private var fnModifierStateTracker =
         FnModifierStateTracker()
+
+    /// Preserves Shift, Control, Option, and Command across runtime events.
+    ///
+    /// Some F1 through F12 events omit these modifiers even while they remain
+    /// physically held. This tracker keeps the ordered modifier state needed
+    /// to match the same combination that the editor captured.
+    private var nonFnModifierStateTracker =
+        NonFnModifierStateTracker()
 
     var isRunning: Bool {
         eventTap != nil &&
@@ -152,11 +161,7 @@ final class EventTapManager:
                 true
         )
 
-        fnModifierStateTracker.synchronize(
-            isPressed:
-                PhysicalFnKeyState
-                    .isPressed()
-        )
+        synchronizeModifierState()
 
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
@@ -217,7 +222,7 @@ final class EventTapManager:
                 true
         )
 
-        fnModifierStateTracker.reset()
+        resetModifierState()
     }
 
     func pause() {
@@ -244,7 +249,7 @@ final class EventTapManager:
                 true
         )
 
-        fnModifierStateTracker.reset()
+        resetModifierState()
     }
 
     func resume() {
@@ -261,11 +266,7 @@ final class EventTapManager:
                 true
         )
 
-        fnModifierStateTracker.synchronize(
-            isPressed:
-                PhysicalFnKeyState
-                    .isPressed()
-        )
+        synchronizeModifierState()
 
         CGEvent.tapEnable(
             tap:
@@ -327,7 +328,7 @@ final class EventTapManager:
                     true
             )
 
-            fnModifierStateTracker.reset()
+            resetModifierState()
 
             scheduleInterruptionNotification()
 
@@ -338,7 +339,7 @@ final class EventTapManager:
         }
 
         if eventType == .flagsChanged {
-            updateFnModifierState(
+            updateModifierState(
                 from:
                     event
             )
@@ -368,15 +369,18 @@ final class EventTapManager:
 
         let sourceCombination =
             KeyCombinationInputNormalizer
-                .combination(
+                .capturedCombination(
                     deliveredKeyCode:
                         sourceKeyCode,
-                    modifiers:
+                    eventModifiers:
                         KeyModifiers(
                             eventFlags:
                                 event.flags
                         ),
-                    physicalFnIsPressed:
+                    capturedNonFnModifiers:
+                        nonFnModifierStateTracker
+                            .modifiers,
+                    trackedPhysicalFnIsPressed:
                         fnModifierStateTracker
                             .isPressed
                 )
@@ -403,7 +407,37 @@ final class EventTapManager:
             )
     }
 
-    private func updateFnModifierState(
+    private func synchronizeModifierState() {
+        fnModifierStateTracker.synchronize(
+            isPressed:
+                PhysicalFnKeyState
+                    .isPressed()
+        )
+
+        var currentModifiers =
+            KeyModifiers(
+                eventFlags:
+                    CGEventSource.flagsState(
+                        .combinedSessionState
+                    )
+            )
+
+        currentModifiers.remove(
+            .fn
+        )
+
+        nonFnModifierStateTracker.synchronize(
+            currentModifiers:
+                currentModifiers
+        )
+    }
+
+    private func resetModifierState() {
+        fnModifierStateTracker.reset()
+        nonFnModifierStateTracker.reset()
+    }
+
+    private func updateModifierState(
         from event:
             CGEvent
     ) {
@@ -412,6 +446,24 @@ final class EventTapManager:
                 event.getIntegerValueField(
                     .keyboardEventKeycode
                 )
+            )
+
+        var currentModifiers =
+            KeyModifiers(
+                eventFlags:
+                    event.flags
+            )
+
+        currentModifiers.remove(
+            .fn
+        )
+
+        nonFnModifierStateTracker
+            .handleFlagsChanged(
+                keyCode:
+                    keyCode,
+                currentModifiers:
+                    currentModifiers
             )
 
         guard
@@ -430,6 +482,8 @@ final class EventTapManager:
                     .contains(
                         .maskSecondaryFn
                     )
+                || PhysicalFnKeyState
+                    .isPressed()
         )
     }
 

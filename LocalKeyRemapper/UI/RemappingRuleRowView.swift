@@ -383,6 +383,10 @@ final class RemappingRuleRowView: NSView {
     var onRemoveRequested: (() -> Void)?
     var onMatchingModeChangeRequested:
         ((RemappingRuleEditorItem) -> Bool)?
+
+    var onMatchingModeChangeRejected:
+        ((RemappingRuleEditorItem.MatchingModeTransitionIssue) -> Void)?
+
     var onRuleChanged: ((RemappingRuleEditorItem) -> Void)?
 
     private let sourceKeyButton = NSButton()
@@ -404,8 +408,8 @@ final class RemappingRuleRowView: NSView {
 
     private let exceptionsButton = NSButton()
 
-    private let warningIndicatorImageView =
-        NSImageView()
+    private let issuesView =
+        RemappingRuleIssuesView()
 
     private let removeButton = NSButton()
 
@@ -414,9 +418,6 @@ final class RemappingRuleRowView: NSView {
 
     private var isShowingValidationError =
         false
-
-    private var configurationWarning:
-        KeyCombinationConfigurationWarning?
 
     private var textScale: CGFloat = 1.0
 
@@ -508,7 +509,6 @@ final class RemappingRuleRowView: NSView {
         super.viewDidChangeEffectiveAppearance()
 
         updateValidationAppearance()
-        updateWarningIndicatorAppearance()
     }
 
     func setCombination(
@@ -591,16 +591,30 @@ final class RemappingRuleRowView: NSView {
         updateValidationAppearance()
     }
 
+    /// Associates a blocking validation message with this row.
+    ///
+    /// The message controls only presentation and never changes editor data.
+    func setValidationIssueMessage(
+        _ message: String?
+    ) {
+        issuesView.setValidationMessage(
+            message
+        )
+
+        setValidationErrorVisible(
+            message != nil
+        )
+    }
+
     /// Shows a small informational warning indicator without changing the
     /// row's validation state or editable data.
     func setConfigurationWarning(
         _ warning:
             KeyCombinationConfigurationWarning?
     ) {
-        configurationWarning =
+        issuesView.setConfigurationWarning(
             warning
-
-        updateWarningIndicatorAppearance()
+        )
     }
 
     func applyTextScale(
@@ -655,7 +669,9 @@ final class RemappingRuleRowView: NSView {
         rowHeightConstraint?.constant =
             42 * scale
 
-        updateWarningIndicatorAppearance()
+        issuesView.applyTextScale(
+            scale
+        )
 
         needsLayout = true
     }
@@ -709,27 +725,6 @@ final class RemappingRuleRowView: NSView {
         exceptionsButton.toolTip =
             "View and edit stored exceptions. They are active only in Preserve Modifiers mode."
 
-        warningIndicatorImageView.imageScaling =
-            .scaleProportionallyDown
-
-        warningIndicatorImageView.setContentHuggingPriority(
-            .required,
-            for: .horizontal
-        )
-
-        warningIndicatorImageView
-            .setContentCompressionResistancePriority(
-                .required,
-                for: .horizontal
-            )
-
-        warningIndicatorImageView.setAccessibilityLabel(
-            "Configuration warning"
-        )
-
-        warningIndicatorImageView.isHidden =
-            true
-
         removeButton.title = "Remove"
         removeButton.bezelStyle = .rounded
         removeButton.hasDestructiveAction =
@@ -744,7 +739,7 @@ final class RemappingRuleRowView: NSView {
             destinationKeyButton,
             behaviorPopUpButton,
             exceptionsButton,
-            warningIndicatorImageView,
+            issuesView,
             removeButton
         ]
 
@@ -844,32 +839,26 @@ final class RemappingRuleRowView: NSView {
                     equalToConstant: 116
                 ),
 
-                warningIndicatorImageView.leadingAnchor.constraint(
+                issuesView.leadingAnchor.constraint(
                     equalTo:
                         exceptionsButton
                             .trailingAnchor,
                     constant: 6
                 ),
 
-                warningIndicatorImageView.centerYAnchor.constraint(
+                issuesView.centerYAnchor.constraint(
                     equalTo:
                         destinationKeyButton
                             .centerYAnchor
                 ),
 
-                warningIndicatorImageView.widthAnchor.constraint(
-                    equalToConstant: 22
-                ),
-
-                warningIndicatorImageView.heightAnchor.constraint(
-                    equalTo:
-                        warningIndicatorImageView
-                            .widthAnchor
+                issuesView.widthAnchor.constraint(
+                    equalToConstant: 72
                 ),
 
                 removeButton.leadingAnchor.constraint(
                     equalTo:
-                        warningIndicatorImageView
+                        issuesView
                             .trailingAnchor,
                     constant: 6
                 ),
@@ -1038,38 +1027,6 @@ final class RemappingRuleRowView: NSView {
         }
     }
 
-    private func updateWarningIndicatorAppearance() {
-        warningIndicatorImageView.image =
-            NSImage(
-                systemSymbolName:
-                    "exclamationmark.triangle.fill",
-                accessibilityDescription:
-                    "Configuration warning"
-            )?
-            .withSymbolConfiguration(
-                NSImage.SymbolConfiguration(
-                    pointSize:
-                        13 * textScale,
-                    weight:
-                        .medium
-                )
-            )
-
-        warningIndicatorImageView.contentTintColor =
-            .systemOrange
-
-        warningIndicatorImageView.isHidden =
-            configurationWarning == nil
-
-        warningIndicatorImageView.toolTip =
-            configurationWarning?.message
-
-        warningIndicatorImageView.setAccessibilityValue(
-            configurationWarning?.message
-                ?? "No configuration warning"
-        )
-    }
-
     private func buttonTitle(
         for combination:
             KeyCombination?
@@ -1104,6 +1061,18 @@ final class RemappingRuleRowView: NSView {
     ) -> [String] {
         let currentEditorItem =
             editorItem
+
+        if mode == .preserveModifiers,
+           currentEditorItem
+            .matchingModeTransitionIssue(
+                to: mode
+            ) != nil
+        {
+            return [
+                "Unavailable while source or destination contains modifiers.",
+                "Remove Fn, Shift, Control, Option, or Command first."
+            ]
+        }
 
         guard
             let sourceCombination =
@@ -1329,8 +1298,26 @@ final class RemappingRuleRowView: NSView {
             return
         }
 
-        var candidateItem =
+        let currentItem =
             editorItem
+
+        if let transitionIssue =
+            currentItem
+                .matchingModeTransitionIssue(
+                    to: requestedMode
+                )
+        {
+            synchronizeBehaviorControl()
+
+            onMatchingModeChangeRejected?(
+                transitionIssue
+            )
+
+            return
+        }
+
+        var candidateItem =
+            currentItem
 
         candidateItem.setMatchingMode(
             requestedMode
