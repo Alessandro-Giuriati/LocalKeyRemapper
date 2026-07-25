@@ -292,6 +292,13 @@ final class StatusBarController:
             )
     }
 
+    func popoverDidShow(
+        _ notification:
+            Notification
+    ) {
+        configureDisplayedPopoverWindow()
+    }
+
     func popoverDidClose(
         _ notification:
             Notification
@@ -300,6 +307,47 @@ final class StatusBarController:
             .highlight(
                 false
             )
+    }
+
+    /// Keeps only the status popover above a full-screen application.
+    ///
+    /// This does not activate LocalKeyRemapper and does not bring its main
+    /// window forward. The currently active application remains active.
+    private func configureDisplayedPopoverWindow() {
+        guard
+            let window =
+                popover.contentViewController?
+                    .view
+                    .window
+        else {
+            return
+        }
+
+        window.level =
+            .popUpMenu
+
+        var collectionBehavior:
+            NSWindow.CollectionBehavior = [
+                .canJoinAllSpaces,
+                .transient
+            ]
+
+        if #available(macOS 26.0, *) {
+            collectionBehavior.insert(
+                .canJoinAllApplications
+            )
+        } else {
+            collectionBehavior.insert(
+                .fullScreenAuxiliary
+            )
+        }
+
+        window.collectionBehavior
+            .formUnion(
+                collectionBehavior
+            )
+
+        window.orderFrontRegardless()
     }
 
     private func performPrimaryAction() {
