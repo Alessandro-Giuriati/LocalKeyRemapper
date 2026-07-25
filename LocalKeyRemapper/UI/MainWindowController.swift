@@ -19,9 +19,7 @@ private final class MainWindow: NSWindow {
     var flagsChangedHandler: ((NSEvent) -> Void)?
     var keyDownHandler: ((NSEvent) -> Bool)?
 
-    override func sendEvent(
-        _ event: NSEvent
-    ) {
+    override func sendEvent(_ event: NSEvent) {
         if event.type == .flagsChanged {
             flagsChangedHandler?(event)
         }
@@ -142,11 +140,12 @@ final class MainWindowController:
         labelWithString: "Interface"
     )
 
-    private let showMenuBarIconCheckbox = NSButton(
-        checkboxWithTitle: "Show icon in menu bar",
-        target: nil,
-        action: nil
+    private let showMenuBarIconLabel = NSTextField(
+        labelWithString: "Show icon in menu bar"
     )
+
+    private let showMenuBarIconSwitch = NSSwitch()
+    private let menuBarIconVisibilityStack = NSStackView()
 
     private let textSizeLabel = NSTextField(
         labelWithString: "Text size"
@@ -411,7 +410,7 @@ final class MainWindowController:
         manageRulesButton.font = controlFont
 
         interfaceSectionTitleLabel.font = sectionTitleFont
-        showMenuBarIconCheckbox.font = controlFont
+        showMenuBarIconLabel.font = controlFont
         textSizeLabel.font = controlFont
         decreaseTextSizeButton.font = controlFont
         resetTextSizeButton.font = controlFont
@@ -431,6 +430,14 @@ final class MainWindowController:
             )
 
         accessibilityPermissionStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for: textScale,
+                minimum: 6,
+                maximum: 12
+            )
+
+        menuBarIconVisibilityStack.spacing =
             InterfaceLayoutMetrics.scaled(
                 8,
                 for: textScale,
@@ -515,12 +522,12 @@ final class MainWindowController:
         requestWindowResizeToFitContent()
     }
 
-    /// Updates the checkbox when the preference changes elsewhere, such as
+    /// Updates the switch when the preference changes elsewhere, such as
     /// from the application's native menu.
     func updateMenuBarIconVisibility(
         _ showsMenuBarIcon: Bool
     ) {
-        showMenuBarIconCheckbox.state =
+        showMenuBarIconSwitch.state =
             showsMenuBarIcon ? .on : .off
     }
 
@@ -592,7 +599,7 @@ final class MainWindowController:
         interfaceStack.setViews(
             [
                 interfaceSectionTitleLabel,
-                showMenuBarIconCheckbox,
+                menuBarIconVisibilityStack,
                 textSizeStack
             ],
             in: .leading
@@ -628,6 +635,8 @@ final class MainWindowController:
             false
         rulesSectionStack.translatesAutoresizingMaskIntoConstraints = false
         interfaceStack.translatesAutoresizingMaskIntoConstraints = false
+        menuBarIconVisibilityStack.translatesAutoresizingMaskIntoConstraints =
+            false
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         configureContentScrollView()
@@ -708,6 +717,9 @@ final class MainWindowController:
                 ),
                 interfaceStack.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
+                ),
+                menuBarIconVisibilityStack.widthAnchor.constraint(
+                    equalTo: interfaceStack.widthAnchor
                 ),
                 statusLabel.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
@@ -1098,6 +1110,9 @@ final class MainWindowController:
         )
         remappingSwitch.toolTip =
             "Enable or disable keyboard remapping."
+        remappingSwitch.setAccessibilityLabel(
+            "Keyboard remapping"
+        )
         remappingSwitch.setContentHuggingPriority(
             .required,
             for: .horizontal
@@ -1171,7 +1186,7 @@ final class MainWindowController:
     }
 
     private func configureLaunchBehavior() {
-        launchBehaviorControl.segmentStyle = .rounded
+        launchBehaviorControl.segmentStyle = .automatic
         launchBehaviorControl.target = self
         launchBehaviorControl.action = #selector(
             launchBehaviorChanged
@@ -1190,7 +1205,8 @@ final class MainWindowController:
         launchBehaviorStack.orientation = .vertical
         launchBehaviorStack.alignment = .leading
 
-        launchBehaviorControl.translatesAutoresizingMaskIntoConstraints = false
+        launchBehaviorControl.translatesAutoresizingMaskIntoConstraints =
+            false
         launchBehaviorControl.widthAnchor.constraint(
             equalTo: launchBehaviorStack.widthAnchor
         ).isActive = true
@@ -1295,16 +1311,41 @@ final class MainWindowController:
     }
 
     private func configureMenuBarVisibilityPreference() {
-        showMenuBarIconCheckbox.target = self
-        showMenuBarIconCheckbox.action = #selector(
+        showMenuBarIconLabel.setContentHuggingPriority(
+            .required,
+            for: .horizontal
+        )
+
+        showMenuBarIconSwitch.target = self
+        showMenuBarIconSwitch.action = #selector(
             menuBarIconVisibilityChanged
         )
-        showMenuBarIconCheckbox.toolTip =
+        showMenuBarIconSwitch.toolTip =
             "Show or hide the optional LocalKeyRemapper menu bar icon."
-        showMenuBarIconCheckbox.setContentHuggingPriority(
-            .required,
-            for: .vertical
+        showMenuBarIconSwitch.setAccessibilityLabel(
+            "Show icon in menu bar"
         )
+        showMenuBarIconSwitch.setContentHuggingPriority(
+            .required,
+            for: .horizontal
+        )
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(
+            .defaultLow,
+            for: .horizontal
+        )
+
+        menuBarIconVisibilityStack.setViews(
+            [
+                showMenuBarIconLabel,
+                spacer,
+                showMenuBarIconSwitch
+            ],
+            in: .leading
+        )
+        menuBarIconVisibilityStack.orientation = .horizontal
+        menuBarIconVisibilityStack.alignment = .centerY
     }
 
     private func synchronizeMenuBarIconVisibility() {
@@ -1318,7 +1359,7 @@ final class MainWindowController:
         let previousVisibility =
             appPreferencesController.preferences.showsMenuBarIcon
         let requestedVisibility =
-            showMenuBarIconCheckbox.state == .on
+            showMenuBarIconSwitch.state == .on
 
         do {
             try menuBarVisibilityChangeHandler(

@@ -567,7 +567,7 @@ final class GlobalShortcutSettingsView:
             .secondaryLabelColor
 
         modeControl.segmentStyle =
-            .rounded
+            .automatic
 
         modeControl.target =
             self
@@ -703,6 +703,9 @@ final class GlobalShortcutSettingsView:
             .leading
 
         mainStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        modeControl.translatesAutoresizingMaskIntoConstraints =
             false
 
         addSubview(
@@ -1309,5 +1312,4 @@ final class GlobalShortcutSettingsView:
         _ =
             persistConfiguration()
     }
-
 }

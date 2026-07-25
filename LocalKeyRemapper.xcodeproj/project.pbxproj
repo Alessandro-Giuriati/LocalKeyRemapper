@@ -426,6 +426,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -469,6 +470,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -491,7 +493,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = H8YB7VCD4B;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapperTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -513,7 +515,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = H8YB7VCD4B;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapperTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -534,6 +536,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = H8YB7VCD4B;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapperUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -554,6 +557,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = H8YB7VCD4B;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alessandrogiuriati.LocalKeyRemapperUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
