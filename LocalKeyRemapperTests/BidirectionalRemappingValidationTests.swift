@@ -12,13 +12,12 @@ import XCTest
 final class BidirectionalRemappingValidationTests:
     XCTestCase
 {
-    func testValidatorAllowsExactAndPreserveOnSamePhysicalKeyWhenReverseIsDisabled()
-        throws
-    {
+    func testValidatorRejectsExactAndPreserveOnSamePhysicalKeyWhenReverseIsDisabled() {
         let commandW =
             combination(
                 KeyCode.w,
-                modifiers: [.command]
+                modifiers:
+                    [.command]
             )
 
         let rules = [
@@ -46,10 +45,13 @@ final class BidirectionalRemappingValidationTests:
             )
         ]
 
-        try RemappingRulesValidator()
-            .validate(
+        assertValidationError(
+            .duplicateSourceCombination(
+                commandW
+            ),
+            rules:
                 rules
-            )
+        )
     }
 
     func testValidatorRejectsGeneratedPreserveReverseSourceConflictingWithExactRule() {
@@ -439,7 +441,7 @@ final class BidirectionalRemappingValidationTests:
         )
     }
 
-    func testLiveAssessmentAllowsNormalExactAndPreserveOverlapWithoutReverse() {
+    func testLiveAssessmentMarksNormalExactAndPreserveOverlapWithoutReverse() {
         let exactItem =
             editorItem(
                 from:
@@ -447,7 +449,8 @@ final class BidirectionalRemappingValidationTests:
                         source:
                             combination(
                                 KeyCode.w,
-                                modifiers: [.command]
+                                modifiers:
+                                    [.command]
                             ),
                         destination:
                             combination(
@@ -477,6 +480,306 @@ final class BidirectionalRemappingValidationTests:
                 ]
             )
 
+        assertDuplicateSourceIssue(
+            for:
+                exactItem,
+            in:
+                assessment
+        )
+
+        assertDuplicateSourceIssue(
+            for:
+                preserveItem,
+            in:
+                assessment
+        )
+
+        XCTAssertEqual(
+            assessment.primaryIssue,
+            .duplicateSource
+        )
+    }
+
+    func testValidatorAllowsDuplicateSourceWhenOneRuleIsDisabled()
+        throws
+    {
+        let rules = [
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w
+            ),
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.b,
+                isEnabled:
+                    false
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(
+                rules
+            )
+    }
+
+    func testValidatorRejectsDuplicateSourceAfterDisabledRuleIsReenabled() {
+        let rules = [
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w
+            ),
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.b
+            )
+        ]
+
+        assertValidationError(
+            .duplicateSourceKey(
+                KeyCode.v
+            ),
+            rules:
+                rules
+        )
+    }
+
+    func testValidatorAllowsExactAndPreserveOverlapWhenPreserveRuleIsDisabled()
+        throws
+    {
+        let commandV =
+            combination(
+                KeyCode.v,
+                modifiers:
+                    [.command]
+            )
+
+        let rules = [
+            RemapRule(
+                source:
+                    commandV,
+                destination:
+                    combination(
+                        KeyCode.b
+                    ),
+                matchingMode:
+                    .exact
+            ),
+            preserveRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w,
+                isEnabled:
+                    false
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(
+                rules
+            )
+    }
+
+    func testValidatorIgnoresDisabledReverseDirectionConflict()
+        throws
+    {
+        let rules = [
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w,
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            ),
+            exactRule(
+                source:
+                    KeyCode.w,
+                destination:
+                    KeyCode.b
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(
+                rules
+            )
+    }
+
+    func testValidatorIgnoresDisabledRuleExceptionsDuringConflictDetection()
+        throws
+    {
+        let commandV =
+            combination(
+                KeyCode.v,
+                modifiers:
+                    [.command]
+            )
+
+        let rules = [
+            RemapRule(
+                source:
+                    commandV,
+                destination:
+                    combination(
+                        KeyCode.b
+                    ),
+                matchingMode:
+                    .exact
+            ),
+            RemapRule(
+                source:
+                    combination(
+                        KeyCode.v
+                    ),
+                destination:
+                    combination(
+                        KeyCode.w
+                    ),
+                matchingMode:
+                    .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source:
+                            commandV,
+                        action:
+                            .passThrough,
+                        isEnabled:
+                            true
+                    )
+                ],
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            )
+        ]
+
+        try RemappingRulesValidator()
+            .validate(
+                rules
+            )
+    }
+
+    func testValidatorStillRejectsIdentityRuleWhenDisabled() {
+        let rule =
+            exactRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.v,
+                isEnabled:
+                    false
+            )
+
+        assertValidationError(
+            .identicalSourceAndDestination(
+                KeyCode.v
+            ),
+            rules:
+                [
+                    rule
+                ]
+        )
+    }
+
+    func testValidatorStillRejectsMirroredIdentityExceptionWhenDisabled() {
+        let commandV =
+            combination(
+                KeyCode.v,
+                modifiers:
+                    [.command]
+            )
+
+        let commandW =
+            combination(
+                KeyCode.w,
+                modifiers:
+                    [.command]
+            )
+
+        let rule =
+            RemapRule(
+                source:
+                    combination(
+                        KeyCode.v
+                    ),
+                destination:
+                    combination(
+                        KeyCode.w
+                    ),
+                matchingMode:
+                    .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source:
+                            commandV,
+                        action:
+                            .replaceWith(
+                                commandW
+                            )
+                    )
+                ],
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            )
+
+        assertValidationError(
+            .identicalSourceAndDestinationCombination(
+                commandW
+            ),
+            rules:
+                [
+                    rule
+                ]
+        )
+    }
+
+    func testLiveAssessmentIgnoresDisabledRuleConflict() {
+        let enabledItem =
+            editorItem(
+                from:
+                    exactRule(
+                        source:
+                            KeyCode.v,
+                        destination:
+                            KeyCode.w
+                    )
+            )
+
+        let disabledItem =
+            editorItem(
+                from:
+                    exactRule(
+                        source:
+                            KeyCode.v,
+                        destination:
+                            KeyCode.b,
+                        isEnabled:
+                            false
+                    )
+            )
+
+        let assessment =
+            RemappingRulesValidationAssessment(
+                items: [
+                    enabledItem,
+                    disabledItem
+                ]
+            )
+
         XCTAssertFalse(
             assessment.hasIssues
         )
@@ -484,15 +787,72 @@ final class BidirectionalRemappingValidationTests:
         XCTAssertTrue(
             assessment.invalidItemIDs.isEmpty
         )
+    }
 
-        XCTAssertNil(
-            assessment.primaryIssue
+    func testLiveAssessmentStillMarksDisabledIdentityRule() {
+        let item =
+            editorItem(
+                from:
+                    exactRule(
+                        source:
+                            KeyCode.v,
+                        destination:
+                            KeyCode.v,
+                        isEnabled:
+                            false
+                    )
+            )
+
+        let assessment =
+            RemappingRulesValidationAssessment(
+                items:
+                    [
+                        item
+                    ]
+            )
+
+        XCTAssertEqual(
+            assessment.issues(
+                forRuleID:
+                    item.id
+            ),
+            [
+                .identicalSourceAndDestination
+            ]
+        )
+    }
+
+    func testLiveAssessmentStillMarksIncompleteDisabledItem() {
+        var item =
+            RemappingRuleEditorItem()
+
+        item.setEnabled(
+            false
+        )
+
+        let assessment =
+            RemappingRulesValidationAssessment(
+                items:
+                    [
+                        item
+                    ]
+            )
+
+        XCTAssertEqual(
+            assessment.issues(
+                forRuleID:
+                    item.id
+            ),
+            [
+                .incompleteRule
+            ]
         )
     }
 
     private func exactRule(
         source: CGKeyCode,
         destination: CGKeyCode,
+        isEnabled: Bool = true,
         isBidirectional: Bool = false
     ) -> RemapRule {
         RemapRule(
@@ -506,6 +866,8 @@ final class BidirectionalRemappingValidationTests:
                 ),
             matchingMode:
                 .exact,
+            isEnabled:
+                isEnabled,
             isBidirectional:
                 isBidirectional
         )
@@ -514,6 +876,7 @@ final class BidirectionalRemappingValidationTests:
     private func preserveRule(
         source: CGKeyCode,
         destination: CGKeyCode,
+        isEnabled: Bool = true,
         isBidirectional: Bool = false
     ) -> RemapRule {
         RemapRule(
@@ -527,6 +890,8 @@ final class BidirectionalRemappingValidationTests:
                 ),
             matchingMode:
                 .preserveModifiers,
+            isEnabled:
+                isEnabled,
             isBidirectional:
                 isBidirectional
         )

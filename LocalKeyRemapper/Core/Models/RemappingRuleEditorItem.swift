@@ -36,6 +36,7 @@ nonisolated struct RemappingRuleEditorItem:
     var destinationCombination: KeyCombination?
     var matchingMode: RemapMatchingMode
     var overrides: [RemapOverride]
+    var isEnabled: Bool
     var isBidirectional: Bool
 
     /// Remembers the complete Exact Only source while the active rule is
@@ -60,6 +61,7 @@ nonisolated struct RemappingRuleEditorItem:
         destinationCombination: KeyCombination? = nil,
         matchingMode: RemapMatchingMode = .exact,
         overrides: [RemapOverride] = [],
+        isEnabled: Bool = true,
         isBidirectional: Bool = false,
         rememberedExactSourceCombination:
             KeyCombination? = nil,
@@ -75,6 +77,8 @@ nonisolated struct RemappingRuleEditorItem:
             matchingMode
         self.overrides =
             overrides
+        self.isEnabled =
+            isEnabled
         self.isBidirectional =
             isBidirectional
 
@@ -109,6 +113,8 @@ nonisolated struct RemappingRuleEditorItem:
                 rule.matchingMode,
             overrides:
                 rule.overrides,
+            isEnabled:
+                rule.isEnabled,
             isBidirectional:
                 rule.isBidirectional
         )
@@ -186,6 +192,15 @@ nonisolated struct RemappingRuleEditorItem:
             rememberedExactDestinationCombination =
                 normalizedCombination
         }
+    }
+
+    /// Enables or disables the complete rule without changing its configured
+    /// source, destination, behavior, exceptions, or Reverse state.
+    mutating func setEnabled(
+        _ isEnabled: Bool
+    ) {
+        self.isEnabled =
+            isEnabled
     }
 
     /// Enables or disables the reverse direction without creating a duplicate
@@ -399,6 +414,8 @@ nonisolated struct RemappingRuleEditorItem:
                 matchingMode,
             overrides:
                 overrides,
+            isEnabled:
+                isEnabled,
             isBidirectional:
                 isBidirectional
         )

@@ -281,6 +281,11 @@ final class RemappingRuleRowView: NSView {
 
     var onRuleChanged: ((RemappingRuleEditorItem) -> Void)?
 
+    /// Owns the fixed-width Active column so the native switch stays
+    /// centered and lines up with the matching header control.
+    private let activationContainerView = NSView()
+    private let activationSwitch = NSSwitch()
+
     private let sourceKeyButton = NSButton()
     private let arrowLabel = NSTextField(labelWithString: "→")
     private let destinationKeyButton = NSButton()
@@ -310,6 +315,7 @@ final class RemappingRuleRowView: NSView {
 
     let editorItemID: UUID
 
+    private(set) var isEnabled: Bool
     private(set) var sourceCombination: KeyCombination?
     private(set) var destinationCombination: KeyCombination?
     private(set) var matchingMode: RemapMatchingMode
@@ -334,6 +340,7 @@ final class RemappingRuleRowView: NSView {
             destinationCombination: destinationCombination,
             matchingMode: matchingMode,
             overrides: overrides,
+            isEnabled: isEnabled,
             isBidirectional: isBidirectional,
             rememberedExactSourceCombination:
                 rememberedExactSourceCombination,
@@ -348,6 +355,7 @@ final class RemappingRuleRowView: NSView {
 
     init(item: RemappingRuleEditorItem) {
         editorItemID = item.id
+        isEnabled = item.isEnabled
         sourceCombination = item.sourceCombination
         destinationCombination = item.destinationCombination
         matchingMode = item.matchingMode
@@ -498,6 +506,8 @@ final class RemappingRuleRowView: NSView {
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
 
+        configureActivationSwitch()
+
         configureKeyButton(
             sourceKeyButton,
             action: #selector(requestSourceKey)
@@ -539,6 +549,7 @@ final class RemappingRuleRowView: NSView {
         removeButton.action = #selector(requestRemoval)
 
         let views: [NSView] = [
+            activationContainerView,
             sourceKeyButton,
             arrowLabel,
             destinationKeyButton,
@@ -562,8 +573,21 @@ final class RemappingRuleRowView: NSView {
 
         NSLayoutConstraint.activate(
             [
-                sourceKeyButton.leadingAnchor.constraint(
+                activationContainerView.leadingAnchor.constraint(
                     equalTo: leadingAnchor,
+                    constant: 6
+                ),
+                activationContainerView.centerYAnchor.constraint(
+                    equalTo: centerYAnchor
+                ),
+                activationContainerView.widthAnchor.constraint(
+                    equalToConstant: 88
+                ),
+                activationContainerView.heightAnchor.constraint(
+                    equalTo: sourceKeyButton.heightAnchor
+                ),
+                sourceKeyButton.leadingAnchor.constraint(
+                    equalTo: activationContainerView.trailingAnchor,
                     constant: 6
                 ),
                 sourceKeyButton.topAnchor.constraint(
@@ -664,6 +688,38 @@ final class RemappingRuleRowView: NSView {
         )
 
         applyTextScale(textScale)
+    }
+
+    private func configureActivationSwitch() {
+        activationSwitch.translatesAutoresizingMaskIntoConstraints = false
+        activationSwitch.controlSize = .small
+        activationSwitch.target = self
+        activationSwitch.action = #selector(
+            activationSwitchChanged
+        )
+        activationSwitch.toolTip =
+            "Enable or disable this rule without deleting it."
+        activationSwitch.setAccessibilityLabel(
+            "Active rule"
+        )
+        activationSwitch.setAccessibilityHelp(
+            "When disabled, this rule, its Reverse direction, and its exceptions do not participate in remapping."
+        )
+
+        activationContainerView.addSubview(
+            activationSwitch
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                activationSwitch.centerXAnchor.constraint(
+                    equalTo: activationContainerView.centerXAnchor
+                ),
+                activationSwitch.centerYAnchor.constraint(
+                    equalTo: activationContainerView.centerYAnchor
+                )
+            ]
+        )
     }
 
     private func configureKeyButton(
@@ -777,6 +833,7 @@ final class RemappingRuleRowView: NSView {
             ? "Exceptions…"
             : "Exceptions (\(overrides.count))"
 
+        activationSwitch.state = isEnabled ? .on : .off
         bidirectionalSwitch.state = isBidirectional ? .on : .off
         arrowLabel.stringValue = isBidirectional ? "↔" : "→"
     }
@@ -1039,6 +1096,7 @@ final class RemappingRuleRowView: NSView {
     private func applyEditorItem(
         _ item: RemappingRuleEditorItem
     ) {
+        isEnabled = item.isEnabled
         sourceCombination = item.sourceCombination
         destinationCombination = item.destinationCombination
         matchingMode = item.matchingMode
@@ -1048,6 +1106,18 @@ final class RemappingRuleRowView: NSView {
             item.rememberedExactSourceCombination
         rememberedExactDestinationCombination =
             item.rememberedExactDestinationCombination
+    }
+
+    @objc
+    private func activationSwitchChanged() {
+        var updatedItem = editorItem
+        updatedItem.setEnabled(
+            activationSwitch.state == .on
+        )
+
+        applyEditorItem(updatedItem)
+        updateControls()
+        onRuleChanged?(editorItem)
     }
 
     @objc

@@ -96,11 +96,58 @@ nonisolated struct RemappingRulesValidator:
             ownerIndex,
             rule
         ) in rules.enumerated() {
+            // Structural validity is independent from runtime activation.
+            // A disabled rule must remain complete and internally safe so it
+            // can be edited, stored, and re-enabled without carrying malformed
+            // endpoints or exceptions.
+            try validateDirectionStructure(
+                source:
+                    rule.source,
+                destination:
+                    rule.destination,
+                matchingMode:
+                    rule.matchingMode
+            )
+
             try validateStoredOverrides(
                 rule.overrides,
                 parentSourceKeyCode:
                     rule.source.keyCode
             )
+
+            if rule.isBidirectional {
+                let mirroredOverrides =
+                    reverseOverrides(
+                        from:
+                            rule.overrides,
+                        reverseSourceKeyCode:
+                            rule.destination.keyCode
+                    )
+
+                try validateDirectionStructure(
+                    source:
+                        rule.destination,
+                    destination:
+                        rule.source,
+                    matchingMode:
+                        rule.matchingMode
+                )
+
+                try validateStoredOverrides(
+                    mirroredOverrides,
+                    parentSourceKeyCode:
+                        rule.destination.keyCode
+                )
+            }
+
+            // A disabled rule has no runtime source in either direction.
+            // Its forward mapping, generated Reverse mapping, and exceptions
+            // therefore cannot conflict with the active configuration.
+            guard
+                rule.isEnabled
+            else {
+                continue
+            }
 
             try validateDirection(
                 source:
@@ -154,6 +201,46 @@ nonisolated struct RemappingRulesValidator:
                 preservingRegistrationsByKeyCode:
                     &preservingRegistrationsByKeyCode
             )
+        }
+    }
+
+    /// Validates one stored direction without registering any runtime source.
+    ///
+    /// This runs for both enabled and disabled rules. Activation controls only
+    /// participation in runtime conflicts, not the internal validity of the
+    /// stored configuration.
+    private func validateDirectionStructure(
+        source: KeyCombination,
+        destination: KeyCombination,
+        matchingMode: RemapMatchingMode
+    ) throws {
+        switch matchingMode {
+        case .exact:
+            try validateReplacement(
+                source:
+                    source,
+                destination:
+                    destination
+            )
+
+        case .preserveModifiers:
+            guard
+                source.modifiers.isEmpty,
+                destination.modifiers.isEmpty
+            else {
+                throw RemappingRulesValidationError
+                    .invalidModifierPreservingEndpoints
+            }
+
+            guard
+                source.keyCode
+                    != destination.keyCode
+            else {
+                throw RemappingRulesValidationError
+                    .identicalSourceAndDestination(
+                        source.keyCode
+                    )
+            }
         }
     }
 
@@ -354,8 +441,8 @@ nonisolated struct RemappingRulesValidator:
         )
     }
 
-    /// Inserts an exact source and checks collisions with a generated reverse
-    /// Preserve Modifiers source on the same physical key.
+    /// Inserts an exact source and rejects any active Preserve Modifiers
+    /// direction owned by another rule on the same physical key.
     private func insertExactSource(
         _ source: KeyCombination,
         registration: ExactSourceRegistration,
@@ -391,11 +478,7 @@ nonisolated struct RemappingRulesValidator:
                 source.keyCode
             ],
            preservingRegistration.ownerIndex
-                != registration.ownerIndex,
-           preservingRegistration
-                .isGeneratedReverseDirection
-                || registration
-                    .isGeneratedReverseDirection
+                != registration.ownerIndex
         {
             throw RemappingRulesValidationError
                 .duplicateSourceCombination(
@@ -412,9 +495,8 @@ nonisolated struct RemappingRulesValidator:
         )
     }
 
-    /// Inserts a Preserve Modifiers source and checks collisions with every
-    /// exact source on the same physical key whenever either side is a
-    /// generated reverse direction.
+    /// Inserts a Preserve Modifiers source and rejects every active exact
+    /// source owned by another rule on the same physical key.
     private func insertPreservingSource(
         _ registration: PreservingSourceRegistration,
         exactRegistrationsByKeyCode:
@@ -439,12 +521,6 @@ nonisolated struct RemappingRulesValidator:
             for exactRegistration in exactRegistrations
             where exactRegistration.ownerIndex
                 != registration.ownerIndex
-                && (
-                    exactRegistration
-                        .isGeneratedReverseDirection
-                    || registration
-                        .isGeneratedReverseDirection
-                )
             {
                 throw RemappingRulesValidationError
                     .duplicateSourceCombination(
