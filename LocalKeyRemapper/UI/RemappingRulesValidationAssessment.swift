@@ -27,7 +27,7 @@ nonisolated struct RemappingRulesValidationAssessment:
                 return "Choose both Source and Destination before saving."
 
             case .duplicateSource:
-                return "This source or generated reverse source conflicts with another active rule or enabled exception."
+                return "This source conflicts with another active rule or enabled exception using the same physical key."
 
             case .identicalSourceAndDestination:
                 return "Source and Destination cannot be identical."
@@ -115,6 +115,8 @@ nonisolated struct RemappingRulesValidationAssessment:
             guard
                 let rule = item.rule
             else {
+                // Even a disabled row must be complete before it can be
+                // represented by the persistent RemapRule model.
                 Self.insert(
                     .incompleteRule,
                     for:
@@ -126,6 +128,22 @@ nonisolated struct RemappingRulesValidationAssessment:
                 continue
             }
 
+            // Structural issues remain visible while a rule is disabled.
+            // Active controls only whether the rule contributes runtime
+            // sources to conflict detection.
+            Self.assessDirectionStructure(
+                source:
+                    rule.source,
+                destination:
+                    rule.destination,
+                matchingMode:
+                    rule.matchingMode,
+                ownerID:
+                    item.id,
+                issuesByItemID:
+                    &issuesByItemID
+            )
+
             Self.assessStoredOverrides(
                 rule.overrides,
                 ownerID:
@@ -133,6 +151,48 @@ nonisolated struct RemappingRulesValidationAssessment:
                 issuesByItemID:
                     &issuesByItemID
             )
+
+            let mirroredOverrides =
+                rule.isBidirectional
+                    ? Self.reverseOverrides(
+                        from:
+                            rule.overrides,
+                        reverseSourceKeyCode:
+                            rule.destination.keyCode
+                    )
+                    : []
+
+            if rule.isBidirectional {
+                Self.assessDirectionStructure(
+                    source:
+                        rule.destination,
+                    destination:
+                        rule.source,
+                    matchingMode:
+                        rule.matchingMode,
+                    ownerID:
+                        item.id,
+                    issuesByItemID:
+                        &issuesByItemID
+                )
+
+                Self.assessStoredOverrides(
+                    mirroredOverrides,
+                    ownerID:
+                        item.id,
+                    issuesByItemID:
+                        &issuesByItemID
+                )
+            }
+
+            // A disabled rule is stored but has no runtime direction.
+            // It therefore contributes no source, Reverse source, or exception
+            // to the active conflict assessment.
+            guard
+                rule.isEnabled
+            else {
+                continue
+            }
 
             Self.registerDirection(
                 source:
@@ -171,12 +231,7 @@ nonisolated struct RemappingRulesValidationAssessment:
                 matchingMode:
                     rule.matchingMode,
                 activeOverrides:
-                    Self.reverseOverrides(
-                        from:
-                            rule.overrides,
-                        reverseSourceKeyCode:
-                            rule.destination.keyCode
-                    ),
+                    mirroredOverrides,
                 ownerID:
                     item.id,
                 isGeneratedReverseDirection:
@@ -204,7 +259,7 @@ nonisolated struct RemappingRulesValidationAssessment:
                 &issuesByItemID
         )
 
-        Self.markReverseCrossModeConflicts(
+        Self.markCrossModeConflicts(
             exactRegistrationsByKeyCode:
                 exactRegistrationsByKeyCode,
             preservingRegistrationsByKeyCode:
@@ -222,6 +277,51 @@ nonisolated struct RemappingRulesValidationAssessment:
                         < $1.priority
                 }
             }
+    }
+
+    /// Assesses structural validity without registering a runtime source.
+    ///
+    /// Disabled rules still surface identity errors, while conflict detection
+    /// remains limited to enabled rules.
+    private static func assessDirectionStructure(
+        source:
+            KeyCombination,
+        destination:
+            KeyCombination,
+        matchingMode:
+            RemapMatchingMode,
+        ownerID:
+            UUID,
+        issuesByItemID:
+            inout [UUID: Set<Issue>]
+    ) {
+        let isIdentity:
+            Bool
+
+        switch matchingMode {
+        case .exact:
+            isIdentity =
+                source == destination
+
+        case .preserveModifiers:
+            isIdentity =
+                source.keyCode
+                    == destination.keyCode
+        }
+
+        guard
+            isIdentity
+        else {
+            return
+        }
+
+        insert(
+            .identicalSourceAndDestination,
+            for:
+                ownerID,
+            into:
+                &issuesByItemID
+        )
     }
 
     /// Registers one active rule direction exactly as the runtime engine and
@@ -398,14 +498,14 @@ nonisolated struct RemappingRulesValidationAssessment:
         }
     }
 
-    /// Exact and Preserve Modifiers rules normally coexist because exact
-    /// combinations intentionally take precedence.
+    /// An Exact direction and a Preserve Modifiers direction owned by
+    /// different rules cannot share the same physical source key.
     ///
-    /// When either source was generated by Reverse, however, allowing the
-    /// overlap would make the generated direction silently depend on rule
-    /// precedence. The central validator rejects that ambiguity, so the live
-    /// assessment marks both owning rows as invalid as well.
-    private static func markReverseCrossModeConflicts(
+    /// This avoids silently splitting one key between rule-priority paths:
+    /// Exact would otherwise win for one combination while Preserve Modifiers
+    /// handled the remaining combinations. Enabled exceptions remain allowed
+    /// to overlap their own parent rule because they belong to the same owner.
+    private static func markCrossModeConflicts(
         exactRegistrationsByKeyCode:
             [CGKeyCode: [ExactSourceRegistration]],
         preservingRegistrationsByKeyCode:
@@ -430,12 +530,6 @@ nonisolated struct RemappingRulesValidationAssessment:
                 for preservingRegistration in preservingRegistrations
                 where exactRegistration.ownerID
                     != preservingRegistration.ownerID
-                    && (
-                        exactRegistration
-                            .isGeneratedReverseDirection
-                        || preservingRegistration
-                            .isGeneratedReverseDirection
-                    )
                 {
                     insert(
                         .duplicateSource,
@@ -458,7 +552,7 @@ nonisolated struct RemappingRulesValidationAssessment:
     }
 
     /// Stored exceptions remain part of the persistent configuration even
-    /// while their parent rule is Exact Only.
+    /// while their active parent rule is Exact Only.
     private static func assessStoredOverrides(
         _ overrides:
             [RemapOverride],

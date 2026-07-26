@@ -17,6 +17,7 @@ import Foundation
 nonisolated final class RemappingRulesPresentationModel {
 
     enum SortColumn: Equatable {
+        case active
         case source
         case destination
         case modifierBehavior
@@ -270,6 +271,23 @@ nonisolated final class RemappingRulesPresentationModel {
             Set<UUID>
     ) -> ComparisonResult {
         switch descriptor.column {
+        case .active:
+            let comparison =
+                compareValues(
+                    first.isEnabled
+                        ? 1
+                        : 0,
+                    second.isEnabled
+                        ? 1
+                        : 0
+                )
+
+            return applying(
+                descriptor.direction,
+                to:
+                    comparison
+            )
+
         case .source:
             return compareOptionalCombinations(
                 first.sourceCombination,

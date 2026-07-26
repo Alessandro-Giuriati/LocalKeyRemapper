@@ -13,6 +13,9 @@ import CoreGraphics
 /// pressed with a source key. Modifier-preserving rules can also contain
 /// exact, fully customizable overrides.
 ///
+/// When `isEnabled` is false, the rule remains stored and editable but
+/// produces no runtime mapping in either direction.
+///
 /// When `isBidirectional` is enabled, the same stored rule also produces
 /// the reverse destination-to-source remapping at runtime. The reverse
 /// direction is derived by the remapping engine and is never stored as a
@@ -25,6 +28,7 @@ nonisolated struct RemapRule:
     let destination: KeyCombination
     let matchingMode: RemapMatchingMode
     let overrides: [RemapOverride]
+    let isEnabled: Bool
     let isBidirectional: Bool
 
     init(
@@ -32,12 +36,14 @@ nonisolated struct RemapRule:
         destination: KeyCombination,
         matchingMode: RemapMatchingMode = .exact,
         overrides: [RemapOverride] = [],
+        isEnabled: Bool = true,
         isBidirectional: Bool = false
     ) {
         self.source = source
         self.destination = destination
         self.matchingMode = matchingMode
         self.overrides = overrides
+        self.isEnabled = isEnabled
         self.isBidirectional = isBidirectional
     }
 
@@ -48,6 +54,7 @@ nonisolated struct RemapRule:
     init(
         sourceKeyCode: CGKeyCode,
         destinationKeyCode: CGKeyCode,
+        isEnabled: Bool = true,
         isBidirectional: Bool = false
     ) {
         self.init(
@@ -58,6 +65,7 @@ nonisolated struct RemapRule:
                 keyCode: destinationKeyCode
             ),
             matchingMode: .exact,
+            isEnabled: isEnabled,
             isBidirectional: isBidirectional
         )
     }
@@ -80,6 +88,7 @@ nonisolated struct RemapRule:
         case destination
         case matchingMode
         case overrides
+        case isEnabled
         case isBidirectional
 
         /// Keys used by the previous rule format.
@@ -113,6 +122,13 @@ nonisolated struct RemapRule:
                 forKey: .overrides
             ) ?? []
 
+            // Rules saved before per-rule activation existed remain enabled,
+            // preserving their previous runtime behavior.
+            isEnabled = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .isEnabled
+            ) ?? true
+
             // Rules saved before bidirectional remapping existed remain
             // one-directional, preserving their previous behavior.
             isBidirectional = try container.decodeIfPresent(
@@ -143,6 +159,7 @@ nonisolated struct RemapRule:
 
         matchingMode = .exact
         overrides = []
+        isEnabled = true
         isBidirectional = false
     }
 
@@ -169,6 +186,11 @@ nonisolated struct RemapRule:
         try container.encode(
             overrides,
             forKey: .overrides
+        )
+
+        try container.encode(
+            isEnabled,
+            forKey: .isEnabled
         )
 
         try container.encode(

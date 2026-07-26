@@ -534,6 +534,228 @@ final class BidirectionalRemappingEngineTests:
         )
     }
 
+    func testDisabledExactBidirectionalRulePassesThroughBothDirections() {
+        let engine =
+            RemappingEngine(
+                rules: [
+                    RemapRule(
+                        source:
+                            combination(
+                                KeyCode.v
+                            ),
+                        destination:
+                            combination(
+                                KeyCode.w
+                            ),
+                        matchingMode:
+                            .exact,
+                        isEnabled:
+                            false,
+                        isBidirectional:
+                            true
+                    )
+                ]
+            )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.v
+            ),
+            .passThrough
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.w
+            ),
+            .passThrough
+        )
+    }
+
+    func testDisabledPreserveRuleSkipsForwardReverseAndExceptions() {
+        let commandV =
+            combination(
+                KeyCode.v,
+                modifiers:
+                    [.command]
+            )
+
+        let commandW =
+            combination(
+                KeyCode.w,
+                modifiers:
+                    [.command]
+            )
+
+        let engine =
+            RemappingEngine(
+                rules: [
+                    RemapRule(
+                        source:
+                            combination(
+                                KeyCode.v
+                            ),
+                        destination:
+                            combination(
+                                KeyCode.w
+                            ),
+                        matchingMode:
+                            .preserveModifiers,
+                        overrides: [
+                            RemapOverride(
+                                source:
+                                    commandV,
+                                action:
+                                    .replaceWith(
+                                        combination(
+                                            KeyCode.j,
+                                            modifiers:
+                                                [.option]
+                                        )
+                                    )
+                            )
+                        ],
+                        isEnabled:
+                            false,
+                        isBidirectional:
+                            true
+                    )
+                ]
+            )
+
+        for source in [
+            commandV,
+            commandW,
+            combination(
+                KeyCode.v,
+                modifiers:
+                    [.shift]
+            ),
+            combination(
+                KeyCode.w,
+                modifiers:
+                    [.shift]
+            )
+        ] {
+            XCTAssertEqual(
+                engine.decision(
+                    for:
+                        source
+                ),
+                .passThrough
+            )
+        }
+    }
+
+    func testReplacingRulesCanEnableAndDisableEntireBidirectionalRule() {
+        let disabledRule =
+            RemapRule(
+                source:
+                    combination(
+                        KeyCode.v
+                    ),
+                destination:
+                    combination(
+                        KeyCode.w
+                    ),
+                matchingMode:
+                    .exact,
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            )
+
+        let enabledRule =
+            RemapRule(
+                source:
+                    disabledRule.source,
+                destination:
+                    disabledRule.destination,
+                matchingMode:
+                    disabledRule.matchingMode,
+                overrides:
+                    disabledRule.overrides,
+                isEnabled:
+                    true,
+                isBidirectional:
+                    disabledRule.isBidirectional
+            )
+
+        let engine =
+            RemappingEngine(
+                rules: [
+                    disabledRule
+                ]
+            )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.v
+            ),
+            .passThrough
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.w
+            ),
+            .passThrough
+        )
+
+        engine.replaceRules(
+            [
+                enabledRule
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.v
+            ),
+            .replaceKeyCode(
+                KeyCode.w
+            )
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.w
+            ),
+            .replaceKeyCode(
+                KeyCode.v
+            )
+        )
+
+        engine.replaceRules(
+            [
+                disabledRule
+            ]
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.v
+            ),
+            .passThrough
+        )
+
+        XCTAssertEqual(
+            engine.decision(
+                for:
+                    KeyCode.w
+            ),
+            .passThrough
+        )
+    }
+
     private func combination(
         _ keyCode: CGKeyCode,
         modifiers: KeyModifiers = []

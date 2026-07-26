@@ -228,6 +228,172 @@ final class BidirectionalRemappingPersistenceTests:
         )
     }
 
+    func testSavingAndLoadingPreservesMixedActivationAndReverseStates()
+        throws
+    {
+        let context =
+            try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let expectedRules = [
+            makeRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w,
+                isEnabled:
+                    true,
+                isBidirectional:
+                    true
+            ),
+            makeRule(
+                source:
+                    KeyCode.b,
+                destination:
+                    KeyCode.j,
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            ),
+            makeRule(
+                source:
+                    KeyCode.n,
+                destination:
+                    KeyCode.r,
+                isEnabled:
+                    false,
+                isBidirectional:
+                    false
+            )
+        ]
+
+        let store =
+            UserDefaultsRulesStore(
+                userDefaults:
+                    context.userDefaults,
+                defaultRules:
+                    []
+            )
+
+        try store.saveRules(
+            expectedRules
+        )
+
+        let reopenedStore =
+            UserDefaultsRulesStore(
+                userDefaults:
+                    context.userDefaults,
+                defaultRules:
+                    []
+            )
+
+        let loadedRules =
+            try reopenedStore.loadRules()
+
+        XCTAssertEqual(
+            loadedRules,
+            expectedRules
+        )
+
+        XCTAssertEqual(
+            loadedRules.map(
+                \.isEnabled
+            ),
+            [
+                true,
+                false,
+                false
+            ]
+        )
+
+        XCTAssertEqual(
+            loadedRules.map(
+                \.isBidirectional
+            ),
+            [
+                true,
+                true,
+                false
+            ]
+        )
+    }
+
+    func testDisabledRulePersistencePreservesReverseAndExceptions()
+        throws
+    {
+        let context =
+            try makeContext()
+
+        defer {
+            context.cleanUp()
+        }
+
+        let expectedRule =
+            makeRule(
+                source:
+                    KeyCode.v,
+                destination:
+                    KeyCode.w,
+                matchingMode:
+                    .preserveModifiers,
+                overrides: [
+                    RemapOverride(
+                        source:
+                            KeyCombination(
+                                keyCode:
+                                    KeyCode.v,
+                                modifiers:
+                                    [.command]
+                            ),
+                        action:
+                            .passThrough,
+                        isEnabled:
+                            true
+                    )
+                ],
+                isEnabled:
+                    false,
+                isBidirectional:
+                    true
+            )
+
+        let store =
+            UserDefaultsRulesStore(
+                userDefaults:
+                    context.userDefaults,
+                defaultRules:
+                    []
+            )
+
+        try store.saveRules(
+            [
+                expectedRule
+            ]
+        )
+
+        let loadedRule =
+            try XCTUnwrap(
+                store.loadRules().first
+            )
+
+        XCTAssertFalse(
+            loadedRule.isEnabled
+        )
+
+        XCTAssertTrue(
+            loadedRule.isBidirectional
+        )
+
+        XCTAssertEqual(
+            loadedRule.overrides,
+            expectedRule.overrides
+        )
+    }
+
     func testStoredAdvancedRuleWithoutBidirectionalFieldLoadsWithReverseOff()
         throws
     {
@@ -301,6 +467,10 @@ final class BidirectionalRemappingPersistenceTests:
             loadedRule.isBidirectional
         )
 
+        XCTAssertTrue(
+            loadedRule.isEnabled
+        )
+
         XCTAssertEqual(
             loadedRule.source,
             legacyRule.source
@@ -329,6 +499,7 @@ final class BidirectionalRemappingPersistenceTests:
             RemapMatchingMode = .exact,
         overrides:
             [RemapOverride] = [],
+        isEnabled: Bool = true,
         isBidirectional: Bool
     ) -> RemapRule {
         RemapRule(
@@ -346,6 +517,8 @@ final class BidirectionalRemappingPersistenceTests:
                 matchingMode,
             overrides:
                 overrides,
+            isEnabled:
+                isEnabled,
             isBidirectional:
                 isBidirectional
         )

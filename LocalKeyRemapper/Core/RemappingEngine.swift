@@ -53,7 +53,10 @@ nonisolated final class RemappingEngine {
 
     /// Replaces all currently loaded remapping rules.
     ///
-    /// Each persisted rule is compiled into one forward direction and,
+    /// Disabled rules are skipped completely. This includes their forward
+    /// direction, generated reverse direction, and all stored exceptions.
+    ///
+    /// Each enabled persisted rule is compiled into one forward direction and,
     /// when enabled, one derived reverse direction.
     ///
     /// The reverse direction is never persisted as a separate rule.
@@ -70,6 +73,12 @@ nonisolated final class RemappingEngine {
             [CGKeyCode: CGKeyCode] = [:]
 
         for rule in rules {
+            guard
+                rule.isEnabled
+            else {
+                continue
+            }
+
             compileDirection(
                 source:
                     rule.source,

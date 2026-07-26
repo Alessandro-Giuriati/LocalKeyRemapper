@@ -14,6 +14,22 @@ import Foundation
 /// not destroy this object, while terminating the process naturally does.
 nonisolated final class RemappingRuleEditorSession {
 
+    /// Represents the combined activation state of all editor items.
+    ///
+    /// This is used by the global Active switch:
+    /// - unavailable: there are no rules;
+    /// - disabled: every rule is disabled;
+    /// - mixed: only some rules are enabled;
+    /// - enabled: every rule is enabled.
+    enum ActivationSelectionState:
+        Equatable
+    {
+        case unavailable
+        case disabled
+        case mixed
+        case enabled
+    }
+
     /// Represents the combined bidirectional state of all editor items.
     ///
     /// This is used by the global Reverse switch:
@@ -66,6 +82,42 @@ nonisolated final class RemappingRuleEditorSession {
 
     var estimatedHistoryPayloadSize: Int {
         history.totalEstimatedPayloadSize
+    }
+
+    /// Returns the combined Active state for the complete collection.
+    ///
+    /// The result always considers every rule in the session, including
+    /// rules that are currently hidden by sorting or filtering.
+    var activationSelectionState:
+        ActivationSelectionState
+    {
+        guard
+            !items.isEmpty
+        else {
+            return .unavailable
+        }
+
+        let enabledCount =
+            items.reduce(
+                into: 0
+            ) {
+                count,
+                item in
+
+                if item.isEnabled {
+                    count += 1
+                }
+            }
+
+        if enabledCount == 0 {
+            return .disabled
+        }
+
+        if enabledCount == items.count {
+            return .enabled
+        }
+
+        return .mixed
     }
 
     /// Returns the combined Reverse state for the complete collection.
@@ -263,6 +315,45 @@ nonisolated final class RemappingRuleEditorSession {
         )
     }
 
+    /// Enables or disables every rule as one Undo/Redo action.
+    ///
+    /// This applies to the complete editor collection, not only the rows
+    /// currently visible after filtering.
+    func setEnabledForAll(
+        _ isEnabled:
+            Bool
+    ) {
+        let updatedItems =
+            items.map {
+                item in
+
+                var updatedItem =
+                    item
+
+                updatedItem.setEnabled(
+                    isEnabled
+                )
+
+                return updatedItem
+            }
+
+        guard
+            updatedItems
+                != items
+        else {
+            return
+        }
+
+        applyNewAction(
+            .replaceAll(
+                before:
+                    items,
+                after:
+                    updatedItems
+            )
+        )
+    }
+
     /// Enables or disables Reverse on every rule as one Undo/Redo action.
     ///
     /// This applies to the complete editor collection, not only the rows
@@ -409,6 +500,8 @@ nonisolated final class RemappingRuleEditorSession {
                         normalizedOverrides(
                             rule.overrides
                         ),
+                    isEnabled:
+                        rule.isEnabled,
                     isBidirectional:
                         rule.isBidirectional
                 )
@@ -463,6 +556,13 @@ nonisolated final class RemappingRuleEditorSession {
                         .destination
                         .modifiers
                         .rawValue
+            }
+
+            if first.isEnabled
+                != second.isEnabled
+            {
+                return first.isEnabled
+                    == false
             }
 
             if first.isBidirectional
