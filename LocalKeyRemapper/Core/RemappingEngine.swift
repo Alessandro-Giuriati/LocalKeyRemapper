@@ -53,8 +53,12 @@ nonisolated final class RemappingEngine {
 
     /// Replaces all currently loaded remapping rules.
     ///
-    /// Rules are compiled into dictionaries before keyboard events
-    /// are processed, keeping event-time work minimal.
+    /// Each persisted rule is compiled into one forward direction and,
+    /// when enabled, one derived reverse direction.
+    ///
+    /// The reverse direction is never persisted as a separate rule.
+    /// Preparing both directions here keeps keyboard-event processing
+    /// limited to constant-time dictionary lookups.
     func replaceRules(
         _ rules:
             [RemapRule]
@@ -66,29 +70,47 @@ nonisolated final class RemappingEngine {
             [CGKeyCode: CGKeyCode] = [:]
 
         for rule in rules {
-            switch rule.matchingMode {
-            case .exact:
-                newExactMappings[
-                    rule.source
-                ] =
-                    .replaceWith(
-                        rule.destination
-                    )
+            compileDirection(
+                source:
+                    rule.source,
+                destination:
+                    rule.destination,
+                matchingMode:
+                    rule.matchingMode,
+                overrides:
+                    rule.overrides,
+                exactMappings:
+                    &newExactMappings,
+                preservingMappings:
+                    &newPreservingMappings
+            )
 
-            case .preserveModifiers:
-                newPreservingMappings[
-                    rule.source.keyCode
-                ] =
-                    rule.destination.keyCode
-
-                for override in rule.overrides
-                where override.isEnabled {
-                    newExactMappings[
-                        override.source
-                    ] =
-                        override.action
-                }
+            guard
+                rule.isBidirectional
+            else {
+                continue
             }
+
+            compileDirection(
+                source:
+                    rule.destination,
+                destination:
+                    rule.source,
+                matchingMode:
+                    rule.matchingMode,
+                overrides:
+                    reverseOverrides(
+                        from:
+                            rule.overrides,
+                        reverseSourceKeyCode:
+                            rule.destination
+                                .keyCode
+                    ),
+                exactMappings:
+                    &newExactMappings,
+                preservingMappings:
+                    &newPreservingMappings
+            )
         }
 
         exactMappings =
@@ -96,6 +118,90 @@ nonisolated final class RemappingEngine {
 
         preservingMappings =
             newPreservingMappings
+    }
+
+    /// Compiles one active direction of a rule.
+    ///
+    /// For Exact Only rules, the complete source combination maps to the
+    /// complete destination combination.
+    ///
+    /// For Preserve Modifiers rules, the source physical key maps to the
+    /// destination physical key while active exact overrides are compiled
+    /// separately and retain precedence.
+    private func compileDirection(
+        source:
+            KeyCombination,
+        destination:
+            KeyCombination,
+        matchingMode:
+            RemapMatchingMode,
+        overrides:
+            [RemapOverride],
+        exactMappings:
+            inout [KeyCombination: RemapAction],
+        preservingMappings:
+            inout [CGKeyCode: CGKeyCode]
+    ) {
+        switch matchingMode {
+        case .exact:
+            exactMappings[
+                source
+            ] =
+                .replaceWith(
+                    destination
+                )
+
+        case .preserveModifiers:
+            preservingMappings[
+                source.keyCode
+            ] =
+                destination.keyCode
+
+            for remapOverride in overrides
+            where remapOverride.isEnabled {
+                exactMappings[
+                    remapOverride.source
+                ] =
+                    remapOverride.action
+            }
+        }
+    }
+
+    /// Derives the exceptions used by the reverse direction.
+    ///
+    /// An exception belongs to the physical source key of its direction.
+    /// Therefore, when V -> W becomes V <-> W, an exception whose source is
+    /// Command + V is mirrored as Command + W.
+    ///
+    /// Its modifiers, enabled state, and configured action remain unchanged.
+    /// No second exception is saved or exposed to the user.
+    private func reverseOverrides(
+        from overrides:
+            [RemapOverride],
+        reverseSourceKeyCode:
+            CGKeyCode
+    ) -> [RemapOverride] {
+        overrides.map {
+            remapOverride in
+
+            RemapOverride(
+                source:
+                    KeyCombination(
+                        keyCode:
+                            reverseSourceKeyCode,
+                        modifiers:
+                            remapOverride
+                                .source
+                                .modifiers
+                    ),
+                action:
+                    remapOverride
+                        .action,
+                isEnabled:
+                    remapOverride
+                        .isEnabled
+            )
+        }
     }
 
     /// Returns the remapping decision for a complete combination.

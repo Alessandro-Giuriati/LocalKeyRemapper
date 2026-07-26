@@ -21,6 +21,7 @@ nonisolated final class RemappingRulesPresentationModel {
         case destination
         case modifierBehavior
         case exceptions
+        case reverse
         case issues
     }
 
@@ -307,6 +308,23 @@ nonisolated final class RemappingRulesPresentationModel {
                 compareValues(
                     first.overrides.count,
                     second.overrides.count
+                )
+
+            return applying(
+                descriptor.direction,
+                to:
+                    comparison
+            )
+
+        case .reverse:
+            let comparison =
+                compareValues(
+                    first.isBidirectional
+                        ? 1
+                        : 0,
+                    second.isBidirectional
+                        ? 1
+                        : 0
                 )
 
             return applying(

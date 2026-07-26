@@ -62,79 +62,202 @@ nonisolated protocol RemappingRulesValidating {
 nonisolated struct RemappingRulesValidator:
     RemappingRulesValidating
 {
+    /// Describes one active exact source and why it exists.
+    private struct ExactSourceRegistration {
+        let combination: KeyCombination
+        let ownerIndex: Int
+
+        /// True only for the source of a generated reverse rule direction.
+        /// Generated reverse exceptions remain overrides of their own parent
+        /// Preserve Modifiers direction and therefore use false here.
+        let isGeneratedReverseDirection: Bool
+    }
+
+    /// Describes one active Preserve Modifiers source and why it exists.
+    private struct PreservingSourceRegistration {
+        let keyCode: CGKeyCode
+        let ownerIndex: Int
+        let isGeneratedReverseDirection: Bool
+    }
+
     func validate(
         _ rules: [RemapRule]
     ) throws {
         var exactSources =
             Set<KeyCombination>()
 
-        var preservingSourceKeyCodes =
-            Set<CGKeyCode>()
+        var exactRegistrationsByKeyCode:
+            [CGKeyCode: [ExactSourceRegistration]] = [:]
 
-        for rule in rules {
-            switch rule.matchingMode {
-            case .exact:
-                try insertExactSource(
-                    rule.source,
-                    into: &exactSources
-                )
+        var preservingRegistrationsByKeyCode:
+            [CGKeyCode: PreservingSourceRegistration] = [:]
 
-                try validateReplacement(
-                    source: rule.source,
-                    destination: rule.destination
-                )
-
-            case .preserveModifiers:
-                guard
-                    rule.source.modifiers.isEmpty,
-                    rule.destination.modifiers.isEmpty
-                else {
-                    throw RemappingRulesValidationError
-                        .invalidModifierPreservingEndpoints
-                }
-
-                let insertionResult =
-                    preservingSourceKeyCodes.insert(
-                        rule.source.keyCode
-                    )
-
-                guard insertionResult.inserted else {
-                    throw RemappingRulesValidationError
-                        .duplicatePreservingSourceKey(
-                            rule.source.keyCode
-                        )
-                }
-
-                guard
-                    rule.source.keyCode
-                        != rule.destination.keyCode
-                else {
-                    throw RemappingRulesValidationError
-                        .identicalSourceAndDestination(
-                            rule.source.keyCode
-                        )
-                }
-            }
-
+        for (
+            ownerIndex,
+            rule
+        ) in rules.enumerated() {
             try validateStoredOverrides(
                 rule.overrides,
-                parentSourceKeyCode: rule.source.keyCode,
-                areActive:
-                    rule.matchingMode == .preserveModifiers,
-                exactSources: &exactSources
+                parentSourceKeyCode:
+                    rule.source.keyCode
+            )
+
+            try validateDirection(
+                source:
+                    rule.source,
+                destination:
+                    rule.destination,
+                matchingMode:
+                    rule.matchingMode,
+                activeOverrides:
+                    rule.overrides,
+                ownerIndex:
+                    ownerIndex,
+                isGeneratedReverseDirection:
+                    false,
+                exactSources:
+                    &exactSources,
+                exactRegistrationsByKeyCode:
+                    &exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    &preservingRegistrationsByKeyCode
+            )
+
+            guard
+                rule.isBidirectional
+            else {
+                continue
+            }
+
+            try validateDirection(
+                source:
+                    rule.destination,
+                destination:
+                    rule.source,
+                matchingMode:
+                    rule.matchingMode,
+                activeOverrides:
+                    reverseOverrides(
+                        from:
+                            rule.overrides,
+                        reverseSourceKeyCode:
+                            rule.destination.keyCode
+                    ),
+                ownerIndex:
+                    ownerIndex,
+                isGeneratedReverseDirection:
+                    true,
+                exactSources:
+                    &exactSources,
+                exactRegistrationsByKeyCode:
+                    &exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    &preservingRegistrationsByKeyCode
             )
         }
     }
 
+    /// Validates one active direction exactly as it will be compiled
+    /// by the remapping engine.
+    private func validateDirection(
+        source: KeyCombination,
+        destination: KeyCombination,
+        matchingMode: RemapMatchingMode,
+        activeOverrides: [RemapOverride],
+        ownerIndex: Int,
+        isGeneratedReverseDirection: Bool,
+        exactSources: inout Set<KeyCombination>,
+        exactRegistrationsByKeyCode:
+            inout [CGKeyCode: [ExactSourceRegistration]],
+        preservingRegistrationsByKeyCode:
+            inout [CGKeyCode: PreservingSourceRegistration]
+    ) throws {
+        switch matchingMode {
+        case .exact:
+            try insertExactSource(
+                source,
+                registration:
+                    ExactSourceRegistration(
+                        combination:
+                            source,
+                        ownerIndex:
+                            ownerIndex,
+                        isGeneratedReverseDirection:
+                            isGeneratedReverseDirection
+                    ),
+                exactSources:
+                    &exactSources,
+                exactRegistrationsByKeyCode:
+                    &exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    preservingRegistrationsByKeyCode
+            )
+
+            try validateReplacement(
+                source:
+                    source,
+                destination:
+                    destination
+            )
+
+        case .preserveModifiers:
+            guard
+                source.modifiers.isEmpty,
+                destination.modifiers.isEmpty
+            else {
+                throw RemappingRulesValidationError
+                    .invalidModifierPreservingEndpoints
+            }
+
+            try insertPreservingSource(
+                PreservingSourceRegistration(
+                    keyCode:
+                        source.keyCode,
+                    ownerIndex:
+                        ownerIndex,
+                    isGeneratedReverseDirection:
+                        isGeneratedReverseDirection
+                ),
+                exactRegistrationsByKeyCode:
+                    exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    &preservingRegistrationsByKeyCode
+            )
+
+            guard
+                source.keyCode
+                    != destination.keyCode
+            else {
+                throw RemappingRulesValidationError
+                    .identicalSourceAndDestination(
+                        source.keyCode
+                    )
+            }
+
+            try validateActiveOverrides(
+                activeOverrides,
+                expectedSourceKeyCode:
+                    source.keyCode,
+                ownerIndex:
+                    ownerIndex,
+                exactSources:
+                    &exactSources,
+                exactRegistrationsByKeyCode:
+                    &exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    preservingRegistrationsByKeyCode
+            )
+        }
+    }
+
+    /// Validates persisted exceptions even while their parent rule is Exact.
     private func validateStoredOverrides(
         _ overrides: [RemapOverride],
-        parentSourceKeyCode: CGKeyCode,
-        areActive: Bool,
-        exactSources: inout Set<KeyCombination>
+        parentSourceKeyCode: CGKeyCode
     ) throws {
-        for override in overrides {
+        for remapOverride in overrides {
             guard
-                override.source.keyCode
+                remapOverride.source.keyCode
                     == parentSourceKeyCode
             else {
                 throw RemappingRulesValidationError
@@ -142,40 +265,114 @@ nonisolated struct RemappingRulesValidator:
                         expected:
                             parentSourceKeyCode,
                         actual:
-                            override.source.keyCode
+                            remapOverride.source.keyCode
                     )
             }
 
-            if case .replaceWith(
-                let destination
-            ) = override.action {
-                try validateReplacement(
-                    source: override.source,
-                    destination: destination
-                )
-            }
-
-            guard areActive,
-                  override.isEnabled else {
-                continue
-            }
-
-            try insertExactSource(
-                override.source,
-                into: &exactSources
+            try validateOverrideReplacement(
+                remapOverride
             )
         }
     }
 
+    /// Registers enabled overrides as exact sources.
+    ///
+    /// Cross-mode checks ignore the parent Preserve Modifiers direction when
+    /// it belongs to the same rule, because an override is intentionally more
+    /// specific than that parent direction.
+    private func validateActiveOverrides(
+        _ overrides: [RemapOverride],
+        expectedSourceKeyCode: CGKeyCode,
+        ownerIndex: Int,
+        exactSources: inout Set<KeyCombination>,
+        exactRegistrationsByKeyCode:
+            inout [CGKeyCode: [ExactSourceRegistration]],
+        preservingRegistrationsByKeyCode:
+            [CGKeyCode: PreservingSourceRegistration]
+    ) throws {
+        for remapOverride in overrides {
+            guard
+                remapOverride.source.keyCode
+                    == expectedSourceKeyCode
+            else {
+                throw RemappingRulesValidationError
+                    .overrideSourceKeyMismatch(
+                        expected:
+                            expectedSourceKeyCode,
+                        actual:
+                            remapOverride.source.keyCode
+                    )
+            }
+
+            try validateOverrideReplacement(
+                remapOverride
+            )
+
+            guard
+                remapOverride.isEnabled
+            else {
+                continue
+            }
+
+            try insertExactSource(
+                remapOverride.source,
+                registration:
+                    ExactSourceRegistration(
+                        combination:
+                            remapOverride.source,
+                        ownerIndex:
+                            ownerIndex,
+                        isGeneratedReverseDirection:
+                            false
+                    ),
+                exactSources:
+                    &exactSources,
+                exactRegistrationsByKeyCode:
+                    &exactRegistrationsByKeyCode,
+                preservingRegistrationsByKeyCode:
+                    preservingRegistrationsByKeyCode
+            )
+        }
+    }
+
+    private func validateOverrideReplacement(
+        _ remapOverride: RemapOverride
+    ) throws {
+        guard
+            case .replaceWith(
+                let destination
+            ) = remapOverride.action
+        else {
+            return
+        }
+
+        try validateReplacement(
+            source:
+                remapOverride.source,
+            destination:
+                destination
+        )
+    }
+
+    /// Inserts an exact source and checks collisions with a generated reverse
+    /// Preserve Modifiers source on the same physical key.
     private func insertExactSource(
         _ source: KeyCombination,
-        into sources:
-            inout Set<KeyCombination>
+        registration: ExactSourceRegistration,
+        exactSources: inout Set<KeyCombination>,
+        exactRegistrationsByKeyCode:
+            inout [CGKeyCode: [ExactSourceRegistration]],
+        preservingRegistrationsByKeyCode:
+            [CGKeyCode: PreservingSourceRegistration]
     ) throws {
         let insertionResult =
-            sources.insert(source)
+            exactSources.insert(
+                source
+            )
 
-        guard insertionResult.inserted else {
+        guard
+            insertionResult.inserted
+        else {
             if source.modifiers.isEmpty {
                 throw RemappingRulesValidationError
                     .duplicateSourceKey(
@@ -188,13 +385,112 @@ nonisolated struct RemappingRulesValidator:
                     source
                 )
         }
+
+        if let preservingRegistration =
+            preservingRegistrationsByKeyCode[
+                source.keyCode
+            ],
+           preservingRegistration.ownerIndex
+                != registration.ownerIndex,
+           preservingRegistration
+                .isGeneratedReverseDirection
+                || registration
+                    .isGeneratedReverseDirection
+        {
+            throw RemappingRulesValidationError
+                .duplicateSourceCombination(
+                    source
+                )
+        }
+
+        exactRegistrationsByKeyCode[
+            source.keyCode,
+            default:
+                []
+        ].append(
+            registration
+        )
+    }
+
+    /// Inserts a Preserve Modifiers source and checks collisions with every
+    /// exact source on the same physical key whenever either side is a
+    /// generated reverse direction.
+    private func insertPreservingSource(
+        _ registration: PreservingSourceRegistration,
+        exactRegistrationsByKeyCode:
+            [CGKeyCode: [ExactSourceRegistration]],
+        preservingRegistrationsByKeyCode:
+            inout [CGKeyCode: PreservingSourceRegistration]
+    ) throws {
+        if preservingRegistrationsByKeyCode[
+            registration.keyCode
+        ] != nil {
+            throw RemappingRulesValidationError
+                .duplicatePreservingSourceKey(
+                    registration.keyCode
+                )
+        }
+
+        if let exactRegistrations =
+            exactRegistrationsByKeyCode[
+                registration.keyCode
+            ]
+        {
+            for exactRegistration in exactRegistrations
+            where exactRegistration.ownerIndex
+                != registration.ownerIndex
+                && (
+                    exactRegistration
+                        .isGeneratedReverseDirection
+                    || registration
+                        .isGeneratedReverseDirection
+                )
+            {
+                throw RemappingRulesValidationError
+                    .duplicateSourceCombination(
+                        exactRegistration.combination
+                    )
+            }
+        }
+
+        preservingRegistrationsByKeyCode[
+            registration.keyCode
+        ] = registration
+    }
+
+    /// Derives the exceptions used by the reverse Preserve Modifiers
+    /// direction. The physical source key changes, while modifiers, action,
+    /// and enabled state remain unchanged.
+    private func reverseOverrides(
+        from overrides: [RemapOverride],
+        reverseSourceKeyCode: CGKeyCode
+    ) -> [RemapOverride] {
+        overrides.map {
+            remapOverride in
+
+            RemapOverride(
+                source:
+                    KeyCombination(
+                        keyCode:
+                            reverseSourceKeyCode,
+                        modifiers:
+                            remapOverride.source.modifiers
+                    ),
+                action:
+                    remapOverride.action,
+                isEnabled:
+                    remapOverride.isEnabled
+            )
+        }
     }
 
     private func validateReplacement(
         source: KeyCombination,
         destination: KeyCombination
     ) throws {
-        guard source != destination else {
+        guard
+            source != destination
+        else {
             if source.modifiers.isEmpty {
                 throw RemappingRulesValidationError
                     .identicalSourceAndDestination(

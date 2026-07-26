@@ -36,6 +36,7 @@ nonisolated struct RemappingRuleEditorItem:
     var destinationCombination: KeyCombination?
     var matchingMode: RemapMatchingMode
     var overrides: [RemapOverride]
+    var isBidirectional: Bool
 
     /// Remembers the complete Exact Only source while the active rule is
     /// temporarily using Preserve Modifiers.
@@ -59,6 +60,7 @@ nonisolated struct RemappingRuleEditorItem:
         destinationCombination: KeyCombination? = nil,
         matchingMode: RemapMatchingMode = .exact,
         overrides: [RemapOverride] = [],
+        isBidirectional: Bool = false,
         rememberedExactSourceCombination:
             KeyCombination? = nil,
         rememberedExactDestinationCombination:
@@ -73,6 +75,8 @@ nonisolated struct RemappingRuleEditorItem:
             matchingMode
         self.overrides =
             overrides
+        self.isBidirectional =
+            isBidirectional
 
         if matchingMode == .exact {
             self.rememberedExactSourceCombination =
@@ -104,7 +108,9 @@ nonisolated struct RemappingRuleEditorItem:
             matchingMode:
                 rule.matchingMode,
             overrides:
-                rule.overrides
+                rule.overrides,
+            isBidirectional:
+                rule.isBidirectional
         )
     }
 
@@ -180,6 +186,16 @@ nonisolated struct RemappingRuleEditorItem:
             rememberedExactDestinationCombination =
                 normalizedCombination
         }
+    }
+
+    /// Enables or disables the reverse direction without creating a duplicate
+    /// editor item or changing the rule's source, destination, matching mode,
+    /// modifiers, or stored exceptions.
+    mutating func setBidirectional(
+        _ isEnabled: Bool
+    ) {
+        isBidirectional =
+            isEnabled
     }
 
     /// Returns why the requested matching-mode transition cannot be applied.
@@ -330,8 +346,7 @@ nonisolated struct RemappingRuleEditorItem:
     }
 
     /// Returns the destination that should appear in the examples for one
-    /// matching mode, including a remembered Exact Only combination when
-    /// available.
+    /// mode, including a remembered Exact Only combination when available.
     func destinationCombinationForPreview(
         in previewMode:
             RemapMatchingMode
@@ -383,7 +398,9 @@ nonisolated struct RemappingRuleEditorItem:
             matchingMode:
                 matchingMode,
             overrides:
-                overrides
+                overrides,
+            isBidirectional:
+                isBidirectional
         )
     }
 

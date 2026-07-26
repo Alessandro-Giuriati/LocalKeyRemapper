@@ -126,6 +126,354 @@ private final class InteractiveRulesHeaderView: NSView {
 }
 
 
+/// Presents the Reverse column as two independent controls:
+/// a sortable column heading and a global switch that updates every rule.
+///
+/// `NSSwitch` is intentionally kept as a binary control. When the rules contain
+/// both enabled and disabled Reverse states, the adjacent "Mixed" indicator
+/// communicates the aggregate state while the switch remains ready to enable
+/// Reverse for every rule with one click.
+@MainActor
+private final class ReverseRulesHeaderView: NSView {
+    var onSortRequested: (() -> Void)?
+    var onGlobalToggleRequested: ((Bool) -> Void)?
+
+    private let sortButton =
+        SortableHeaderButton(
+            frame: .zero
+        )
+
+    private let globalSwitch =
+        NSSwitch()
+
+    private let mixedLabel =
+        NSTextField(
+            labelWithString:
+                "Mixed"
+        )
+
+    private let stateStack =
+        NSStackView()
+
+    override init(
+        frame frameRect:
+            NSRect
+    ) {
+        super.init(
+            frame:
+                frameRect
+        )
+
+        configureContent()
+    }
+
+    convenience init() {
+        self.init(
+            frame:
+                .zero
+        )
+    }
+
+    required init?(
+        coder:
+            NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
+    }
+
+    func applyTextScale(
+        _ scale:
+            CGFloat
+    ) {
+        sortButton.applyTextScale(
+            scale
+        )
+
+        mixedLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    9 * scale,
+                weight:
+                    .semibold
+            )
+
+        stateStack.spacing =
+            InterfaceLayoutMetrics.scaled(
+                4,
+                for:
+                    scale,
+                minimum:
+                    3,
+                maximum:
+                    6
+            )
+
+        needsLayout =
+            true
+    }
+
+    func setSortState(
+        _ state:
+            SortableHeaderButton.SortState
+    ) {
+        sortButton.setSortState(
+            state
+        )
+    }
+
+    /// Synchronizes the aggregate state after every row edit, global change,
+    /// Undo, Redo, load, save, insertion, or removal.
+    func setSelectionState(
+        _ selectionState:
+            RemappingRuleEditorSession
+                .BidirectionalSelectionState
+    ) {
+        switch selectionState {
+        case .unavailable:
+            globalSwitch.state =
+                .off
+
+            globalSwitch.isEnabled =
+                false
+
+            mixedLabel.isHidden =
+                true
+
+            globalSwitch.toolTip =
+                "Add a rule before changing Reverse for all rules."
+
+            globalSwitch.setAccessibilityValue(
+                "Unavailable"
+            )
+
+        case .disabled:
+            globalSwitch.state =
+                .off
+
+            globalSwitch.isEnabled =
+                true
+
+            mixedLabel.isHidden =
+                true
+
+            globalSwitch.toolTip =
+                "Enable Reverse for every rule."
+
+            globalSwitch.setAccessibilityValue(
+                "Off for all rules"
+            )
+
+        case .mixed:
+            // NSSwitch is binary. Keep it ready to move to ON while the
+            // explicit Mixed indicator represents the aggregate state.
+            globalSwitch.state =
+                .off
+
+            globalSwitch.isEnabled =
+                true
+
+            mixedLabel.isHidden =
+                false
+
+            globalSwitch.toolTip =
+                "Reverse is enabled for only some rules. Turn this on to enable it for every rule."
+
+            globalSwitch.setAccessibilityValue(
+                "Mixed"
+            )
+
+        case .enabled:
+            globalSwitch.state =
+                .on
+
+            globalSwitch.isEnabled =
+                true
+
+            mixedLabel.isHidden =
+                true
+
+            globalSwitch.toolTip =
+                "Disable Reverse for every rule."
+
+            globalSwitch.setAccessibilityValue(
+                "On for all rules"
+            )
+        }
+    }
+
+    private func configureContent() {
+        sortButton.title =
+            "Reverse"
+
+        sortButton.target =
+            self
+
+        sortButton.action =
+            #selector(
+                sortRequested
+            )
+
+        sortButton.setAccessibilityLabel(
+            "Sort by Reverse"
+        )
+
+        globalSwitch.controlSize =
+            .small
+
+        globalSwitch.target =
+            self
+
+        globalSwitch.action =
+            #selector(
+                globalSwitchChanged
+            )
+
+        globalSwitch.setAccessibilityLabel(
+            "Reverse all rules"
+        )
+
+        globalSwitch.setAccessibilityHelp(
+            "Turns bidirectional remapping on or off for every rule. A Mixed indicator appears when only some rules are enabled."
+        )
+
+        globalSwitch
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        globalSwitch
+            .setContentCompressionResistancePriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        mixedLabel.textColor =
+            .secondaryLabelColor
+
+        mixedLabel.alignment =
+            .center
+
+        mixedLabel.lineBreakMode =
+            .byClipping
+
+        mixedLabel.isHidden =
+            true
+
+        mixedLabel.toolTip =
+            "Some rules have Reverse enabled and others have it disabled."
+
+        mixedLabel
+            .setContentHuggingPriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        mixedLabel
+            .setContentCompressionResistancePriority(
+                .required,
+                for:
+                    .horizontal
+            )
+
+        stateStack.setViews(
+            [
+                mixedLabel,
+                globalSwitch
+            ],
+            in:
+                .leading
+        )
+
+        stateStack.orientation =
+            .horizontal
+
+        stateStack.alignment =
+            .centerY
+
+        stateStack.distribution =
+            .fill
+
+        sortButton.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        stateStack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        addSubview(
+            sortButton
+        )
+
+        addSubview(
+            stateStack
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                sortButton.leadingAnchor.constraint(
+                    equalTo:
+                        leadingAnchor
+                ),
+
+                sortButton.trailingAnchor.constraint(
+                    equalTo:
+                        trailingAnchor
+                ),
+
+                sortButton.topAnchor.constraint(
+                    equalTo:
+                        topAnchor
+                ),
+
+                stateStack.topAnchor.constraint(
+                    equalTo:
+                        sortButton.bottomAnchor,
+                    constant:
+                        -1
+                ),
+
+                stateStack.centerXAnchor.constraint(
+                    equalTo:
+                        centerXAnchor
+                ),
+
+                stateStack.bottomAnchor.constraint(
+                    equalTo:
+                        bottomAnchor,
+                    constant:
+                        -2
+                )
+            ]
+        )
+
+        applyTextScale(
+            1.0
+        )
+
+        setSelectionState(
+            .unavailable
+        )
+    }
+
+    @objc
+    private func sortRequested() {
+        onSortRequested?()
+    }
+
+    @objc
+    private func globalSwitchChanged() {
+        onGlobalToggleRequested?(
+            globalSwitch.state
+                == .on
+        )
+    }
+}
+
 /// Presents editor status as plain secondary text during normal operation and
 /// as a full-width red banner when a blocking validation or persistence error
 /// is active.
@@ -494,6 +842,9 @@ final class RemappingRulesWindowController:
             frame: .zero
         )
 
+    private let reverseHeaderView =
+        ReverseRulesHeaderView()
+
     private let issuesFilterView =
         RemappingRulesIssuesFilterView()
 
@@ -797,6 +1148,10 @@ final class RemappingRulesWindowController:
             textScale
         )
 
+        reverseHeaderView.applyTextScale(
+            textScale
+        )
+
         issuesFilterView.applyTextScale(
             textScale
         )
@@ -972,6 +1327,7 @@ final class RemappingRulesWindowController:
             .secondaryLabelColor
 
         configureSortHeaderButtons()
+        configureReverseHeaderView()
         configureFilterControls()
         configureIssuesFilterView()
         configureRuleRemovalConfirmationPreference()
@@ -1697,6 +2053,7 @@ final class RemappingRulesWindowController:
             destinationHeaderButton,
             behaviorHeaderButton,
             exceptionsHeaderButton,
+            reverseHeaderView,
             issuesFilterView,
             removeSpacer
         ]
@@ -1808,9 +2165,32 @@ final class RemappingRulesWindowController:
                     equalToConstant: 116
                 ),
 
-                issuesFilterView.leadingAnchor.constraint(
+                reverseHeaderView.leadingAnchor.constraint(
                     equalTo:
                         exceptionsHeaderButton
+                            .trailingAnchor,
+                    constant: 6
+                ),
+
+                reverseHeaderView.widthAnchor.constraint(
+                    equalToConstant: 88
+                ),
+
+                reverseHeaderView.topAnchor.constraint(
+                    equalTo:
+                        headerView.topAnchor,
+                    constant: 2
+                ),
+
+                reverseHeaderView.bottomAnchor.constraint(
+                    equalTo:
+                        headerView.bottomAnchor,
+                    constant: -2
+                ),
+
+                issuesFilterView.leadingAnchor.constraint(
+                    equalTo:
+                        reverseHeaderView
                             .trailingAnchor,
                     constant: 6
                 ),
@@ -1900,6 +2280,42 @@ final class RemappingRulesWindowController:
         updateSortHeaderButtons()
     }
 
+    private func configureReverseHeaderView() {
+        reverseHeaderView.onSortRequested = {
+            [weak self] in
+
+            self?.applySorting(
+                .reverse
+            )
+        }
+
+        reverseHeaderView.onGlobalToggleRequested = {
+            [weak self] isEnabled in
+
+            self?.setBidirectionalForAllRules(
+                isEnabled
+            )
+        }
+    }
+
+    private func updateReverseHeaderView() {
+        reverseHeaderView.setSelectionState(
+            ruleEditorSession
+                .bidirectionalSelectionState
+        )
+    }
+
+    private func setBidirectionalForAllRules(
+        _ isEnabled: Bool
+    ) {
+        endKeyCapture()
+
+        ruleEditorSession
+            .setBidirectionalForAll(
+                isEnabled
+            )
+    }
+
     private func configureSortHeaderButton(
         _ button: SortableHeaderButton,
         title: String,
@@ -1978,6 +2394,12 @@ final class RemappingRulesWindowController:
         exceptionsHeaderButton.setSortState(
             sortState(
                 for: .exceptions
+            )
+        )
+
+        reverseHeaderView.setSortState(
+            sortState(
+                for: .reverse
             )
         )
 
@@ -2466,6 +2888,7 @@ final class RemappingRulesWindowController:
         endKeyCapture()
         removeAllRuleRows()
         updateSortHeaderButtons()
+        updateReverseHeaderView()
         updateFilterControls()
 
         let validationSnapshot =
@@ -3251,6 +3674,8 @@ final class RemappingRulesWindowController:
     }
 
     private func refreshChangeState() {
+        updateReverseHeaderView()
+
         let validationSnapshot =
             validationSnapshot()
 

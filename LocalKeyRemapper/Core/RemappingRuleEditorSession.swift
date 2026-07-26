@@ -13,18 +13,43 @@ import Foundation
 /// running application process. Closing or recreating the main window does
 /// not destroy this object, while terminating the process naturally does.
 nonisolated final class RemappingRuleEditorSession {
+
+    /// Represents the combined bidirectional state of all editor items.
+    ///
+    /// This is used by the global Reverse switch:
+    /// - unavailable: there are no rules;
+    /// - disabled: every rule is one-directional;
+    /// - mixed: only some rules are bidirectional;
+    /// - enabled: every rule is bidirectional.
+    enum BidirectionalSelectionState:
+        Equatable
+    {
+        case unavailable
+        case disabled
+        case mixed
+        case enabled
+    }
+
     var onChange: (() -> Void)?
 
-    private let history: RuleEditorHistory
+    private let history:
+        RuleEditorHistory
 
-    private(set) var items: [RemappingRuleEditorItem] = []
-    private(set) var savedRules: [RemapRule] = []
-    private(set) var isInitialized = false
+    private(set) var items:
+        [RemappingRuleEditorItem] = []
+
+    private(set) var savedRules:
+        [RemapRule] = []
+
+    private(set) var isInitialized =
+        false
 
     init(
-        history: RuleEditorHistory = RuleEditorHistory()
+        history:
+            RuleEditorHistory = RuleEditorHistory()
     ) {
-        self.history = history
+        self.history =
+            history
     }
 
     var canUndo: Bool {
@@ -43,13 +68,55 @@ nonisolated final class RemappingRuleEditorSession {
         history.totalEstimatedPayloadSize
     }
 
-    /// Returns every current item as a rule only when no row is incomplete.
-    var completeRules: [RemapRule]? {
-        let rules = items.compactMap {
-            $0.rule
+    /// Returns the combined Reverse state for the complete collection.
+    ///
+    /// The result always considers every rule in the session, including
+    /// rules that are currently hidden by sorting or filtering.
+    var bidirectionalSelectionState:
+        BidirectionalSelectionState
+    {
+        guard
+            !items.isEmpty
+        else {
+            return .unavailable
         }
 
-        guard rules.count == items.count else {
+        let enabledCount =
+            items.reduce(
+                into: 0
+            ) {
+                count,
+                item in
+
+                if item.isBidirectional {
+                    count += 1
+                }
+            }
+
+        if enabledCount == 0 {
+            return .disabled
+        }
+
+        if enabledCount == items.count {
+            return .enabled
+        }
+
+        return .mixed
+    }
+
+    /// Returns every current item as a rule only when no row is incomplete.
+    var completeRules:
+        [RemapRule]?
+    {
+        let rules =
+            items.compactMap {
+                $0.rule
+            }
+
+        guard
+            rules.count
+                == items.count
+        else {
             return nil
         }
 
@@ -59,7 +126,9 @@ nonisolated final class RemappingRuleEditorSession {
     /// Indicates whether the editor differs from the last loaded or saved
     /// persistent rule collection.
     var hasUnsavedChanges: Bool {
-        guard let completeRules else {
+        guard
+            let completeRules
+        else {
             return true
         }
 
@@ -75,43 +144,58 @@ nonisolated final class RemappingRuleEditorSession {
     /// A second call is ignored so reopening the window cannot overwrite the
     /// in-memory editor state or its Undo and Redo history.
     func initialize(
-        with rules: [RemapRule]
+        with rules:
+            [RemapRule]
     ) {
-        guard !isInitialized else {
+        guard
+            !isInitialized
+        else {
             return
         }
 
-        items = rules.map {
-            RemappingRuleEditorItem(
-                rule: $0
-            )
-        }
+        items =
+            rules.map {
+                RemappingRuleEditorItem(
+                    rule:
+                        $0
+                )
+            }
 
-        savedRules = rules
+        savedRules =
+            rules
+
         history.clear()
-        isInitialized = true
+
+        isInitialized =
+            true
+
         onChange?()
     }
 
     @discardableResult
     func insertEmptyItem(
-        at requestedIndex: Int? = nil
+        at requestedIndex:
+            Int? = nil
     ) -> UUID {
         let item =
             RemappingRuleEditorItem()
 
-        let index = min(
-            max(
-                requestedIndex ?? items.count,
-                0
-            ),
-            items.count
-        )
+        let index =
+            min(
+                max(
+                    requestedIndex
+                        ?? items.count,
+                    0
+                ),
+                items.count
+            )
 
         applyNewAction(
             .insert(
-                item: item,
-                index: index
+                item:
+                    item,
+                index:
+                    index
             )
         )
 
@@ -119,22 +203,26 @@ nonisolated final class RemappingRuleEditorSession {
     }
 
     func removeItem(
-        id: UUID
+        id:
+            UUID
     ) {
         guard
-            let index = items.firstIndex(
-                where: {
-                    $0.id == id
-                }
-            )
+            let index =
+                items.firstIndex(
+                    where: {
+                        $0.id == id
+                    }
+                )
         else {
             return
         }
 
         applyNewAction(
             .remove(
-                item: items[index],
-                index: index
+                item:
+                    items[index],
+                index:
+                    index
             )
         )
     }
@@ -144,11 +232,13 @@ nonisolated final class RemappingRuleEditorSession {
             RemappingRuleEditorItem
     ) {
         guard
-            let index = items.firstIndex(
-                where: {
-                    $0.id == updatedItem.id
-                }
-            )
+            let index =
+                items.firstIndex(
+                    where: {
+                        $0.id
+                            == updatedItem.id
+                    }
+                )
         else {
             return
         }
@@ -157,45 +247,95 @@ nonisolated final class RemappingRuleEditorSession {
             items[index]
 
         guard
-            previousItem != updatedItem
+            previousItem
+                != updatedItem
         else {
             return
         }
 
         applyNewAction(
             .update(
-                before: previousItem,
-                after: updatedItem
+                before:
+                    previousItem,
+                after:
+                    updatedItem
+            )
+        )
+    }
+
+    /// Enables or disables Reverse on every rule as one Undo/Redo action.
+    ///
+    /// This applies to the complete editor collection, not only the rows
+    /// currently visible after filtering.
+    func setBidirectionalForAll(
+        _ isEnabled:
+            Bool
+    ) {
+        let updatedItems =
+            items.map {
+                item in
+
+                var updatedItem =
+                    item
+
+                updatedItem.setBidirectional(
+                    isEnabled
+                )
+
+                return updatedItem
+            }
+
+        guard
+            updatedItems
+                != items
+        else {
+            return
+        }
+
+        applyNewAction(
+            .replaceAll(
+                before:
+                    items,
+                after:
+                    updatedItems
             )
         )
     }
 
     /// Restores the last loaded or saved rules as one reversible operation.
     func restoreSavedRules() {
-        guard hasUnsavedChanges else {
+        guard
+            hasUnsavedChanges
+        else {
             return
         }
 
         let restoredItems =
             savedRules.map {
                 RemappingRuleEditorItem(
-                    rule: $0
+                    rule:
+                        $0
                 )
             }
 
         applyNewAction(
             .replaceAll(
-                before: items,
-                after: restoredItems
+                before:
+                    items,
+                after:
+                    restoredItems
             )
         )
     }
 
     /// Updates the saved baseline without clearing Undo or Redo.
     func markCurrentRulesAsSaved(
-        _ rules: [RemapRule]
+        _ rules:
+            [RemapRule]
     ) {
-        savedRules = rules
+        savedRules =
+            rules
+
         onChange?()
     }
 
@@ -207,9 +347,11 @@ nonisolated final class RemappingRuleEditorSession {
             return
         }
 
-        items = action.applyingUndo(
-            to: items
-        )
+        items =
+            action.applyingUndo(
+                to:
+                    items
+            )
 
         onChange?()
     }
@@ -222,29 +364,35 @@ nonisolated final class RemappingRuleEditorSession {
             return
         }
 
-        items = action.applyingRedo(
-            to: items
-        )
+        items =
+            action.applyingRedo(
+                to:
+                    items
+            )
 
         onChange?()
     }
 
     private func applyNewAction(
-        _ action: RuleEditorAction
+        _ action:
+            RuleEditorAction
     ) {
         history.record(
             action
         )
 
-        items = action.applyingRedo(
-            to: items
-        )
+        items =
+            action.applyingRedo(
+                to:
+                    items
+            )
 
         onChange?()
     }
 
     private static func normalizedRules(
-        _ rules: [RemapRule]
+        _ rules:
+            [RemapRule]
     ) -> [RemapRule] {
         let normalizedRules =
             rules.map {
@@ -260,7 +408,9 @@ nonisolated final class RemappingRuleEditorSession {
                     overrides:
                         normalizedOverrides(
                             rule.overrides
-                        )
+                        ),
+                    isBidirectional:
+                        rule.isBidirectional
                 )
             }
 
@@ -302,19 +452,33 @@ nonisolated final class RemappingRuleEditorSession {
                     < second.destination.keyCode
             }
 
-            return first
-                .destination
-                .modifiers
-                .rawValue
-                < second
+            if first.destination.modifiers.rawValue
+                != second.destination.modifiers.rawValue
+            {
+                return first
                     .destination
                     .modifiers
                     .rawValue
+                    < second
+                        .destination
+                        .modifiers
+                        .rawValue
+            }
+
+            if first.isBidirectional
+                != second.isBidirectional
+            {
+                return first.isBidirectional
+                    == false
+            }
+
+            return false
         }
     }
 
     private static func normalizedOverrides(
-        _ overrides: [RemapOverride]
+        _ overrides:
+            [RemapOverride]
     ) -> [RemapOverride] {
         overrides.sorted {
             first,
@@ -343,7 +507,8 @@ nonisolated final class RemappingRuleEditorSession {
             if first.isEnabled
                 != second.isEnabled
             {
-                return first.isEnabled == false
+                return first.isEnabled
+                    == false
             }
 
             return actionSortKey(
@@ -355,7 +520,8 @@ nonisolated final class RemappingRuleEditorSession {
     }
 
     private static func actionSortKey(
-        _ action: RemapAction
+        _ action:
+            RemapAction
     ) -> String {
         switch action {
         case .passThrough:

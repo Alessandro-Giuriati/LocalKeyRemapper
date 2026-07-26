@@ -5,7 +5,6 @@
 //  Created by Alessandro Giuriati on 7/15/26.
 //
 
-
 import CoreGraphics
 
 /// Represents one configurable keyboard remapping rule.
@@ -13,6 +12,11 @@ import CoreGraphics
 /// A rule can match one exact combination or preserve the modifiers
 /// pressed with a source key. Modifier-preserving rules can also contain
 /// exact, fully customizable overrides.
+///
+/// When `isBidirectional` is enabled, the same stored rule also produces
+/// the reverse destination-to-source remapping at runtime. The reverse
+/// direction is derived by the remapping engine and is never stored as a
+/// separate duplicate rule.
 nonisolated struct RemapRule:
     Codable,
     Equatable
@@ -21,17 +25,20 @@ nonisolated struct RemapRule:
     let destination: KeyCombination
     let matchingMode: RemapMatchingMode
     let overrides: [RemapOverride]
+    let isBidirectional: Bool
 
     init(
         source: KeyCombination,
         destination: KeyCombination,
         matchingMode: RemapMatchingMode = .exact,
-        overrides: [RemapOverride] = []
+        overrides: [RemapOverride] = [],
+        isBidirectional: Bool = false
     ) {
         self.source = source
         self.destination = destination
         self.matchingMode = matchingMode
         self.overrides = overrides
+        self.isBidirectional = isBidirectional
     }
 
     /// Compatibility initializer used by the current Settings interface.
@@ -40,7 +47,8 @@ nonisolated struct RemapRule:
     /// without modifiers, so V -> W does not affect Command + V.
     init(
         sourceKeyCode: CGKeyCode,
-        destinationKeyCode: CGKeyCode
+        destinationKeyCode: CGKeyCode,
+        isBidirectional: Bool = false
     ) {
         self.init(
             source: KeyCombination(
@@ -49,7 +57,8 @@ nonisolated struct RemapRule:
             destination: KeyCombination(
                 keyCode: destinationKeyCode
             ),
-            matchingMode: .exact
+            matchingMode: .exact,
+            isBidirectional: isBidirectional
         )
     }
 
@@ -71,6 +80,7 @@ nonisolated struct RemapRule:
         case destination
         case matchingMode
         case overrides
+        case isBidirectional
 
         /// Keys used by the previous rule format.
         case sourceKeyCode
@@ -103,6 +113,13 @@ nonisolated struct RemapRule:
                 forKey: .overrides
             ) ?? []
 
+            // Rules saved before bidirectional remapping existed remain
+            // one-directional, preserving their previous behavior.
+            isBidirectional = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .isBidirectional
+            ) ?? false
+
             return
         }
 
@@ -126,6 +143,7 @@ nonisolated struct RemapRule:
 
         matchingMode = .exact
         overrides = []
+        isBidirectional = false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -151,6 +169,11 @@ nonisolated struct RemapRule:
         try container.encode(
             overrides,
             forKey: .overrides
+        )
+
+        try container.encode(
+            isBidirectional,
+            forKey: .isBidirectional
         )
     }
 }
