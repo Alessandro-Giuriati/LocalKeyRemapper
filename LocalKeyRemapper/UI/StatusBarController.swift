@@ -44,6 +44,24 @@ final class StatusBarController:
     private var popoverViewController:
         StatusPopoverViewController?
 
+    private enum StatusIcon {
+        static let enabledAssetName =
+            NSImage.Name(
+                "MenuBarIconEnabled"
+            )
+
+        static let disabledAssetName =
+            NSImage.Name(
+                "MenuBarIconDisabled"
+            )
+
+        static let size =
+            NSSize(
+                width: 25,
+                height: 25
+            )
+    }
+
     init(
         remappingController:
             RemappingControlling,
@@ -100,11 +118,17 @@ final class StatusBarController:
         )
     }
 
-    /// Refreshes the popover using the real backend state.
+    /// Refreshes the menu bar icon and popover
+    /// using the real backend state.
     func update(
         for state:
             RemappingState
     ) {
+        updateStatusIcon(
+            for:
+                state
+        )
+
         popoverViewController?
             .update(
                 for:
@@ -132,6 +156,99 @@ final class StatusBarController:
             return
         }
 
+        button.imagePosition =
+            .imageOnly
+
+        button.imageScaling =
+            .scaleProportionallyDown
+
+        button.toolTip =
+            "LocalKeyRemapper"
+
+        button.setAccessibilityLabel(
+            "LocalKeyRemapper"
+        )
+
+        button.target =
+            self
+
+        button.action =
+            #selector(
+                togglePopover
+            )
+    }
+
+    private func updateStatusIcon(
+        for state:
+            RemappingState
+    ) {
+        let assetName:
+            NSImage.Name
+
+        switch state {
+        case .enabled:
+            assetName =
+                StatusIcon.enabledAssetName
+
+        case .disabled,
+             .enabling,
+             .permissionRequired,
+             .failed:
+            assetName =
+                StatusIcon.disabledAssetName
+        }
+
+        setStatusIcon(
+            named:
+                assetName
+        )
+    }
+
+    private func setStatusIcon(
+        named assetName:
+            NSImage.Name
+    ) {
+        guard
+            let button =
+                statusItem.button
+        else {
+            return
+        }
+
+        guard
+            let sourceImage =
+                NSImage(
+                    named:
+                        assetName
+                ),
+            let image =
+                sourceImage.copy()
+                    as? NSImage
+        else {
+            setFallbackStatusIcon(
+                on:
+                    button
+            )
+            return
+        }
+
+        image.isTemplate =
+            false
+
+        image.size =
+            StatusIcon.size
+
+        button.title =
+            ""
+
+        button.image =
+            image
+    }
+
+    private func setFallbackStatusIcon(
+        on button:
+            NSStatusBarButton
+    ) {
         if
             let image =
                 NSImage(
@@ -144,23 +261,21 @@ final class StatusBarController:
             image.isTemplate =
                 true
 
+            image.size =
+                StatusIcon.size
+
+            button.title =
+                ""
+
             button.image =
                 image
         } else {
+            button.image =
+                nil
+
             button.title =
                 "KR"
         }
-
-        button.toolTip =
-            "LocalKeyRemapper"
-
-        button.target =
-            self
-
-        button.action =
-            #selector(
-                togglePopover
-            )
     }
 
     private func configurePopover() {
