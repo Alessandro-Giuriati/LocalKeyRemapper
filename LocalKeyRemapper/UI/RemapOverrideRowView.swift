@@ -75,12 +75,7 @@ final class RemapOverrideRowView: NSView {
     var onEnabledChangeRequested:
         ((Bool) -> Bool)?
 
-    private let enabledCheckbox =
-        NSButton(
-            checkboxWithTitle: "",
-            target: nil,
-            action: nil
-        )
+    private let enabledSwitch = NSSwitch()
 
     private let sourceButton = NSButton()
 
@@ -366,9 +361,6 @@ final class RemapOverrideRowView: NSView {
                 weight: .regular
             )
 
-        enabledCheckbox.font =
-            controlFont
-
         sourceButton.font =
             controlFont
 
@@ -400,12 +392,26 @@ final class RemapOverrideRowView: NSView {
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
 
-        enabledCheckbox.target = self
-        enabledCheckbox.action =
+        enabledSwitch.controlSize =
+            .small
+
+        enabledSwitch.isContinuous =
+            false
+
+        enabledSwitch.target = self
+        enabledSwitch.action =
             #selector(enabledChanged)
 
-        enabledCheckbox.toolTip =
+        enabledSwitch.toolTip =
             "Enable or disable this exception without deleting it."
+
+        enabledSwitch.setAccessibilityLabel(
+            "Enabled exception"
+        )
+
+        enabledSwitch.setAccessibilityHelp(
+            "When disabled, this exception remains stored but does not participate in remapping."
+        )
 
         configureButton(
             sourceButton,
@@ -451,7 +457,7 @@ final class RemapOverrideRowView: NSView {
             #selector(requestRemoval)
 
         let views: [NSView] = [
-            enabledCheckbox,
+            enabledSwitch,
             sourceButton,
             arrowLabel,
             actionPopUpButton,
@@ -477,17 +483,13 @@ final class RemapOverrideRowView: NSView {
 
         NSLayoutConstraint.activate(
             [
-                enabledCheckbox.leadingAnchor.constraint(
+                enabledSwitch.leadingAnchor.constraint(
                     equalTo: leadingAnchor,
                     constant: 6
                 ),
 
-                enabledCheckbox.centerYAnchor.constraint(
+                enabledSwitch.centerYAnchor.constraint(
                     equalTo: centerYAnchor
-                ),
-
-                enabledCheckbox.widthAnchor.constraint(
-                    equalToConstant: 24
                 ),
 
                 sourceButton.leadingAnchor.constraint(
@@ -644,7 +646,7 @@ final class RemapOverrideRowView: NSView {
     }
 
     private func synchronizeEnabledControl() {
-        enabledCheckbox.state =
+        enabledSwitch.state =
             isEnabled ? .on : .off
     }
 
@@ -762,7 +764,7 @@ final class RemapOverrideRowView: NSView {
     @objc
     private func enabledChanged() {
         let requestedValue =
-            enabledCheckbox.state == .on
+            enabledSwitch.state == .on
 
         if let onEnabledChangeRequested,
            !onEnabledChangeRequested(
