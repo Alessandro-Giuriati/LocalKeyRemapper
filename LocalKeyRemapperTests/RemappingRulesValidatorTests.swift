@@ -107,9 +107,7 @@ final class RemappingRulesValidatorTests:
             .validate([rule])
     }
 
-    func testDisabledOverrideConflictingWithExactRuleIsAccepted()
-        throws
-    {
+    func testDisabledOverrideDoesNotSuppressCrossModeConflict() {
         let conflictingSource = KeyCombination(
             keyCode: KeyCode.v,
             modifiers: [.command]
@@ -140,8 +138,10 @@ final class RemappingRulesValidatorTests:
             )
         ]
 
-        try RemappingRulesValidator()
-            .validate(rules)
+        assertDuplicateSourceCombination(
+            conflictingSource,
+            rules: rules
+        )
     }
 
     func testOverrideOwnedByExactRuleCanConflictBecauseItIsInactive()
