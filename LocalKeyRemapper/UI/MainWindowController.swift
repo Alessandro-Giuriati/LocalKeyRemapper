@@ -260,6 +260,7 @@ final class MainWindowController:
         }
 
         configureShortcutSettingsCallbacks()
+        configureConfigurationChangeObservation()
         configureContent()
         synchronizeLaunchBehavior()
         synchronizeMenuBarIconVisibility()
@@ -364,6 +365,22 @@ final class MainWindowController:
 
     func prepareForApplicationTermination() {
         endShortcutCapture()
+
+        NotificationCenter.default.removeObserver(
+            self,
+            name:
+                AppConfigurationNotification
+                    .remappingRulesDidChange,
+            object:
+                nil
+        )
+    }
+
+    func windowDidBecomeKey(
+        _ notification: Notification
+    ) {
+        globalShortcutSettingsView
+            .refreshValidationState()
     }
 
     func applyTextScale(
@@ -1447,6 +1464,35 @@ final class MainWindowController:
         increaseTextSizeHandler()
     }
 
+    private func configureConfigurationChangeObservation() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector:
+                #selector(
+                    remappingRulesDidChange
+                ),
+            name:
+                AppConfigurationNotification
+                    .remappingRulesDidChange,
+            object:
+                nil
+        )
+    }
+
+    @objc
+    private func remappingRulesDidChange(
+        _ notification: Notification
+    ) {
+        guard
+            window?.isVisible == true
+        else {
+            return
+        }
+
+        globalShortcutSettingsView
+            .refreshValidationState()
+    }
+
     private func configureShortcutSettingsCallbacks() {
         globalShortcutSettingsView.onCaptureRequested = {
             [weak self] field in
@@ -1460,6 +1506,24 @@ final class MainWindowController:
             self?.endShortcutCapture()
         }
 
+        globalShortcutSettingsView.onAdditionalValidationRequested = {
+            [weak self] configuration in
+
+            self?.shortcutConflictValidationMessage(
+                for:
+                    configuration
+            )
+        }
+
+        globalShortcutSettingsView.onAdditionalSuggestionRequested = {
+            [weak self] configuration in
+
+            self?.shortcutPreserveWarningMessage(
+                for:
+                    configuration
+            )
+        }
+
         globalShortcutSettingsView.onSaveRequested = {
             [weak self] configuration in
 
@@ -1470,6 +1534,99 @@ final class MainWindowController:
             try self.globalShortcutController.setConfiguration(
                 configuration
             )
+        }
+    }
+
+    /// Returns a blocking message when the proposed shortcut configuration
+    /// would be intercepted by one of the currently stored remapping rules.
+    ///
+    /// Disabled shortcut mode is always allowed and does not require loading
+    /// the rule store. This keeps it possible to turn keyboard control off even
+    /// if rule persistence is temporarily unavailable.
+    private func shortcutConflictValidationMessage(
+        for configuration:
+            RemappingShortcutConfiguration
+    ) -> String? {
+        guard
+            !configuration
+                .registrations
+                .isEmpty
+        else {
+            return nil
+        }
+
+        do {
+            let configuredRules =
+                try remappingController
+                    .loadConfiguredRules()
+
+            try RemappingShortcutRuleConflictPolicy
+                .validate(
+                    rules:
+                        configuredRules,
+                    shortcutConfiguration:
+                        configuration
+                )
+
+            return nil
+        } catch let conflict as
+            RemappingShortcutRuleConflict
+        {
+            return conflict.message
+        } catch {
+            return "The configured remapping rules could not be loaded for shortcut validation."
+        }
+    }
+
+    /// Returns non-blocking guidance when a shortcut shares its physical key
+    /// with an active Preserve Modifiers rule.
+    ///
+    /// The exact application shortcut remains reserved and bypasses remapping,
+    /// while other modifier combinations on the same key remain available to
+    /// the rule.
+    private func shortcutPreserveWarningMessage(
+        for configuration:
+            RemappingShortcutConfiguration
+    ) -> String? {
+        guard
+            !configuration
+                .registrations
+                .isEmpty
+        else {
+            return nil
+        }
+
+        do {
+            let configuredRules =
+                try remappingController
+                    .loadConfiguredRules()
+
+            guard
+                let warning =
+                    RemappingShortcutRuleConflictPolicy
+                        .warnings(
+                            rules:
+                                configuredRules,
+                            shortcutConfiguration:
+                                configuration
+                        )
+                        .first
+            else {
+                return nil
+            }
+
+            let shortcutName =
+                KeyCombinationDisplayName
+                    .name(
+                        for:
+                            warning.shortcut
+                    )
+
+            return "\(shortcutName) is reserved for \(warning.shortcutTitle) and will \(warning.reservedBehaviorDescription) instead of being remapped by the matching Preserve Modifiers rule."
+        } catch {
+            // Loading failures are already surfaced by the blocking
+            // validation callback. Suggestions must never block saving.
+            return nil
         }
     }
 

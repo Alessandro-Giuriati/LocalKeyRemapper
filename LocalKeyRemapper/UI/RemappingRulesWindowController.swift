@@ -821,6 +821,9 @@ final class RemappingRulesWindowController:
         case incompleteRule
         case duplicateSource
         case identicalSourceAndDestination
+        case shortcutConflict(
+            GlobalShortcutAction
+        )
 
         var message: String {
             switch self {
@@ -832,6 +835,28 @@ final class RemappingRulesWindowController:
 
             case .identicalSourceAndDestination:
                 return "A source and destination key cannot be identical."
+
+            case .shortcutConflict(
+                let action
+            ):
+                let shortcutTitle:
+                    String
+
+                switch action {
+                case .toggle:
+                    shortcutTitle =
+                        "Toggle Remapping"
+
+                case .enable:
+                    shortcutTitle =
+                        "Enable Remapping"
+
+                case .disable:
+                    shortcutTitle =
+                        "Disable Remapping"
+                }
+
+                return "This rule contains an exact mapping that conflicts with the \(shortcutTitle) shortcut. Change the rule, remove the matching exception, or choose a different shortcut before saving."
             }
         }
     }
@@ -842,6 +867,15 @@ final class RemappingRulesWindowController:
 
         let messagesByItemID:
             [UUID: String]
+
+        let shortcutWarningItemIDs:
+            Set<UUID>
+
+        let shortcutWarningMessagesByItemID:
+            [UUID: String]
+
+        let primaryShortcutWarningMessage:
+            String?
     }
 
     private enum FilterField: Equatable {
@@ -1137,6 +1171,7 @@ final class RemappingRulesWindowController:
             self?.renderRuleEditor()
         }
 
+        configureConfigurationChangeObservation()
         configureContent()
         synchronizeRuleRemovalConfirmationPreference()
         initializeRuleEditorSession()
@@ -1184,8 +1219,23 @@ final class RemappingRulesWindowController:
     func prepareForApplicationTermination() {
         endKeyCapture()
 
+        NotificationCenter.default.removeObserver(
+            self,
+            name:
+                AppConfigurationNotification
+                    .globalShortcutConfigurationDidChange,
+            object:
+                nil
+        )
+
         exceptionsWindowController?.close()
         exceptionsWindowController = nil
+    }
+
+    func windowDidBecomeKey(
+        _ notification: Notification
+    ) {
+        renderRuleEditor()
     }
 
     func applyTextScale(
@@ -1393,6 +1443,34 @@ final class RemappingRulesWindowController:
     ) {
         endKeyCapture()
         exceptionsWindowController = nil
+    }
+
+    private func configureConfigurationChangeObservation() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector:
+                #selector(
+                    globalShortcutConfigurationDidChange
+                ),
+            name:
+                AppConfigurationNotification
+                    .globalShortcutConfigurationDidChange,
+            object:
+                nil
+        )
+    }
+
+    @objc
+    private func globalShortcutConfigurationDidChange(
+        _ notification: Notification
+    ) {
+        guard
+            window?.isVisible == true
+        else {
+            return
+        }
+
+        renderRuleEditor()
     }
 
     private func configureContent() {
@@ -3110,7 +3188,12 @@ final class RemappingRulesWindowController:
                 validationIssueItemIDs:
                     validationSnapshot.invalidItemIDs,
                 configurationWarningItemIDs:
-                    warningAssessment.affectedRuleIDs
+                    warningAssessment
+                        .affectedRuleIDs
+                        .union(
+                            validationSnapshot
+                                .shortcutWarningItemIDs
+                        )
             )
 
         updateFilterSummary(
@@ -3274,6 +3357,32 @@ final class RemappingRulesWindowController:
                         replacingOverridesFor:
                             editorItemID
                     )
+                },
+                shortcutConfigurationProvider: {
+                    [weak self] in
+
+                    self?
+                        .globalShortcutController
+                        .configuredConfiguration
+                    ?? .disabled
+                },
+                beginGlobalShortcutCapture: {
+                    [weak self] in
+
+                    self?
+                        .globalShortcutController
+                        .beginShortcutCapture()
+                },
+                endGlobalShortcutCapture: {
+                    [weak self] in
+
+                    guard let self else {
+                        return
+                    }
+
+                    try self
+                        .globalShortcutController
+                        .endShortcutCapture()
                 },
                 onSave: {
                     [weak row] overrides in
@@ -3768,40 +3877,148 @@ final class RemappingRulesWindowController:
     private func validationSnapshot()
         -> ValidationSnapshot
     {
+        let items =
+            ruleEditorSession
+                .items
+
         let assessment =
             RemappingRulesValidationAssessment(
                 items:
-                    ruleEditorSession.items
+                    items
             )
+
+        let shortcutConfiguration =
+            appPreferencesController
+                .preferences
+                .shortcutConfiguration
+
+        var shortcutConflicts:
+            [
+                (
+                    itemID: UUID,
+                    conflict:
+                        RemappingShortcutRuleConflict
+                )
+            ] = []
+
+        var shortcutWarnings:
+            [
+                (
+                    itemID: UUID,
+                    warning:
+                        RemappingShortcutRuleWarning
+                )
+            ] = []
+
+        for (
+            ruleIndex,
+            item
+        ) in items.enumerated() {
+            guard
+                let rule =
+                    item.rule
+            else {
+                continue
+            }
+
+            for registration in
+                shortcutConfiguration
+                    .registrations
+            {
+                if RemappingShortcutRuleConflictPolicy
+                    .hasBlockingConflict(
+                        registration.shortcut,
+                        rule:
+                            rule
+                    )
+                {
+                    shortcutConflicts.append(
+                        (
+                            itemID:
+                                item.id,
+                            conflict:
+                                RemappingShortcutRuleConflict(
+                                    ruleIndex:
+                                        ruleIndex,
+                                    action:
+                                        registration.action,
+                                    shortcut:
+                                        registration.shortcut
+                                )
+                        )
+                    )
+
+                    continue
+                }
+
+                if RemappingShortcutRuleConflictPolicy
+                    .producesPreserveWarning(
+                        registration.shortcut,
+                        rule:
+                            rule
+                    )
+                {
+                    shortcutWarnings.append(
+                        (
+                            itemID:
+                                item.id,
+                            warning:
+                                RemappingShortcutRuleWarning(
+                                    ruleIndex:
+                                        ruleIndex,
+                                    action:
+                                        registration.action,
+                                    shortcut:
+                                        registration.shortcut
+                                )
+                        )
+                    )
+                }
+            }
+        }
 
         let issue:
             EditorValidationIssue?
 
-        switch assessment.primaryIssue {
-        case .duplicateSource:
-            issue =
-                .duplicateSource
+        if let primaryIssue =
+            assessment.primaryIssue
+        {
+            switch primaryIssue {
+            case .duplicateSource:
+                issue =
+                    .duplicateSource
 
-        case .identicalSourceAndDestination:
-            issue =
-                .identicalSourceAndDestination
+            case .identicalSourceAndDestination:
+                issue =
+                    .identicalSourceAndDestination
 
-        case .incompleteRule:
+            case .incompleteRule:
+                issue =
+                    .incompleteRule
+            }
+        } else if let firstShortcutConflict =
+            shortcutConflicts.first
+        {
             issue =
-                .incompleteRule
-
-        case nil:
+                .shortcutConflict(
+                    firstShortcutConflict
+                        .conflict
+                        .action
+                )
+        } else {
             issue =
                 nil
         }
 
-        let messagesByItemID:
+        var messagesByItemID:
             [UUID: String] =
                 Dictionary(
                     uniqueKeysWithValues:
-                        assessment.invalidItemIDs
+                        assessment
+                            .invalidItemIDs
                             .compactMap {
-                                itemID -> (UUID, String)? in
+                                itemID
+                                    -> (UUID, String)? in
 
                                 guard
                                     let message =
@@ -3820,13 +4037,137 @@ final class RemappingRulesWindowController:
                             }
                 )
 
+        for shortcutConflict in
+            shortcutConflicts
+        {
+            let itemID =
+                shortcutConflict
+                    .itemID
+
+            let conflictMessage =
+                shortcutConflict
+                    .conflict
+                    .message
+
+            if let existingMessage =
+                messagesByItemID[
+                    itemID
+                ],
+               !existingMessage.isEmpty
+            {
+                messagesByItemID[
+                    itemID
+                ] =
+                    existingMessage
+                    + "\n"
+                    + conflictMessage
+            } else {
+                messagesByItemID[
+                    itemID
+                ] =
+                    conflictMessage
+            }
+        }
+
+        let shortcutConflictItemIDs =
+            Set(
+                shortcutConflicts.map {
+                    $0.itemID
+                }
+            )
+
+        var shortcutWarningMessagesByItemID:
+            [UUID: String] = [:]
+
+        for shortcutWarning in
+            shortcutWarnings
+        {
+            let itemID =
+                shortcutWarning
+                    .itemID
+
+            let warning =
+                shortcutWarning
+                    .warning
+
+            let shortcutName =
+                KeyCombinationDisplayName
+                    .name(
+                        for:
+                            warning.shortcut
+                    )
+
+            let warningMessage =
+                "\(shortcutName) is reserved for \(warning.shortcutTitle) and will \(warning.reservedBehaviorDescription) instead of being remapped by this Preserve Modifiers rule."
+
+            if let existingMessage =
+                shortcutWarningMessagesByItemID[
+                    itemID
+                ],
+               !existingMessage.isEmpty
+            {
+                shortcutWarningMessagesByItemID[
+                    itemID
+                ] =
+                    existingMessage
+                    + "\n"
+                    + warningMessage
+            } else {
+                shortcutWarningMessagesByItemID[
+                    itemID
+                ] =
+                    warningMessage
+            }
+        }
+
+        let shortcutWarningItemIDs =
+            Set(
+                shortcutWarnings.map {
+                    $0.itemID
+                }
+            )
+
+        let primaryShortcutWarningMessage:
+            String?
+
+        if let firstShortcutWarning =
+            shortcutWarnings.first
+        {
+            let warning =
+                firstShortcutWarning
+                    .warning
+
+            let shortcutName =
+                KeyCombinationDisplayName
+                    .name(
+                        for:
+                            warning.shortcut
+                    )
+
+            primaryShortcutWarningMessage =
+                "\(shortcutName) is reserved for \(warning.shortcutTitle) and will \(warning.reservedBehaviorDescription) instead of being remapped by the matching Preserve Modifiers rule."
+        } else {
+            primaryShortcutWarningMessage =
+                nil
+        }
+
         return ValidationSnapshot(
             issue:
                 issue,
             invalidItemIDs:
-                assessment.invalidItemIDs,
+                assessment
+                    .invalidItemIDs
+                    .union(
+                        shortcutConflictItemIDs
+                    ),
             messagesByItemID:
-                messagesByItemID
+                messagesByItemID,
+            shortcutWarningItemIDs:
+                shortcutWarningItemIDs,
+            shortcutWarningMessagesByItemID:
+                shortcutWarningMessagesByItemID,
+            primaryShortcutWarningMessage:
+                primaryShortcutWarningMessage
         )
     }
 
@@ -3847,7 +4188,9 @@ final class RemappingRulesWindowController:
 
     private func applyWarningPresentation(
         _ assessment:
-            RemappingConfigurationWarningAssessment
+            RemappingConfigurationWarningAssessment,
+        validationSnapshot:
+            ValidationSnapshot
     ) {
         warningBanner.setWarning(
             assessment.warning
@@ -3857,21 +4200,39 @@ final class RemappingRulesWindowController:
             itemID,
             row
         ) in ruleRowsByItemID {
-            let rowWarning:
-                KeyCombinationConfigurationWarning?
+            var warningMessages:
+                [String] = []
 
             if assessment.affectsRule(
-                id: itemID
-            ) {
-                rowWarning =
+                id:
+                    itemID
+            ),
+               let warning =
                     assessment.warning
-            } else {
-                rowWarning =
-                    nil
+            {
+                warningMessages.append(
+                    warning.message
+                )
             }
 
-            row.setConfigurationWarning(
-                rowWarning
+            if let shortcutWarningMessage =
+                validationSnapshot
+                    .shortcutWarningMessagesByItemID[
+                        itemID
+                    ]
+            {
+                warningMessages.append(
+                    shortcutWarningMessage
+                )
+            }
+
+            row.setConfigurationWarningMessage(
+                warningMessages.isEmpty
+                    ? nil
+                    : warningMessages.joined(
+                        separator:
+                            "\n"
+                    )
             )
         }
     }
@@ -3894,7 +4255,9 @@ final class RemappingRulesWindowController:
         )
 
         applyWarningPresentation(
-            warningAssessment
+            warningAssessment,
+            validationSnapshot:
+                validationSnapshot
         )
 
         updateRuleEditorHistoryControls()
@@ -3913,6 +4276,25 @@ final class RemappingRulesWindowController:
             setStatus(
                 issue.message,
                 isError: true
+            )
+
+            return
+        }
+
+        if let shortcutWarningMessage =
+            validationSnapshot
+                .primaryShortcutWarningMessage
+        {
+            let statusMessage =
+                hasChanges
+                    ? "You have unsaved rule changes. "
+                        + shortcutWarningMessage
+                    : shortcutWarningMessage
+
+            setStatus(
+                statusMessage,
+                isError:
+                    false
             )
 
             return
@@ -3992,12 +4374,31 @@ final class RemappingRulesWindowController:
                     rules
                 )
 
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .remappingRulesDidChange,
+                object:
+                    nil
+            )
+
             refreshChangeState()
 
             return true
+        } catch let conflict
+            as RemappingShortcutRuleConflict
+        {
+            setStatus(
+                conflict.message,
+                isError:
+                    true
+            )
+
+            return false
         } catch let error
             as RemappingRulesValidationError
         {
+
             switch error {
             case .duplicateSourceKey,
                  .duplicateSourceCombination,

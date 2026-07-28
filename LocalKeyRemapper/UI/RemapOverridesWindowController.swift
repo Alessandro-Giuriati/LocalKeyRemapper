@@ -152,6 +152,22 @@ final class RemapOverridesWindowController:
     private let validateCandidateOverrides:
         (([RemapOverride]) -> String?)?
 
+    /// Supplies the latest locally stored application shortcut configuration.
+    ///
+    /// The sheet uses this only for deterministic validation. It never
+    /// receives or stores ordinary keyboard input.
+    private let shortcutConfigurationProvider:
+        () -> RemappingShortcutConfiguration
+
+    /// Temporarily unregisters application shortcuts while this sheet records
+    /// an exception source or destination.
+    private let beginGlobalShortcutCapture:
+        () -> Void
+
+    /// Restores the stored application shortcuts after capture ends.
+    private let endGlobalShortcutCapture:
+        () throws -> Void
+
     private let onSave:
         ([RemapOverride]) -> Void
 
@@ -236,6 +252,14 @@ final class RemapOverridesWindowController:
         textScale: CGFloat,
         validateCandidateOverrides:
             (([RemapOverride]) -> String?)? = nil,
+        shortcutConfigurationProvider:
+            @escaping () -> RemappingShortcutConfiguration = {
+                .disabled
+            },
+        beginGlobalShortcutCapture:
+            @escaping () -> Void = {},
+        endGlobalShortcutCapture:
+            @escaping () throws -> Void = {},
         onSave:
             @escaping ([RemapOverride]) -> Void,
         onClose:
@@ -254,6 +278,15 @@ final class RemapOverridesWindowController:
 
         self.validateCandidateOverrides =
             validateCandidateOverrides
+
+        self.shortcutConfigurationProvider =
+            shortcutConfigurationProvider
+
+        self.beginGlobalShortcutCapture =
+            beginGlobalShortcutCapture
+
+        self.endGlobalShortcutCapture =
+            endGlobalShortcutCapture
 
         self.onSave =
             onSave
@@ -1084,6 +1117,26 @@ final class RemapOverridesWindowController:
         }
 
         if let source =
+            row.sourceCombination,
+           let registration =
+                shortcutRegistration(
+                    matching:
+                        source
+                )
+        {
+            setStatus(
+                shortcutConflictMessage(
+                    for:
+                        registration
+                ),
+                isError:
+                    true
+            )
+
+            return false
+        }
+
+        if let source =
             row.sourceCombination
         {
             let hasEnabledSibling =
@@ -1136,6 +1189,77 @@ final class RemapOverridesWindowController:
         }
 
         return true
+    }
+
+    /// Returns the first application shortcut whose complete combination
+    /// equals the supplied exception source.
+    private func shortcutRegistration(
+        matching source:
+            KeyCombination
+    ) -> (
+        action:
+            GlobalShortcutAction,
+        shortcut:
+            KeyCombination
+    )? {
+        guard
+            let registration =
+                shortcutConfigurationProvider()
+                    .registrations
+                    .first(
+                        where: {
+                            registration in
+
+                            registration.shortcut
+                                == source
+                        }
+                    )
+        else {
+            return nil
+        }
+
+        return (
+            action:
+                registration.action,
+            shortcut:
+                registration.shortcut
+        )
+    }
+
+    /// Builds one precise message for Toggle, Enable, or Disable.
+    private func shortcutConflictMessage(
+        for registration: (
+            action:
+                GlobalShortcutAction,
+            shortcut:
+                KeyCombination
+        )
+    ) -> String {
+        let shortcutName =
+            KeyCombinationDisplayName
+                .name(
+                    for:
+                        registration.shortcut
+                )
+
+        let shortcutTitle:
+            String
+
+        switch registration.action {
+        case .toggle:
+            shortcutTitle =
+                "Toggle Remapping"
+
+        case .enable:
+            shortcutTitle =
+                "Enable Remapping"
+
+        case .disable:
+            shortcutTitle =
+                "Disable Remapping"
+        }
+
+        return "\(shortcutName) is reserved for \(shortcutTitle). Disable or remove this exception, change its source combination, or choose a different application shortcut."
     }
 
     private func candidateOverrides(
@@ -1278,6 +1402,8 @@ final class RemapOverridesWindowController:
 
         remappingController
             .beginKeyCapture()
+
+        beginGlobalShortcutCapture()
 
         row.showCapturePrompt(
             for: field
@@ -1453,6 +1579,16 @@ final class RemapOverridesWindowController:
 
         captureRow = nil
         captureField = nil
+
+        do {
+            try endGlobalShortcutCapture()
+        } catch {
+            setStatus(
+                "The previous global shortcut could not be restored after exception capture.",
+                isError:
+                    true
+            )
+        }
 
         remappingController
             .endKeyCapture()
@@ -1681,6 +1817,9 @@ final class RemapOverridesWindowController:
         var hasParentSourceConflict = false
         var hasIdentity = false
 
+        var shortcutConflictMessage:
+            String?
+
         for row in rows {
             guard
                 let override =
@@ -1746,6 +1885,26 @@ final class RemapOverridesWindowController:
                 ].append(
                     row
                 )
+
+                if let registration =
+                    shortcutRegistration(
+                        matching:
+                            override.source
+                    )
+                {
+                    shortcutConflictMessage =
+                        shortcutConflictMessage
+                        ?? self.shortcutConflictMessage(
+                            for:
+                                registration
+                        )
+
+                    invalidRows.insert(
+                        ObjectIdentifier(
+                            row
+                        )
+                    )
+                }
             }
         }
 
@@ -1767,7 +1926,12 @@ final class RemapOverridesWindowController:
         var issue:
             ValidationIssue?
 
-        if hasDuplicateActiveSource {
+        if let shortcutConflictMessage {
+            issue =
+                .externalConflict(
+                    shortcutConflictMessage
+                )
+        } else if hasDuplicateActiveSource {
             issue =
                 .duplicateActiveSource
         } else if hasSourceMismatch {

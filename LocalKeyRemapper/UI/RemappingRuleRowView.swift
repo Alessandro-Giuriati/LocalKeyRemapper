@@ -462,6 +462,20 @@ final class RemappingRuleRowView: NSView {
         issuesView.setConfigurationWarning(warning)
     }
 
+    /// Shows any non-blocking configuration warning in the row's yellow
+    /// Issues indicator.
+    ///
+    /// This is used for warnings that are not represented by
+    /// `KeyCombinationConfigurationWarning`, such as a Preserve Modifiers rule
+    /// sharing its physical key with an application shortcut.
+    func setConfigurationWarningMessage(
+        _ message: String?
+    ) {
+        issuesView.setConfigurationWarningMessage(
+            message
+        )
+    }
+
     func applyTextScale(_ scale: CGFloat) {
         textScale = scale
 

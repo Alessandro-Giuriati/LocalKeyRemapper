@@ -51,7 +51,12 @@ final class AppCoordinator: NSObject {
             rulesStore: rulesStore,
             rulesValidator: rulesValidator,
             remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager
+            eventTapManager: eventTapManager,
+            shortcutConfigurationProvider: {
+                appPreferencesController
+                    .preferences
+                    .shortcutConfiguration
+            }
         )
 
         eventTapManager.onInterruption = {
@@ -66,6 +71,9 @@ final class AppCoordinator: NSObject {
             shortcutManager: globalShortcutManager,
             appPreferencesController: appPreferencesController,
             remappingEngine: remappingEngine,
+            configuredRulesProvider: {
+                try rulesStore.loadRules()
+            },
             actionHandler: {
                 [weak remappingController] action in
 
@@ -76,8 +84,10 @@ final class AppCoordinator: NSObject {
                 switch action {
                 case .toggle:
                     remappingController.toggle()
+
                 case .enable:
                     remappingController.enable()
+
                 case .disable:
                     remappingController.disable()
                 }
@@ -469,8 +479,10 @@ final class AppCoordinator: NSObject {
         switch state {
         case .enabled:
             isEnabled = true
+
         case .disabled:
             isEnabled = false
+
         case .enabling,
              .permissionRequired,
              .failed:

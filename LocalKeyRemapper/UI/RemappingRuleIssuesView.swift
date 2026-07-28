@@ -33,8 +33,13 @@ final class RemappingRuleIssuesView: NSView {
     private var validationMessage:
         String?
 
-    private var configurationWarning:
-        KeyCombinationConfigurationWarning?
+    /// Generic non-blocking warning text shown by the yellow indicator.
+    ///
+    /// Keeping presentation as a plain message allows the same indicator to
+    /// represent Fn guidance, reserved shortcuts, and future warnings without
+    /// coupling this view to one specific warning policy.
+    private var configurationWarningMessage:
+        String?
 
     private var textScale:
         CGFloat = 1.0
@@ -83,12 +88,24 @@ final class RemappingRuleIssuesView: NSView {
         updatePresentation()
     }
 
+    /// Compatibility entry point for existing key-combination warnings.
     func setConfigurationWarning(
         _ warning:
             KeyCombinationConfigurationWarning?
     ) {
-        configurationWarning =
-            warning
+        setConfigurationWarningMessage(
+            warning?.message
+        )
+    }
+
+    /// Associates any non-blocking configuration warning with this row.
+    ///
+    /// The message controls only the yellow indicator and its tooltip.
+    func setConfigurationWarningMessage(
+        _ message: String?
+    ) {
+        configurationWarningMessage =
+            message
 
         updatePresentation()
     }
@@ -192,7 +209,7 @@ final class RemappingRuleIssuesView: NSView {
         )
 
         warningImageView.setAccessibilityLabel(
-            "Fn configuration warning"
+            "Configuration warning"
         )
     }
 
@@ -218,7 +235,7 @@ final class RemappingRuleIssuesView: NSView {
                 systemSymbolName:
                     "exclamationmark.triangle.fill",
                 accessibilityDescription:
-                    "Fn configuration warning"
+                    "Configuration warning"
             )?
             .withSymbolConfiguration(
                 NSImage.SymbolConfiguration(
@@ -237,7 +254,7 @@ final class RemappingRuleIssuesView: NSView {
             validationMessage != nil
 
         let hasConfigurationWarning =
-            configurationWarning != nil
+            configurationWarningMessage != nil
 
         updateIndicatorPositions(
             hasValidationIssue:
@@ -275,17 +292,15 @@ final class RemappingRuleIssuesView: NSView {
                 : 0
 
         warningImageView.toolTip =
-            configurationWarning?
-                .message
+            configurationWarningMessage
 
         warningImageView.setAccessibilityHidden(
             !hasConfigurationWarning
         )
 
         warningImageView.setAccessibilityValue(
-            configurationWarning?
-                .message
-                ?? "No Fn configuration warning"
+            configurationWarningMessage
+                ?? "No configuration warning"
         )
     }
 

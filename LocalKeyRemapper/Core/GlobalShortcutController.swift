@@ -22,6 +22,14 @@ final class GlobalShortcutController {
     private let remappingEngine:
         RemappingEngine
 
+    /// Loads the complete stored rule configuration whenever an active
+    /// shortcut configuration must be validated.
+    ///
+    /// The provider returns configured rules only. It does not inspect
+    /// keyboard input or perform event-time work.
+    private let configuredRulesProvider:
+        () throws -> [RemapRule]
+
     private let actionHandler:
         (
             GlobalShortcutAction
@@ -48,6 +56,10 @@ final class GlobalShortcutController {
             AppPreferencesControlling,
         remappingEngine:
             RemappingEngine = RemappingEngine(),
+        configuredRulesProvider:
+            @escaping () throws -> [RemapRule] = {
+                []
+            },
         actionHandler:
             @escaping (
                 GlobalShortcutAction
@@ -62,12 +74,18 @@ final class GlobalShortcutController {
         self.remappingEngine =
             remappingEngine
 
+        self.configuredRulesProvider =
+            configuredRulesProvider
+
         self.actionHandler =
             actionHandler
     }
 
     /// Registers and protects the configuration currently stored
     /// in local preferences.
+    ///
+    /// Stored shortcuts are validated against the complete stored rule
+    /// configuration before any global registration becomes active.
     func start() throws {
         isCaptureSuspended = false
 
@@ -98,8 +116,8 @@ final class GlobalShortcutController {
 
     /// Atomically replaces the complete shortcut configuration.
     ///
-    /// Invalid configurations are rejected before any active
-    /// registration or reservation is changed.
+    /// Invalid configurations and conflicts with active remapping rules are
+    /// rejected before any active registration or reservation is changed.
     ///
     /// If registration or persistence fails, the previous registration
     /// and reservation are restored whenever possible.
@@ -120,7 +138,7 @@ final class GlobalShortcutController {
         /// Validate before touching the currently active shortcuts.
         ///
         /// This avoids unnecessary unregister/register cycles when
-        /// the proposed configuration is invalid.
+        /// the proposed configuration is invalid or conflicts with a rule.
         try validate(
             newConfiguration
         )
@@ -194,6 +212,9 @@ final class GlobalShortcutController {
     }
 
     /// Restores the stored shortcut configuration after capture ends.
+    ///
+    /// The stored configuration is revalidated against the current stored
+    /// rules before it is registered again.
     func endShortcutCapture() throws {
         guard isCaptureSuspended else {
             return
@@ -259,6 +280,8 @@ final class GlobalShortcutController {
         )
     }
 
+    /// Validates both the shortcut configuration itself and its interaction
+    /// with the complete stored remapping-rule configuration.
     private func validate(
         _ configuration:
             RemappingShortcutConfiguration
@@ -266,6 +289,29 @@ final class GlobalShortcutController {
         try GlobalShortcutConfigurationPolicy
             .validate(
                 configuration
+            )
+
+        // Turning global shortcuts off can never conflict with a rule.
+        //
+        // Avoid loading rules in this case so disabling keyboard control
+        // remains possible even if rule storage is temporarily unavailable.
+        guard
+            !configuration
+                .registrations
+                .isEmpty
+        else {
+            return
+        }
+
+        let configuredRules =
+            try configuredRulesProvider()
+
+        try RemappingShortcutRuleConflictPolicy
+            .validate(
+                rules:
+                    configuredRules,
+                shortcutConfiguration:
+                    configuration
             )
     }
 

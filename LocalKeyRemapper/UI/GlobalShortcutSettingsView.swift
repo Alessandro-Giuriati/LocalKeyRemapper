@@ -214,6 +214,24 @@ final class GlobalShortcutSettingsView:
             RemappingShortcutConfiguration
         ) throws -> Void)?
 
+    /// Performs validation that depends on the current remapping rules.
+    ///
+    /// The callback returns a blocking user-facing message, or nil when
+    /// the proposed shortcut configuration does not conflict with any rule.
+    var onAdditionalValidationRequested:
+        ((
+            RemappingShortcutConfiguration
+        ) -> String?)?
+
+    /// Provides non-blocking guidance that depends on the current
+    /// remapping rules.
+    ///
+    /// Unlike additional validation, this callback never disables saving.
+    var onAdditionalSuggestionRequested:
+        ((
+            RemappingShortcutConfiguration
+        ) -> String?)?
+
     private let titleLabel =
         NSTextField(
             labelWithString:
@@ -478,6 +496,14 @@ final class GlobalShortcutSettingsView:
             configuration:
                 savedConfiguration
         )
+    }
+
+    /// Re-evaluates the current editor state against external configuration,
+    /// such as remapping rules changed in another application window.
+    ///
+    /// The current mode and any unsaved shortcut edits remain untouched.
+    func refreshValidationState() {
+        refreshChangeState()
     }
 
     /// Shows that the previous shortcut could not be restored
@@ -930,8 +956,6 @@ final class GlobalShortcutSettingsView:
                 .validate(
                     configuration
                 )
-
-            return nil
         } catch let error as
             GlobalShortcutConfigurationError
         {
@@ -945,6 +969,10 @@ final class GlobalShortcutSettingsView:
         } catch {
             return "The shortcut configuration is not valid."
         }
+
+        return onAdditionalValidationRequested?(
+            configuration
+        )
     }
 
     private func refreshChangeState() {
@@ -1011,6 +1039,18 @@ final class GlobalShortcutSettingsView:
             cancelEnabled:
                 hasChanges
         )
+
+        if let additionalSuggestion =
+            onAdditionalSuggestionRequested?(
+                proposedConfiguration
+            )
+        {
+            setSuggestion(
+                additionalSuggestion
+            )
+
+            return
+        }
 
         if let suggestion =
             GlobalShortcutConfigurationPolicy
@@ -1254,8 +1294,26 @@ final class GlobalShortcutSettingsView:
             savedConfiguration =
                 proposedConfiguration
 
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .globalShortcutConfigurationDidChange,
+                object:
+                    nil
+            )
+
             refreshChangeState()
             return true
+        } catch let conflict as
+            RemappingShortcutRuleConflict
+        {
+            setStatus(
+                conflict.message,
+                isError:
+                    true
+            )
+
+            return false
         } catch let error as
             GlobalShortcutConfigurationError
         {
