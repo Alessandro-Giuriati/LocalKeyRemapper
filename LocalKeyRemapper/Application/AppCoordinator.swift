@@ -20,7 +20,8 @@ final class AppCoordinator: NSObject {
     private let remappingController: RemappingController
     private let globalShortcutManager: GlobalShortcutManager
     private let globalShortcutController: GlobalShortcutController
-    private let ruleEditorSession: RemappingRuleEditorSession
+    private let ruleEditorSessionRegistry:
+        ProfileRuleEditorSessionRegistry
 
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
@@ -101,7 +102,8 @@ final class AppCoordinator: NSObject {
                 }
             }
         )
-        let ruleEditorSession = RemappingRuleEditorSession()
+        let ruleEditorSessionRegistry =
+            ProfileRuleEditorSessionRegistry()
 
         self.permissionService = permissionService
         self.profilesStore = profilesStore
@@ -113,7 +115,8 @@ final class AppCoordinator: NSObject {
         self.remappingController = remappingController
         self.globalShortcutManager = globalShortcutManager
         self.globalShortcutController = globalShortcutController
-        self.ruleEditorSession = ruleEditorSession
+        self.ruleEditorSessionRegistry =
+            ruleEditorSessionRegistry
 
         super.init()
     }
@@ -180,13 +183,77 @@ final class AppCoordinator: NSObject {
         getOrCreateMainWindowController().showWindow(nil)
     }
 
-    /// Shows the one reusable remapping-rules window.
-    ///
-    /// Repeated requests bring the existing window to the front instead of
-    /// creating additional editors or additional rule sessions.
+    /// Shows the Rules window for the currently active profile.
     func showRemappingRulesWindow() {
+        do {
+            let configuration =
+                try profilesStore
+                    .loadConfiguration()
+
+            showRemappingRulesWindow(
+                for:
+                    configuration.activeProfileID,
+                in:
+                    configuration
+            )
+        } catch {
+            // A storage failure must not crash or partially open the editor.
+        }
+    }
+
+    /// Shows the one reusable Rules window for a specific profile UUID.
+    func showRemappingRulesWindow(
+        for profileID: UUID
+    ) {
+        do {
+            let configuration =
+                try profilesStore
+                    .loadConfiguration()
+
+            showRemappingRulesWindow(
+                for:
+                    profileID,
+                in:
+                    configuration
+            )
+        } catch {
+            // A storage failure must not crash or partially open the editor.
+        }
+    }
+
+    private func showRemappingRulesWindow(
+        for profileID: UUID,
+        in configuration:
+            RemappingProfilesConfiguration
+    ) {
+        guard
+            let profile =
+                configuration.profile(
+                    id:
+                        profileID
+                )
+        else {
+            return
+        }
+
         mainWindowController?.endActiveCapture()
-        getOrCreateRemappingRulesWindowController().showWindow(nil)
+
+        let ruleEditorSession =
+            ruleEditorSessionRegistry
+                .session(
+                    for:
+                        profileID
+                )
+
+        let controller =
+            getOrCreateRemappingRulesWindowController(
+                profile:
+                    profile,
+                ruleEditorSession:
+                    ruleEditorSession
+            )
+
+        controller.showWindow(nil)
     }
 
     /// Checks whether Accessibility permission was granted
@@ -209,6 +276,9 @@ final class AppCoordinator: NSObject {
 
         mainWindowController = nil
         remappingRulesWindowController = nil
+
+        ruleEditorSessionRegistry
+            .removeAllSessions()
 
         globalShortcutController.stop()
         remappingController.disable()
@@ -404,38 +474,57 @@ final class AppCoordinator: NSObject {
         return controller
     }
 
-    private func getOrCreateRemappingRulesWindowController() ->
-        RemappingRulesWindowController
-    {
+    private func getOrCreateRemappingRulesWindowController(
+        profile: RemappingProfile,
+        ruleEditorSession: RemappingRuleEditorSession
+    ) -> RemappingRulesWindowController {
         if let remappingRulesWindowController {
+            remappingRulesWindowController.bind(
+                to:
+                    profile,
+                ruleEditorSession:
+                    ruleEditorSession
+            )
+
             return remappingRulesWindowController
         }
 
-        let controller = RemappingRulesWindowController(
-            remappingController: remappingController,
-            appPreferencesController: appPreferencesController,
-            globalShortcutController: globalShortcutController,
-            ruleEditorSession: ruleEditorSession,
-            increaseTextSizeHandler: {
-                [weak self] in
+        let controller =
+            RemappingRulesWindowController(
+                remappingController:
+                    remappingController,
+                appPreferencesController:
+                    appPreferencesController,
+                globalShortcutController:
+                    globalShortcutController,
+                profileID:
+                    profile.id,
+                profileName:
+                    profile.name,
+                ruleEditorSession:
+                    ruleEditorSession,
+                increaseTextSizeHandler: {
+                    [weak self] in
 
-                self?.increaseTextSize()
-            },
-            decreaseTextSizeHandler: {
-                [weak self] in
+                    self?.increaseTextSize()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
 
-                self?.decreaseTextSize()
-            },
-            resetTextSizeHandler: {
-                [weak self] in
+                    self?.decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
 
-                self?.resetTextSize()
-            },
-            textScale:
-                InterfaceTextScalePreference.currentScale
-        )
+                    self?.resetTextSize()
+                },
+                textScale:
+                    InterfaceTextScalePreference.currentScale
+            )
 
-        remappingRulesWindowController = controller
+        remappingRulesWindowController =
+            controller
+
         return controller
     }
 

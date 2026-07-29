@@ -886,7 +886,11 @@ final class RemappingRulesWindowController:
     private let remappingController: RemappingSettingsControlling
     private let appPreferencesController: AppPreferencesControlling
     private let globalShortcutController: GlobalShortcutController
-    private let ruleEditorSession: RemappingRuleEditorSession
+    /// Stable identity of the profile currently shown by the reusable window.
+    private var profileID: UUID
+
+    /// Session currently connected to the reusable Rules interface.
+    private var ruleEditorSession: RemappingRuleEditorSession
 
     /// Owns presentation-only sorting and filtering state.
     private let presentationModel =
@@ -900,7 +904,7 @@ final class RemappingRulesWindowController:
         RuleRemovalConfirmationController()
 
     private let titleLabel = NSTextField(
-        labelWithString: "Remapping Rules"
+        labelWithString: ""
     )
 
     private let descriptionLabel = NSTextField(
@@ -1047,6 +1051,8 @@ final class RemappingRulesWindowController:
         remappingController: RemappingSettingsControlling,
         appPreferencesController: AppPreferencesControlling,
         globalShortcutController: GlobalShortcutController,
+        profileID: UUID,
+        profileName: String,
         ruleEditorSession: RemappingRuleEditorSession,
         increaseTextSizeHandler: @escaping () -> Void,
         decreaseTextSizeHandler: @escaping () -> Void,
@@ -1061,6 +1067,9 @@ final class RemappingRulesWindowController:
 
         self.globalShortcutController =
             globalShortcutController
+
+        self.profileID =
+            profileID
 
         self.ruleEditorSession =
             ruleEditorSession
@@ -1099,7 +1108,8 @@ final class RemappingRulesWindowController:
                 defer: false
             )
 
-        window.title = "Remapping Rules"
+        window.title =
+            profileName
         window.isReleasedWhenClosed = false
 
         window.contentMinSize =
@@ -1120,6 +1130,9 @@ final class RemappingRulesWindowController:
         super.init(
             window: window
         )
+
+        titleLabel.stringValue =
+            profileName
 
         window.delegate = self
 
@@ -1165,11 +1178,7 @@ final class RemappingRulesWindowController:
                 ?? false
         }
 
-        ruleEditorSession.onChange = {
-            [weak self] in
-
-            self?.renderRuleEditor()
-        }
+        bindRuleEditorSessionChangeHandler()
 
         configureConfigurationChangeObservation()
         configureContent()
@@ -1187,6 +1196,42 @@ final class RemappingRulesWindowController:
         fatalError(
             "init(coder:) has not been implemented"
         )
+    }
+
+    /// Rebinds the reusable Rules window to one specific profile.
+    ///
+    /// The previous session remains retained by the profile registry, including
+    /// its draft and Undo/Redo history. Only its window callback is detached.
+    func bind(
+        to profile: RemappingProfile,
+        ruleEditorSession newSession:
+            RemappingRuleEditorSession
+    ) {
+        endKeyCapture()
+
+        exceptionsWindowController?.close()
+        exceptionsWindowController =
+            nil
+
+        if ruleEditorSession !== newSession {
+            ruleEditorSession.onChange =
+                nil
+
+            ruleEditorSession =
+                newSession
+        }
+
+        profileID =
+            profile.id
+
+        window?.title =
+            profile.name
+
+        titleLabel.stringValue =
+            profile.name
+
+        bindRuleEditorSessionChangeHandler()
+        initializeRuleEditorSession()
     }
 
     override func showWindow(
@@ -1218,6 +1263,9 @@ final class RemappingRulesWindowController:
 
     func prepareForApplicationTermination() {
         endKeyCapture()
+
+        ruleEditorSession.onChange =
+            nil
 
         NotificationCenter.default.removeObserver(
             self,
@@ -3130,6 +3178,14 @@ final class RemappingRulesWindowController:
         increaseTextSizeHandler()
     }
 
+    private func bindRuleEditorSessionChangeHandler() {
+        ruleEditorSession.onChange = {
+            [weak self] in
+
+            self?.renderRuleEditor()
+        }
+    }
+
     private func initializeRuleEditorSession() {
         guard
             !ruleEditorSession.isInitialized
@@ -3141,7 +3197,10 @@ final class RemappingRulesWindowController:
         do {
             let rules =
                 try remappingController
-                    .loadConfiguredRules()
+                    .loadConfiguredRules(
+                        for:
+                            profileID
+                    )
 
             ruleEditorSession.initialize(
                 with: rules
@@ -4366,7 +4425,9 @@ final class RemappingRulesWindowController:
         do {
             try remappingController
                 .replaceConfiguredRules(
-                    rules
+                    rules,
+                    for:
+                        profileID
                 )
 
             ruleEditorSession

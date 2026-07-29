@@ -189,9 +189,11 @@ final class AppCoordinatorWindowReuseTests:
             .filter {
                 window in
 
-                window.title
-                    == "Remapping Rules"
-                    && window.isVisible
+                window.isVisible
+                    && (
+                        window.windowController
+                            is RemappingRulesWindowController
+                    )
             }
             .count
     }
