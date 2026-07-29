@@ -23,6 +23,9 @@ final class AppCoordinator: NSObject {
     private let ruleEditorSessionRegistry:
         ProfileRuleEditorSessionRegistry
 
+    private var homeConfigurationEditorSession:
+        HomeConfigurationEditorSession?
+
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
@@ -127,6 +130,7 @@ final class AppCoordinator: NSObject {
         isStopping = false
 
         loadAppPreferences()
+        initializeHomeConfigurationEditorSession()
         configureRemappingStateObservation()
         startObservingWorkspaceActivation()
 
@@ -186,15 +190,14 @@ final class AppCoordinator: NSObject {
     /// Shows the Rules window for the currently active profile.
     func showRemappingRulesWindow() {
         do {
-            let configuration =
-                try profilesStore
-                    .loadConfiguration()
+            let profilesConfiguration =
+                try currentHomeProfilesConfiguration()
 
             showRemappingRulesWindow(
                 for:
-                    configuration.activeProfileID,
+                    profilesConfiguration.activeProfileID,
                 in:
-                    configuration
+                    profilesConfiguration
             )
         } catch {
             // A storage failure must not crash or partially open the editor.
@@ -206,15 +209,14 @@ final class AppCoordinator: NSObject {
         for profileID: UUID
     ) {
         do {
-            let configuration =
-                try profilesStore
-                    .loadConfiguration()
+            let profilesConfiguration =
+                try currentHomeProfilesConfiguration()
 
             showRemappingRulesWindow(
                 for:
                     profileID,
                 in:
-                    configuration
+                    profilesConfiguration
             )
         } catch {
             // A storage failure must not crash or partially open the editor.
@@ -245,6 +247,13 @@ final class AppCoordinator: NSObject {
                         profileID
                 )
 
+        if !ruleEditorSession.isInitialized {
+            ruleEditorSession.initialize(
+                with:
+                    profile.rules
+            )
+        }
+
         let controller =
             getOrCreateRemappingRulesWindowController(
                 profile:
@@ -273,6 +282,13 @@ final class AppCoordinator: NSObject {
             .prepareForApplicationTermination()
         remappingRulesWindowController?
             .prepareForApplicationTermination()
+
+        homeConfigurationEditorSession?
+            .onChange =
+                nil
+
+        homeConfigurationEditorSession =
+            nil
 
         mainWindowController = nil
         remappingRulesWindowController = nil
@@ -526,6 +542,58 @@ final class AppCoordinator: NSObject {
             controller
 
         return controller
+    }
+
+    /// Creates the single Home editor session owned for this app run.
+    ///
+    /// The session starts from the persisted profiles configuration and the
+    /// application preferences loaded immediately before this operation.
+    /// Nothing is written while the draft is being created.
+    private func initializeHomeConfigurationEditorSession() {
+        do {
+            let profilesConfiguration =
+                try profilesStore
+                    .loadConfiguration()
+
+            let preferences =
+                appPreferencesController
+                    .preferences
+
+            homeConfigurationEditorSession =
+                HomeConfigurationEditorSession(
+                    snapshot:
+                        HomeConfigurationSnapshot(
+                            profilesConfiguration:
+                                profilesConfiguration,
+                            launchBehavior:
+                                preferences.launchBehavior,
+                            shortcutConfiguration:
+                                preferences.shortcutConfiguration
+                        )
+                )
+        } catch {
+            // The application can still launch using its existing controls.
+            // A storage failure must not create a partial Home draft.
+            homeConfigurationEditorSession =
+                nil
+        }
+    }
+
+    /// Returns the editable Home profiles when a session exists.
+    ///
+    /// The storage fallback preserves Rules-window behavior in tests and in
+    /// defensive call paths that open Rules before the normal start sequence.
+    private func currentHomeProfilesConfiguration() throws
+        -> RemappingProfilesConfiguration
+    {
+        if let homeConfigurationEditorSession {
+            return homeConfigurationEditorSession
+                .draft
+                .profilesConfiguration
+        }
+
+        return try profilesStore
+            .loadConfiguration()
     }
 
     private func loadAppPreferences() {
