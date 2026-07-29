@@ -5,6 +5,16 @@
 //  Created by Alessandro Giuriati on 7/15/26.
 //
 
+import Foundation
+
+/// Represents a failure while resolving one profile by its stable identity.
+nonisolated enum RemappingProfileRulesAccessError:
+    Error,
+    Equatable
+{
+    case profileNotFound(UUID)
+}
+
 /// Defines the operations exposed by the remapping controller
 /// to the application user interface.
 @MainActor
@@ -26,7 +36,7 @@ protocol RemappingControlling: AnyObject {
     func toggle()
 }
 
-/// Coordinates permissions, rule validation, storage,
+/// Coordinates permissions, profile resolution, rule validation, storage,
 /// the remapping engine, and the keyboard event tap.
 ///
 /// This controller does not process individual keyboard events
@@ -40,8 +50,8 @@ final class RemappingController:
     private let permissionService:
         AccessibilityPermissionChecking
 
-    private let rulesStore:
-        RulesStore
+    private let profilesStore:
+        RemappingProfilesStore
 
     private let rulesValidator:
         RemappingRulesValidating
@@ -61,6 +71,12 @@ final class RemappingController:
     private let shortcutConfigurationProvider:
         () -> RemappingShortcutConfiguration
 
+    /// Supplies modification dates when a profile's rules change.
+    ///
+    /// Injection keeps controller tests deterministic.
+    private let dateProvider:
+        () -> Date
+
     private var isKeyCaptureActive = false
 
     private(set) var state:
@@ -72,8 +88,8 @@ final class RemappingController:
     init(
         permissionService:
             AccessibilityPermissionChecking,
-        rulesStore:
-            RulesStore,
+        profilesStore:
+            RemappingProfilesStore,
         rulesValidator:
             RemappingRulesValidating,
         remappingEngine:
@@ -83,13 +99,17 @@ final class RemappingController:
         shortcutConfigurationProvider:
             @escaping () -> RemappingShortcutConfiguration = {
                 .disabled
+            },
+        dateProvider:
+            @escaping () -> Date = {
+                Date()
             }
     ) {
         self.permissionService =
             permissionService
 
-        self.rulesStore =
-            rulesStore
+        self.profilesStore =
+            profilesStore
 
         self.rulesValidator =
             rulesValidator
@@ -102,6 +122,9 @@ final class RemappingController:
 
         self.shortcutConfigurationProvider =
             shortcutConfigurationProvider
+
+        self.dateProvider =
+            dateProvider
     }
 
     func enable() {
@@ -114,9 +137,11 @@ final class RemappingController:
 
         guard permissionService.isGranted else {
             permissionService.requestAccess()
+
             updateState(
                 .permissionRequired
             )
+
             return
         }
 
@@ -129,14 +154,14 @@ final class RemappingController:
 
         do {
             rules =
-                try rulesStore
-                    .loadRules()
+                try loadConfiguredRules()
         } catch {
             updateState(
                 .failed(
                     .rulesLoadingFailed
                 )
             )
+
             return
         }
 
@@ -150,6 +175,7 @@ final class RemappingController:
                     .invalidRules
                 )
             )
+
             return
         }
 
@@ -169,6 +195,7 @@ final class RemappingController:
                     .eventTapStartFailed
                 )
             )
+
             return
         }
 
@@ -222,6 +249,7 @@ final class RemappingController:
             updateState(
                 .permissionRequired
             )
+
             return
         }
 
@@ -295,38 +323,87 @@ final class RemappingController:
         }
     }
 
-    /// Returns the rules currently stored by the application.
+    /// Returns the rules belonging to the currently active profile.
+    ///
+    /// This compatibility operation is retained while the Rules window
+    /// is converted to open profiles explicitly by UUID.
     func loadConfiguredRules()
         throws -> [RemapRule]
     {
-        try rulesStore
-            .loadRules()
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        let activeProfile =
+            try profile(
+                id:
+                    configuration.activeProfileID,
+                in:
+                    configuration
+            )
+
+        return activeProfile.rules
     }
 
-    /// Validates and replaces all configured rules.
+    /// Returns the rules belonging to one specific profile.
+    func loadConfiguredRules(
+        for profileID: UUID
+    ) throws -> [RemapRule] {
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        let requestedProfile =
+            try profile(
+                id:
+                    profileID,
+                in:
+                    configuration
+            )
+
+        return requestedProfile.rules
+    }
+
+    /// Validates and replaces the active profile's rules.
     ///
-    /// Structural rule validation and shortcut-conflict validation are both
-    /// completed before storage or the prepared runtime engine is modified.
-    ///
-    /// This guarantees that a rule cannot become active merely because the
-    /// conflicting shortcut was configured first.
+    /// This compatibility operation is retained while the Rules window
+    /// is converted to pass an explicit profile UUID.
     func replaceConfiguredRules(
         _ rules:
             [RemapRule]
     ) throws {
-        try validate(
-            rules
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        try replaceConfiguredRules(
+            rules,
+            for:
+                configuration.activeProfileID,
+            in:
+                configuration
         )
+    }
 
-        try rulesStore
-            .saveRules(
-                rules
-            )
+    /// Validates and replaces the rules belonging to one specific profile.
+    ///
+    /// Saving an inactive profile persists its rules without modifying
+    /// the currently prepared runtime engine.
+    func replaceConfiguredRules(
+        _ rules: [RemapRule],
+        for profileID: UUID
+    ) throws {
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
 
-        remappingEngine
-            .replaceRules(
-                rules
-            )
+        try replaceConfiguredRules(
+            rules,
+            for:
+                profileID,
+            in:
+                configuration
+        )
     }
 
     /// Temporarily suspends remapping while the Settings
@@ -389,6 +466,97 @@ final class RemappingController:
                 shortcutConfiguration:
                     shortcutConfigurationProvider()
             )
+    }
+
+    private func replaceConfiguredRules(
+        _ rules: [RemapRule],
+        for profileID: UUID,
+        in configuration:
+            RemappingProfilesConfiguration
+    ) throws {
+        guard
+            let profileIndex =
+                configuration.profiles
+                    .firstIndex(
+                        where: {
+                            $0.id == profileID
+                        }
+                    )
+        else {
+            throw RemappingProfileRulesAccessError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        try validate(
+            rules
+        )
+
+        var updatedConfiguration =
+            configuration
+
+        let rulesChanged =
+            updatedConfiguration
+                .profiles[
+                    profileIndex
+                ]
+                .rules
+                != rules
+
+        updatedConfiguration
+            .profiles[
+                profileIndex
+            ]
+            .rules =
+                rules
+
+        if rulesChanged {
+            updatedConfiguration
+                .profiles[
+                    profileIndex
+                ]
+                .updatedAt =
+                    dateProvider()
+        }
+
+        try profilesStore
+            .saveConfiguration(
+                updatedConfiguration
+            )
+
+        guard
+            updatedConfiguration.activeProfileID
+                == profileID
+        else {
+            return
+        }
+
+        remappingEngine
+            .replaceRules(
+                rules
+            )
+    }
+
+    private func profile(
+        id profileID: UUID,
+        in configuration:
+            RemappingProfilesConfiguration
+    ) throws -> RemappingProfile {
+        guard
+            let profile =
+                configuration.profile(
+                    id:
+                        profileID
+                )
+        else {
+            throw RemappingProfileRulesAccessError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        return profile
     }
 
     private func updateState(

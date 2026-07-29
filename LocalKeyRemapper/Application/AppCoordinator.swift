@@ -11,7 +11,7 @@ import AppKit
 @MainActor
 final class AppCoordinator: NSObject {
     private let permissionService: AccessibilityPermissionService
-    private let rulesStore: UserDefaultsRulesStore
+    private let profilesStore: UserDefaultsRemappingProfilesStore
     private let rulesValidator: RemappingRulesValidator
     private let appPreferencesStore: UserDefaultsAppPreferencesStore
     private let appPreferencesController: AppPreferencesController
@@ -36,7 +36,7 @@ final class AppCoordinator: NSObject {
 
     override init() {
         let permissionService = AccessibilityPermissionService()
-        let rulesStore = UserDefaultsRulesStore()
+        let profilesStore = UserDefaultsRemappingProfilesStore()
         let rulesValidator = RemappingRulesValidator()
         let appPreferencesStore = UserDefaultsAppPreferencesStore()
         let appPreferencesController = AppPreferencesController(
@@ -48,7 +48,7 @@ final class AppCoordinator: NSObject {
         )
         let remappingController = RemappingController(
             permissionService: permissionService,
-            rulesStore: rulesStore,
+            profilesStore: profilesStore,
             rulesValidator: rulesValidator,
             remappingEngine: remappingEngine,
             eventTapManager: eventTapManager,
@@ -72,7 +72,15 @@ final class AppCoordinator: NSObject {
             appPreferencesController: appPreferencesController,
             remappingEngine: remappingEngine,
             configuredRulesProvider: {
-                try rulesStore.loadRules()
+                let configuration =
+                    try profilesStore
+                        .loadConfiguration()
+
+                return configuration
+                    .profiles
+                    .flatMap {
+                        $0.rules
+                    }
             },
             actionHandler: {
                 [weak remappingController] action in
@@ -96,7 +104,7 @@ final class AppCoordinator: NSObject {
         let ruleEditorSession = RemappingRuleEditorSession()
 
         self.permissionService = permissionService
-        self.rulesStore = rulesStore
+        self.profilesStore = profilesStore
         self.rulesValidator = rulesValidator
         self.appPreferencesStore = appPreferencesStore
         self.appPreferencesController = appPreferencesController
