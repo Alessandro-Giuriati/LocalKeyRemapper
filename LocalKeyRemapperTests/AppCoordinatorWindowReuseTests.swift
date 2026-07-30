@@ -241,6 +241,258 @@ final class AppCoordinatorWindowReuseTests:
         )
     }
 
+    func testMainWindowUsesTheCoordinatorHomeEditorSession() {
+        let coordinator =
+            AppCoordinator()
+
+        coordinator.start()
+
+        defer {
+            reflectedMainWindowController(
+                from:
+                    coordinator
+            )?.close()
+            coordinator.stop()
+        }
+
+        guard
+            let coordinatorSession =
+                reflectedHomeConfigurationEditorSession(
+                    from:
+                        coordinator
+                ),
+            let mainWindowController =
+                reflectedMainWindowController(
+                    from:
+                        coordinator
+                ),
+            let windowSession =
+                reflectedHomeConfigurationEditorSession(
+                    from:
+                        mainWindowController
+                )
+        else {
+            XCTFail(
+                "Home did not receive the coordinator-owned editor session."
+            )
+            return
+        }
+
+        XCTAssertTrue(
+            coordinatorSession
+                === windowSession
+        )
+    }
+
+    func testLaunchBehaviorControlChangesOnlyTheHomeDraft() {
+        let coordinator =
+            AppCoordinator()
+
+        coordinator.start()
+
+        guard
+            let homeSession =
+                reflectedHomeConfigurationEditorSession(
+                    from:
+                        coordinator
+                ),
+            let mainWindowController =
+                reflectedMainWindowController(
+                    from:
+                        coordinator
+                ),
+            let launchBehaviorControl =
+                reflectedLaunchBehaviorControl(
+                    from:
+                        mainWindowController
+                ),
+            let preferencesController =
+                reflectedAppPreferencesController(
+                    from:
+                        coordinator
+                )
+        else {
+            coordinator.stop()
+            XCTFail(
+                "The Home launch-behavior editor was not connected."
+            )
+            return
+        }
+
+        defer {
+            homeSession.restoreSavedSnapshot()
+            mainWindowController.close()
+            coordinator.stop()
+        }
+
+        let savedBehavior =
+            homeSession
+                .savedSnapshot
+                .launchBehavior
+
+        let requestedBehavior:
+            RemappingLaunchBehavior =
+                savedBehavior == .alwaysOn
+                    ? .alwaysOff
+                    : .alwaysOn
+
+        launchBehaviorControl.selectedSegment =
+            requestedBehavior == .alwaysOn
+                ? 2
+                : 0
+
+        _ = launchBehaviorControl.sendAction(
+            launchBehaviorControl.action,
+            to:
+                launchBehaviorControl.target
+        )
+
+        XCTAssertEqual(
+            homeSession
+                .draft
+                .launchBehavior,
+            requestedBehavior
+        )
+
+        XCTAssertEqual(
+            homeSession
+                .savedSnapshot
+                .launchBehavior,
+            savedBehavior
+        )
+
+        XCTAssertEqual(
+            preferencesController
+                .preferences
+                .launchBehavior,
+            savedBehavior
+        )
+    }
+
+    func testShortcutEditChangesOnlyTheHomeDraft() {
+        let coordinator =
+            AppCoordinator()
+
+        coordinator.start()
+
+        guard
+            let homeSession =
+                reflectedHomeConfigurationEditorSession(
+                    from:
+                        coordinator
+                ),
+            let mainWindowController =
+                reflectedMainWindowController(
+                    from:
+                        coordinator
+                ),
+            let shortcutView =
+                reflectedGlobalShortcutSettingsView(
+                    from:
+                        mainWindowController
+                ),
+            let modeControl =
+                reflectedValue(
+                    named:
+                        "modeControl",
+                    from:
+                        shortcutView,
+                    as:
+                        NSSegmentedControl.self
+                ),
+            let preferencesController =
+                reflectedAppPreferencesController(
+                    from:
+                        coordinator
+                )
+        else {
+            coordinator.stop()
+            XCTFail(
+                "The controlled global-shortcut editor was not connected."
+            )
+            return
+        }
+
+        defer {
+            homeSession.restoreSavedSnapshot()
+            mainWindowController.close()
+            coordinator.stop()
+        }
+
+        let savedConfiguration =
+            homeSession
+                .savedSnapshot
+                .shortcutConfiguration
+
+        let firstCandidate =
+            KeyCombination(
+                keyCode:
+                    KeyCode.r,
+                modifiers: [
+                    .control,
+                    .option,
+                    .command
+                ]
+            )
+
+        let alternateCandidate =
+            KeyCombination(
+                keyCode:
+                    KeyCode.e,
+                modifiers: [
+                    .control,
+                    .option,
+                    .command
+                ]
+            )
+
+        let shortcut =
+            savedConfiguration
+                == .toggle(
+                    firstCandidate
+                )
+                ? alternateCandidate
+                : firstCandidate
+
+        modeControl.selectedSegment =
+            1
+
+        _ = modeControl.sendAction(
+            modeControl.action,
+            to:
+                modeControl.target
+        )
+
+        shortcutView.setCapturedShortcut(
+            shortcut,
+            for:
+                .toggle
+        )
+
+        XCTAssertEqual(
+            homeSession
+                .draft
+                .shortcutConfiguration,
+            .toggle(
+                shortcut
+            )
+        )
+
+        XCTAssertEqual(
+            homeSession
+                .savedSnapshot
+                .shortcutConfiguration,
+            savedConfiguration
+        )
+
+        XCTAssertEqual(
+            preferencesController
+                .preferences
+                .shortcutConfiguration,
+            savedConfiguration
+        )
+    }
+
     func testRulesWindowCanOpenProfileThatExistsOnlyInHomeDraft()
         throws
     {
@@ -433,6 +685,62 @@ final class AppCoordinatorWindowReuseTests:
                 coordinator,
             as:
                 HomeConfigurationEditorSession.self
+        )
+    }
+
+    private func reflectedHomeConfigurationEditorSession(
+        from controller:
+            MainWindowController
+    ) -> HomeConfigurationEditorSession? {
+        reflectedValue(
+            named:
+                "homeConfigurationEditorSession",
+            from:
+                controller,
+            as:
+                HomeConfigurationEditorSession.self
+        )
+    }
+
+    private func reflectedLaunchBehaviorControl(
+        from controller:
+            MainWindowController
+    ) -> NSSegmentedControl? {
+        reflectedValue(
+            named:
+                "launchBehaviorControl",
+            from:
+                controller,
+            as:
+                NSSegmentedControl.self
+        )
+    }
+
+    private func reflectedGlobalShortcutSettingsView(
+        from controller:
+            MainWindowController
+    ) -> GlobalShortcutSettingsView? {
+        reflectedValue(
+            named:
+                "globalShortcutSettingsView",
+            from:
+                controller,
+            as:
+                GlobalShortcutSettingsView.self
+        )
+    }
+
+    private func reflectedAppPreferencesController(
+        from coordinator:
+            AppCoordinator
+    ) -> AppPreferencesController? {
+        reflectedValue(
+            named:
+                "appPreferencesController",
+            from:
+                coordinator,
+            as:
+                AppPreferencesController.self
         )
     }
 

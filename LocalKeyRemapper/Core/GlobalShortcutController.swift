@@ -114,63 +114,85 @@ final class GlobalShortcutController {
         }
     }
 
-    /// Atomically replaces the complete shortcut configuration.
+    /// Atomically replaces and persists the complete shortcut configuration.
     ///
-    /// Invalid configurations and conflicts with active remapping rules are
-    /// rejected before any active registration or reservation is changed.
-    ///
-    /// If registration or persistence fails, the previous registration
-    /// and reservation are restored whenever possible.
+    /// Existing call sites keep the original behavior: registration,
+    /// reservation, and shortcut persistence either all succeed or the previous
+    /// registration is restored whenever possible.
     func setConfiguration(
         _ newConfiguration:
             RemappingShortcutConfiguration
     ) throws {
+        try applyConfiguration(
+            newConfiguration,
+            persistingWith: {
+                [appPreferencesController] in
+
+                try appPreferencesController
+                    .setShortcutConfiguration(
+                        newConfiguration
+                    )
+            }
+        )
+    }
+
+    /// Applies a shortcut configuration while delegating persistence to one
+    /// caller-supplied transaction.
+    ///
+    /// Home uses this operation to persist Remapping at Launch and Global
+    /// Shortcuts together in one `AppPreferences` write. If registration or
+    /// persistence fails, the previous shortcut registration and reservation
+    /// are restored whenever possible.
+    ///
+    /// The persistence closure must update the application preferences so that
+    /// `configuredConfiguration` reflects `newConfiguration` after success.
+    func applyConfiguration(
+        _ newConfiguration:
+            RemappingShortcutConfiguration,
+        persistingWith persistence:
+            () throws -> Void
+    ) throws {
         let previousConfiguration =
             configuredConfiguration
 
-        guard
+        let configurationChanged =
             previousConfiguration
                 != newConfiguration
-        else {
-            return
-        }
 
-        /// Validate before touching the currently active shortcuts.
-        ///
-        /// This avoids unnecessary unregister/register cycles when
-        /// the proposed configuration is invalid or conflicts with a rule.
-        try validate(
-            newConfiguration
-        )
-
-        do {
-            try register(
+        if configurationChanged {
+            // Validate before touching active Carbon registrations.
+            try validate(
                 newConfiguration
             )
 
-            applyReservation(
-                for:
+            do {
+                try register(
                     newConfiguration
-            )
-        } catch {
-            restoreRegistrationAndReservation(
-                for:
-                    previousConfiguration
-            )
+                )
 
-            throw error
+                applyReservation(
+                    for:
+                        newConfiguration
+                )
+            } catch {
+                restoreRegistrationAndReservation(
+                    for:
+                        previousConfiguration
+                )
+
+                throw error
+            }
         }
 
         do {
-            try appPreferencesController
-                .setShortcutConfiguration(
-                    newConfiguration
-                )
+            try persistence()
         } catch {
-            restoreRegistrationAndReservation(
-                for:
-                    previousConfiguration
-            )
+            if configurationChanged {
+                restoreRegistrationAndReservation(
+                    for:
+                        previousConfiguration
+                )
+            }
 
             throw error
         }

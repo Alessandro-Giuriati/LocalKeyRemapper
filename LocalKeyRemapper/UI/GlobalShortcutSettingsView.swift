@@ -9,8 +9,12 @@ import AppKit
 
 /// Displays and edits the application's global shortcut configuration.
 ///
-/// This view stores only explicitly configured combinations.
-/// It never receives global keyboard input.
+/// The authoritative configuration is owned by
+/// `HomeConfigurationEditorSession`. This view keeps only temporary
+/// presentation state, such as the field currently being captured or an
+/// incomplete shortcut selection.
+///
+/// It never receives global keyboard input and never persists configuration.
 @MainActor
 final class GlobalShortcutSettingsView:
     NSView
@@ -202,35 +206,25 @@ final class GlobalShortcutSettingsView:
         )
 
     var onCaptureRequested:
-        ((
-            CaptureField
-        ) -> Void)?
+        ((CaptureField) -> Void)?
 
     var onCaptureCancellationRequested:
         (() -> Void)?
 
-    var onSaveRequested:
-        ((
-            RemappingShortcutConfiguration
-        ) throws -> Void)?
-
-    /// Performs validation that depends on the current remapping rules.
+    /// Reports a complete configuration proposed by the user.
     ///
-    /// The callback returns a blocking user-facing message, or nil when
-    /// the proposed shortcut configuration does not conflict with any rule.
+    /// The receiver decides whether to record it in the Home draft. This view
+    /// never persists or globally registers the configuration itself.
+    var onConfigurationChangeRequested:
+        ((RemappingShortcutConfiguration) -> Void)?
+
+    /// Performs validation that depends on the current remapping profiles.
     var onAdditionalValidationRequested:
-        ((
-            RemappingShortcutConfiguration
-        ) -> String?)?
+        ((RemappingShortcutConfiguration) -> String?)?
 
-    /// Provides non-blocking guidance that depends on the current
-    /// remapping rules.
-    ///
-    /// Unlike additional validation, this callback never disables saving.
+    /// Provides non-blocking guidance that depends on remapping profiles.
     var onAdditionalSuggestionRequested:
-        ((
-            RemappingShortcutConfiguration
-        ) -> String?)?
+        ((RemappingShortcutConfiguration) -> String?)?
 
     private let titleLabel =
         NSTextField(
@@ -241,7 +235,7 @@ final class GlobalShortcutSettingsView:
     private let descriptionLabel =
         NSTextField(
             wrappingLabelWithString:
-                "Use one shortcut to toggle remapping, use separate shortcuts to enable and disable it, or turn keyboard control off."
+                "Use one shortcut to toggle remapping, use separate shortcuts to enable and disable it, or turn keyboard control off. Changes are saved with the Home configuration."
         )
 
     private let modeControl =
@@ -283,15 +277,6 @@ final class GlobalShortcutSettingsView:
                 "globalShortcut.disable"
         )
 
-    private let saveButton =
-        NSButton()
-
-    private let cancelButton =
-        NSButton()
-
-    private let shortcutActionsStack =
-        NSStackView()
-
     private let statusLabel =
         NSTextField(
             wrappingLabelWithString:
@@ -301,7 +286,8 @@ final class GlobalShortcutSettingsView:
     private let mainStack =
         NSStackView()
 
-    private var savedConfiguration:
+    /// Last complete configuration supplied by the Home draft.
+    private var controlledConfiguration:
         RemappingShortcutConfiguration
 
     private var toggleShortcut:
@@ -320,7 +306,7 @@ final class GlobalShortcutSettingsView:
         configuration:
             RemappingShortcutConfiguration
     ) {
-        savedConfiguration =
+        controlledConfiguration =
             configuration
 
         toggleShortcut =
@@ -357,11 +343,14 @@ final class GlobalShortcutSettingsView:
         )
     }
 
+    /// Replaces the displayed configuration with the authoritative Home draft.
+    ///
+    /// This operation never reports a user change back to the session.
     func load(
         configuration:
             RemappingShortcutConfiguration
     ) {
-        savedConfiguration =
+        controlledConfiguration =
             configuration
 
         toggleShortcut =
@@ -432,14 +421,6 @@ final class GlobalShortcutSettingsView:
             isError:
                 false
         )
-
-        saveButton.isEnabled =
-            false
-
-        cancelButton.isEnabled =
-            true
-
-        updateSaveButtonAppearance()
     }
 
     func setCapturedShortcut(
@@ -464,6 +445,7 @@ final class GlobalShortcutSettingsView:
 
         endCapturePrompt()
         updateControls()
+        reportCompleteConfigurationIfNeeded()
     }
 
     func endCapturePrompt() {
@@ -475,9 +457,27 @@ final class GlobalShortcutSettingsView:
         refreshChangeState()
     }
 
-    /// Indicates whether the editor differs from the last
-    /// successfully stored shortcut configuration.
-    var hasUnsavedChanges:
+    /// Complete shortcut configuration currently owned by the Home draft.
+    var authoritativeConfiguration:
+        RemappingShortcutConfiguration
+    {
+        controlledConfiguration
+    }
+
+    /// Complete configuration currently represented by the controls.
+    ///
+    /// Nil means the selected mode still requires one or more shortcuts.
+    var currentConfiguration:
+        RemappingShortcutConfiguration?
+    {
+        proposedConfiguration
+    }
+
+    /// Indicates that local presentation state does not yet match the draft.
+    ///
+    /// This is normally false because complete edits are synchronously reported
+    /// to Home. It remains true for intentionally incomplete shortcut input.
+    var hasTransientEditorChanges:
         Bool
     {
         guard
@@ -487,27 +487,32 @@ final class GlobalShortcutSettingsView:
         }
 
         return proposedConfiguration
-            != savedConfiguration
+            != controlledConfiguration
     }
 
-    /// Restores the last successfully stored configuration.
-    func discardChanges() {
-        load(
-            configuration:
-                savedConfiguration
+    /// Returns the current blocking message used by Home Save.
+    var currentValidationMessage:
+        String?
+    {
+        guard
+            let proposedConfiguration
+        else {
+            return "Choose every shortcut required by the selected mode."
+        }
+
+        return validationMessage(
+            for:
+                proposedConfiguration
         )
     }
 
-    /// Re-evaluates the current editor state against external configuration,
-    /// such as remapping rules changed in another application window.
-    ///
-    /// The current mode and any unsaved shortcut edits remain untouched.
+    /// Re-evaluates the current editor state against external profile changes.
     func refreshValidationState() {
         refreshChangeState()
     }
 
-    /// Shows that the previous shortcut could not be restored
-    /// after a local capture session.
+    /// Shows that the previously stored shortcut could not be restored after a
+    /// local capture session.
     func showCaptureRestorationFailure() {
         setStatus(
             "The previous global shortcut could not be restored. It may now be used by macOS or another application.",
@@ -556,23 +561,6 @@ final class GlobalShortcutSettingsView:
             scale
         )
 
-        let actionFont =
-            NSFont.systemFont(
-                ofSize:
-                    14 * scale,
-                weight:
-                    .regular
-            )
-
-        saveButton.font =
-            actionFont
-
-        cancelButton.font =
-            actionFont
-
-        shortcutActionsStack.spacing =
-            10 * scale
-
         statusLabel.font =
             NSFont.systemFont(
                 ofSize:
@@ -594,6 +582,11 @@ final class GlobalShortcutSettingsView:
 
         modeControl.segmentStyle =
             .automatic
+
+        modeControl.identifier =
+            NSUserInterfaceItemIdentifier(
+                "globalShortcut.mode"
+            )
 
         modeControl.target =
             self
@@ -651,62 +644,6 @@ final class GlobalShortcutSettingsView:
                 )
         )
 
-        saveButton.title =
-            "Save Shortcuts"
-
-        saveButton.bezelStyle =
-            .rounded
-
-        saveButton.identifier =
-            NSUserInterfaceItemIdentifier(
-                "globalShortcut.save"
-            )
-
-        saveButton.target =
-            self
-
-        saveButton.action =
-            #selector(
-                saveConfiguration
-            )
-
-        cancelButton.title =
-            "Cancel"
-
-        cancelButton.bezelStyle =
-            .rounded
-
-        cancelButton.identifier =
-            NSUserInterfaceItemIdentifier(
-                "globalShortcut.cancel"
-            )
-
-        cancelButton.target =
-            self
-
-        cancelButton.action =
-            #selector(
-                cancelChanges
-            )
-
-        shortcutActionsStack.setViews(
-            [
-                saveButton,
-                cancelButton
-            ],
-            in:
-                .leading
-        )
-
-        shortcutActionsStack.orientation =
-            .horizontal
-
-        shortcutActionsStack.alignment =
-            .centerY
-
-        shortcutActionsStack.spacing =
-            10
-
         mainStack.setViews(
             [
                 titleLabel,
@@ -715,7 +652,6 @@ final class GlobalShortcutSettingsView:
                 toggleRow,
                 enableRow,
                 disableRow,
-                shortcutActionsStack,
                 statusLabel
             ],
             in:
@@ -860,7 +796,7 @@ final class GlobalShortcutSettingsView:
             shortcutRow
                 .cancelButton
                 .isHidden =
-                    true
+                    !isCapturing
 
             shortcutRow
                 .clearButton
@@ -979,26 +915,12 @@ final class GlobalShortcutSettingsView:
         guard
             activeCaptureField == nil
         else {
-            setActionButtons(
-                saveEnabled:
-                    false,
-                cancelEnabled:
-                    true
-            )
-
             return
         }
 
         guard
             let proposedConfiguration
         else {
-            setActionButtons(
-                saveEnabled:
-                    false,
-                cancelEnabled:
-                    hasUnsavedChanges
-            )
-
             setStatus(
                 "Choose every shortcut required by the selected mode.",
                 isError:
@@ -1014,13 +936,6 @@ final class GlobalShortcutSettingsView:
                     proposedConfiguration
             )
         {
-            setActionButtons(
-                saveEnabled:
-                    false,
-                cancelEnabled:
-                    hasUnsavedChanges
-            )
-
             setStatus(
                 message,
                 isError:
@@ -1029,16 +944,6 @@ final class GlobalShortcutSettingsView:
 
             return
         }
-
-        let hasChanges =
-            hasUnsavedChanges
-
-        setActionButtons(
-            saveEnabled:
-                hasChanges,
-            cancelEnabled:
-                hasChanges
-        )
 
         if let additionalSuggestion =
             onAdditionalSuggestionRequested?(
@@ -1067,34 +972,29 @@ final class GlobalShortcutSettingsView:
         }
 
         setStatus(
-            hasChanges
-                ? "You have unsaved shortcut changes."
-                : "Shortcut settings are saved locally on this Mac.",
+            hasTransientEditorChanges
+                ? "Shortcut changes are waiting to be included in the Home draft."
+                : "Shortcut settings are included in the Home Save workflow.",
             isError:
                 false
         )
     }
 
-    private func setActionButtons(
-        saveEnabled:
-            Bool,
-        cancelEnabled:
-            Bool
-    ) {
-        saveButton.isEnabled =
-            saveEnabled
+    private func reportCompleteConfigurationIfNeeded() {
+        guard
+            let proposedConfiguration,
+            proposedConfiguration
+                != controlledConfiguration
+        else {
+            refreshChangeState()
+            return
+        }
 
-        cancelButton.isEnabled =
-            cancelEnabled
+        onConfigurationChangeRequested?(
+            proposedConfiguration
+        )
 
-        updateSaveButtonAppearance()
-    }
-
-    private func updateSaveButtonAppearance() {
-        saveButton.bezelColor =
-            saveButton.isEnabled
-                ? .controlAccentColor
-                : nil
+        refreshChangeState()
     }
 
     private func row(
@@ -1144,6 +1044,7 @@ final class GlobalShortcutSettingsView:
 
         endCapturePrompt()
         updateControls()
+        reportCompleteConfigurationIfNeeded()
     }
 
     private func setStatus(
@@ -1177,6 +1078,7 @@ final class GlobalShortcutSettingsView:
         onCaptureCancellationRequested?()
         endCapturePrompt()
         updateControls()
+        reportCompleteConfigurationIfNeeded()
     }
 
     @objc
@@ -1198,13 +1100,6 @@ final class GlobalShortcutSettingsView:
         requestCapture(
             .disable
         )
-    }
-
-    @objc
-    private func cancelChanges() {
-        onCaptureCancellationRequested?()
-
-        discardChanges()
     }
 
     @objc
@@ -1241,133 +1136,5 @@ final class GlobalShortcutSettingsView:
         clear(
             .disable
         )
-    }
-
-    /// Validates, registers, and persists the current configuration.
-    ///
-    /// Registration and persistence remain atomic inside
-    /// GlobalShortcutController.
-    @discardableResult
-    func persistConfiguration()
-        -> Bool
-    {
-        onCaptureCancellationRequested?()
-        endCapturePrompt()
-
-        guard
-            let proposedConfiguration
-        else {
-            refreshChangeState()
-            return false
-        }
-
-        if let message =
-            validationMessage(
-                for:
-                    proposedConfiguration
-            )
-        {
-            setStatus(
-                message,
-                isError:
-                    true
-            )
-
-            return false
-        }
-
-        guard let onSaveRequested else {
-            setStatus(
-                "The shortcut configuration could not be saved.",
-                isError:
-                    true
-            )
-
-            return false
-        }
-
-        do {
-            try onSaveRequested(
-                proposedConfiguration
-            )
-
-            savedConfiguration =
-                proposedConfiguration
-
-            NotificationCenter.default.post(
-                name:
-                    AppConfigurationNotification
-                        .globalShortcutConfigurationDidChange,
-                object:
-                    nil
-            )
-
-            refreshChangeState()
-            return true
-        } catch let conflict as
-            RemappingShortcutRuleConflict
-        {
-            setStatus(
-                conflict.message,
-                isError:
-                    true
-            )
-
-            return false
-        } catch let error as
-            GlobalShortcutConfigurationError
-        {
-            switch error {
-            case .duplicateShortcut:
-                setStatus(
-                    "Enable and Disable must use different shortcuts.",
-                    isError:
-                        true
-                )
-
-            case .insufficientModifiers:
-                setStatus(
-                    "Every global shortcut must contain at least one modifier.",
-                    isError:
-                        true
-                )
-            }
-
-            return false
-        } catch let error as
-            GlobalShortcutError
-        {
-            switch error {
-            case .registrationFailed:
-                setStatus(
-                    "The shortcut could not be registered. It may already be used by macOS or another application.",
-                    isError:
-                        true
-                )
-
-            default:
-                setStatus(
-                    "The shortcut configuration could not be applied.",
-                    isError:
-                        true
-                )
-            }
-
-            return false
-        } catch {
-            setStatus(
-                "The shortcut configuration could not be saved.",
-                isError:
-                    true
-            )
-
-            return false
-        }
-    }
-
-    @objc
-    private func saveConfiguration() {
-        _ =
-            persistConfiguration()
     }
 }

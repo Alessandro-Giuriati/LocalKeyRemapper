@@ -7,6 +7,21 @@
 
 import AppKit
 
+/// Represents a Home Save operation that cannot be completed by the current
+/// incremental profile implementation.
+nonisolated enum HomeConfigurationSaveError:
+    Error,
+    Equatable
+{
+    /// Home could not create its editor session because configuration loading
+    /// failed during application startup.
+    case editorSessionUnavailable
+
+    /// Profile CRUD is connected to the draft model but is not yet committed by
+    /// this step. Refusing the save prevents a partial Home transaction.
+    case profileChangesRequireProfilesSaveStep
+}
+
 /// Creates and connects the main application components.
 @MainActor
 final class AppCoordinator: NSObject {
@@ -445,6 +460,29 @@ final class AppCoordinator: NSObject {
             remappingController: remappingController,
             appPreferencesController: appPreferencesController,
             globalShortcutController: globalShortcutController,
+            homeConfigurationEditorSession:
+                homeConfigurationEditorSession,
+            saveHomeConfigurationHandler: {
+                [weak self] in
+
+                guard let self else {
+                    throw HomeConfigurationSaveError
+                        .editorSessionUnavailable
+                }
+
+                try self.saveHomeConfiguration()
+            },
+            profilesConfigurationProvider: {
+                [weak self] in
+
+                guard let self else {
+                    throw HomeConfigurationSaveError
+                        .editorSessionUnavailable
+                }
+
+                return try self.profilesStore
+                    .loadConfiguration()
+            },
             menuBarVisibilityChangeHandler: {
                 [weak self] showsMenuBarIcon in
 
@@ -576,6 +614,97 @@ final class AppCoordinator: NSObject {
             // A storage failure must not create a partial Home draft.
             homeConfigurationEditorSession =
                 nil
+        }
+    }
+
+    /// Commits the Home-owned launch and shortcut preferences together.
+    ///
+    /// Profile persistence remains intentionally blocked until the dedicated
+    /// profile table and active-profile save transaction are connected. This
+    /// prevents a partially saved Home configuration during the incremental
+    /// implementation of Issue #12.
+    private func saveHomeConfiguration() throws {
+        guard
+            let homeConfigurationEditorSession
+        else {
+            throw HomeConfigurationSaveError
+                .editorSessionUnavailable
+        }
+
+        let draft =
+            homeConfigurationEditorSession
+                .draft
+
+        guard
+            draft.profilesConfiguration
+                == homeConfigurationEditorSession
+                    .savedSnapshot
+                    .profilesConfiguration
+        else {
+            throw HomeConfigurationSaveError
+                .profileChangesRequireProfilesSaveStep
+        }
+
+        // Rules can be saved independently while Home remains open. Load the
+        // latest persisted profiles before changing preferences so a storage
+        // failure cannot occur after the Home preference transaction commits.
+        let persistedProfilesConfiguration =
+            try profilesStore
+                .loadConfiguration()
+
+        let previousShortcutConfiguration =
+            appPreferencesController
+                .preferences
+                .shortcutConfiguration
+
+        try globalShortcutController
+            .applyConfiguration(
+                draft.shortcutConfiguration,
+                persistingWith: {
+                    [appPreferencesController] in
+
+                    try appPreferencesController
+                        .setHomeConfiguration(
+                            launchBehavior:
+                                draft.launchBehavior,
+                            shortcutConfiguration:
+                                draft.shortcutConfiguration
+                        )
+                }
+            )
+
+        // Use the latest persisted profiles in the new baseline so Home never
+        // restores an obsolete rule collection after saving unrelated
+        // preferences.
+        let committedSnapshot =
+            HomeConfigurationSnapshot(
+                profilesConfiguration:
+                    persistedProfilesConfiguration,
+                launchBehavior:
+                    appPreferencesController
+                        .preferences
+                        .launchBehavior,
+                shortcutConfiguration:
+                    appPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+            )
+
+        _ = homeConfigurationEditorSession
+            .markCurrentDraftAsSaved(
+                committedSnapshot
+            )
+
+        if previousShortcutConfiguration
+            != committedSnapshot.shortcutConfiguration
+        {
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .globalShortcutConfigurationDidChange,
+                object:
+                    nil
+            )
         }
     }
 
