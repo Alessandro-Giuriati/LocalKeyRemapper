@@ -7,19 +7,13 @@
 
 import AppKit
 
-/// Represents a Home Save operation that cannot be completed by the current
-/// incremental profile implementation.
+/// Represents a Home Save operation that cannot start because its shared
+/// editor session is unavailable.
 nonisolated enum HomeConfigurationSaveError:
     Error,
     Equatable
 {
-    /// Home could not create its editor session because configuration loading
-    /// failed during application startup.
     case editorSessionUnavailable
-
-    /// Profile CRUD is connected to the draft model but is not yet committed by
-    /// this step. Refusing the save prevents a partial Home transaction.
-    case profileChangesRequireProfilesSaveStep
 }
 
 /// Creates and connects the main application components.
@@ -35,6 +29,8 @@ final class AppCoordinator: NSObject {
     private let remappingController: RemappingController
     private let globalShortcutManager: GlobalShortcutManager
     private let globalShortcutController: GlobalShortcutController
+    private let homeConfigurationSaveTransaction:
+        HomeConfigurationSaveTransaction
     private let ruleEditorSessionRegistry:
         ProfileRuleEditorSessionRegistry
 
@@ -47,6 +43,10 @@ final class AppCoordinator: NSObject {
     private var remappingRulesWindowController:
         RemappingRulesWindowController?
 
+    /// Stable identity currently displayed by the reusable Rules window.
+    private var displayedRulesProfileID:
+        UUID?
+
     private var isObservingWorkspaceActivation = false
 
     /// Prevents application shutdown from being stored as a
@@ -55,7 +55,12 @@ final class AppCoordinator: NSObject {
 
     override init() {
         let permissionService = AccessibilityPermissionService()
-        let profilesStore = UserDefaultsRemappingProfilesStore()
+        let profilesConfigurationValidator =
+            RemappingProfilesConfigurationValidator()
+        let profilesStore = UserDefaultsRemappingProfilesStore(
+            validator:
+                profilesConfigurationValidator
+        )
         let rulesValidator = RemappingRulesValidator()
         let appPreferencesStore = UserDefaultsAppPreferencesStore()
         let appPreferencesController = AppPreferencesController(
@@ -120,6 +125,27 @@ final class AppCoordinator: NSObject {
                 }
             }
         )
+        let homeConfigurationSaveTransaction =
+            HomeConfigurationSaveTransaction(
+                profilesStore:
+                    profilesStore,
+                profilesValidator:
+                    profilesConfigurationValidator,
+                rulesValidator:
+                    rulesValidator,
+                appPreferencesController:
+                    appPreferencesController,
+                globalShortcutController:
+                    globalShortcutController,
+                activeRulesApplyHandler: {
+                    rules in
+
+                    remappingEngine.replaceRules(
+                        rules
+                    )
+                }
+            )
+
         let ruleEditorSessionRegistry =
             ProfileRuleEditorSessionRegistry()
 
@@ -133,6 +159,8 @@ final class AppCoordinator: NSObject {
         self.remappingController = remappingController
         self.globalShortcutManager = globalShortcutManager
         self.globalShortcutController = globalShortcutController
+        self.homeConfigurationSaveTransaction =
+            homeConfigurationSaveTransaction
         self.ruleEditorSessionRegistry =
             ruleEditorSessionRegistry
 
@@ -277,6 +305,9 @@ final class AppCoordinator: NSObject {
                     ruleEditorSession
             )
 
+        displayedRulesProfileID =
+            profileID
+
         controller.showWindow(nil)
     }
 
@@ -307,6 +338,7 @@ final class AppCoordinator: NSObject {
 
         mainWindowController = nil
         remappingRulesWindowController = nil
+        displayedRulesProfileID = nil
 
         ruleEditorSessionRegistry
             .removeAllSessions()
@@ -505,6 +537,24 @@ final class AppCoordinator: NSObject {
 
                 self?.showRemappingRulesWindow()
             },
+            openRemappingRulesForProfileHandler: {
+                [weak self] profileID in
+
+                self?.showRemappingRulesWindow(
+                    for:
+                        profileID
+                )
+            },
+            profileNameChangeHandler: {
+                [weak self] profile,
+                previousName in
+
+                self?.refreshOpenRulesWindowProfileName(
+                    profile,
+                    previousName:
+                        previousName
+                )
+            },
             increaseTextSizeHandler: {
                 [weak self] in
 
@@ -526,6 +576,37 @@ final class AppCoordinator: NSObject {
 
         mainWindowController = controller
         return controller
+    }
+
+    private func refreshOpenRulesWindowProfileName(
+        _ profile:
+            RemappingProfile,
+        previousName:
+            String
+    ) {
+        _ = previousName
+
+        guard
+            let remappingRulesWindowController,
+            displayedRulesProfileID
+                == profile.id
+        else {
+            return
+        }
+
+        let ruleEditorSession =
+            ruleEditorSessionRegistry
+                .session(
+                    for:
+                        profile.id
+                )
+
+        remappingRulesWindowController.bind(
+            to:
+                profile,
+            ruleEditorSession:
+                ruleEditorSession
+        )
     }
 
     private func getOrCreateRemappingRulesWindowController(
@@ -617,12 +698,12 @@ final class AppCoordinator: NSObject {
         }
     }
 
-    /// Commits the Home-owned launch and shortcut preferences together.
+    /// Commits profiles, the active profile, launch behavior, and shortcuts as
+    /// one coordinated Home transaction.
     ///
-    /// Profile persistence remains intentionally blocked until the dedicated
-    /// profile table and active-profile save transaction are connected. This
-    /// prevents a partially saved Home configuration during the incremental
-    /// implementation of Issue #12.
+    /// Profile metadata is merged with the latest independently saved Rules
+    /// content before persistence. Runtime rules and committed-deletion cleanup
+    /// happen only after every storage and shortcut-registration step succeeds.
     private func saveHomeConfiguration() throws {
         guard
             let homeConfigurationEditorSession
@@ -631,73 +712,32 @@ final class AppCoordinator: NSObject {
                 .editorSessionUnavailable
         }
 
-        let draft =
-            homeConfigurationEditorSession
-                .draft
+        let result =
+            try homeConfigurationSaveTransaction
+                .commit(
+                    homeConfigurationEditorSession
+                        .draft
+                )
 
-        guard
-            draft.profilesConfiguration
-                == homeConfigurationEditorSession
-                    .savedSnapshot
-                    .profilesConfiguration
-        else {
-            throw HomeConfigurationSaveError
-                .profileChangesRequireProfilesSaveStep
+        let committedDeletionIDs =
+            homeConfigurationEditorSession
+                .markCurrentDraftAsSaved(
+                    result.committedSnapshot
+                )
+
+        closeRulesWindowIfDisplayingDeletedProfile(
+            committedDeletionIDs
+        )
+
+        for profileID in committedDeletionIDs {
+            ruleEditorSessionRegistry
+                .removeSession(
+                    for:
+                        profileID
+                )
         }
 
-        // Rules can be saved independently while Home remains open. Load the
-        // latest persisted profiles before changing preferences so a storage
-        // failure cannot occur after the Home preference transaction commits.
-        let persistedProfilesConfiguration =
-            try profilesStore
-                .loadConfiguration()
-
-        let previousShortcutConfiguration =
-            appPreferencesController
-                .preferences
-                .shortcutConfiguration
-
-        try globalShortcutController
-            .applyConfiguration(
-                draft.shortcutConfiguration,
-                persistingWith: {
-                    [appPreferencesController] in
-
-                    try appPreferencesController
-                        .setHomeConfiguration(
-                            launchBehavior:
-                                draft.launchBehavior,
-                            shortcutConfiguration:
-                                draft.shortcutConfiguration
-                        )
-                }
-            )
-
-        // Use the latest persisted profiles in the new baseline so Home never
-        // restores an obsolete rule collection after saving unrelated
-        // preferences.
-        let committedSnapshot =
-            HomeConfigurationSnapshot(
-                profilesConfiguration:
-                    persistedProfilesConfiguration,
-                launchBehavior:
-                    appPreferencesController
-                        .preferences
-                        .launchBehavior,
-                shortcutConfiguration:
-                    appPreferencesController
-                        .preferences
-                        .shortcutConfiguration
-            )
-
-        _ = homeConfigurationEditorSession
-            .markCurrentDraftAsSaved(
-                committedSnapshot
-            )
-
-        if previousShortcutConfiguration
-            != committedSnapshot.shortcutConfiguration
-        {
+        if result.shortcutConfigurationChanged {
             NotificationCenter.default.post(
                 name:
                     AppConfigurationNotification
@@ -706,6 +746,38 @@ final class AppCoordinator: NSObject {
                     nil
             )
         }
+
+        if result.profilesChanged {
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .remappingRulesDidChange,
+                object:
+                    nil
+            )
+        }
+    }
+
+    /// Closes the reusable Rules window only when its profile was permanently
+    /// removed by the successful Home Save.
+    private func closeRulesWindowIfDisplayingDeletedProfile(
+        _ deletedProfileIDs:
+            Set<UUID>
+    ) {
+        guard
+            let displayedRulesProfileID,
+            deletedProfileIDs.contains(
+                displayedRulesProfileID
+            )
+        else {
+            return
+        }
+
+        remappingRulesWindowController?
+            .close()
+
+        self.displayedRulesProfileID =
+            nil
     }
 
     /// Returns the editable Home profiles when a session exists.

@@ -63,11 +63,15 @@ final class MainWindowController:
     private let menuBarVisibilityChangeHandler: (Bool) throws -> Void
     private let openAccessibilitySettingsHandler: () -> Void
     private let openRemappingRulesHandler: () -> Void
+    private let openRemappingRulesForProfileHandler: (UUID) -> Void
+    private let profileNameChangeHandler:
+        ((RemappingProfile, String) -> Void)?
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
     private let resetTextSizeHandler: () -> Void
 
     private let globalShortcutSettingsView: GlobalShortcutSettingsView
+    private let profilesSectionView: HomeProfilesSectionView
 
     /// The application controller implements both the settings and runtime
     /// remapping interfaces. Keeping the cast here avoids widening the
@@ -130,18 +134,6 @@ final class MainWindowController:
 
     private let launchBehaviorStack = NSStackView()
 
-    private let rulesSectionTitleLabel = NSTextField(
-        labelWithString: "Remapping rules"
-    )
-
-    private let rulesSectionDescriptionLabel = NSTextField(
-        wrappingLabelWithString:
-            "Open the dedicated rules window to view, add, edit, remove and save remapping rules and their exceptions."
-    )
-
-    private let manageRulesButton = NSButton()
-    private let rulesSectionStack = NSStackView()
-
     private let interfaceSectionTitleLabel = NSTextField(
         labelWithString: "Interface"
     )
@@ -190,6 +182,9 @@ final class MainWindowController:
     private var fnModifierStateTracker =
         FnModifierStateTracker()
 
+    private var lastDisplayedProfileNames:
+        [UUID: String] = [:]
+
     private var textScale: CGFloat
 
     init(
@@ -209,6 +204,10 @@ final class MainWindowController:
             @escaping (Bool) throws -> Void,
         openAccessibilitySettingsHandler: @escaping () -> Void = {},
         openRemappingRulesHandler: @escaping () -> Void,
+        openRemappingRulesForProfileHandler:
+            ((UUID) -> Void)? = nil,
+        profileNameChangeHandler:
+            ((RemappingProfile, String) -> Void)? = nil,
         increaseTextSizeHandler: @escaping () -> Void,
         decreaseTextSizeHandler: @escaping () -> Void,
         resetTextSizeHandler: @escaping () -> Void,
@@ -229,6 +228,15 @@ final class MainWindowController:
             openAccessibilitySettingsHandler
         self.openRemappingRulesHandler =
             openRemappingRulesHandler
+        self.openRemappingRulesForProfileHandler =
+            openRemappingRulesForProfileHandler
+                ?? {
+                    _ in
+
+                    openRemappingRulesHandler()
+                }
+        self.profileNameChangeHandler =
+            profileNameChangeHandler
         self.increaseTextSizeHandler =
             increaseTextSizeHandler
         self.decreaseTextSizeHandler =
@@ -251,6 +259,20 @@ final class MainWindowController:
                         .preferences
                         .shortcutConfiguration
         )
+
+        let initialProfilesConfiguration =
+            initialHomeSnapshot?
+                .profilesConfiguration
+                ?? (try? profilesConfigurationProvider())
+                ?? RemappingProfilesConfiguration.initial()
+
+        profilesSectionView =
+            HomeProfilesSectionView(
+                editorSession:
+                    homeConfigurationEditorSession,
+                initialConfiguration:
+                    initialProfilesConfiguration
+            )
 
         let window = MainWindow(
             contentRect: NSRect(
@@ -292,6 +314,7 @@ final class MainWindowController:
         }
 
         configureShortcutSettingsCallbacks()
+        configureProfilesSectionCallbacks()
         configureConfigurationChangeObservation()
         configureHomeSessionObservation()
         configureContent()
@@ -452,9 +475,9 @@ final class MainWindowController:
         launchBehaviorDescriptionLabel.font = descriptionFont
         launchBehaviorControl.font = controlFont
 
-        rulesSectionTitleLabel.font = sectionTitleFont
-        rulesSectionDescriptionLabel.font = descriptionFont
-        manageRulesButton.font = controlFont
+        profilesSectionView.applyTextScale(
+            textScale
+        )
 
         interfaceSectionTitleLabel.font = sectionTitleFont
         showMenuBarIconLabel.font = controlFont
@@ -644,12 +667,10 @@ final class MainWindowController:
         descriptionLabel.textColor = .secondaryLabelColor
         remappingSectionDescriptionLabel.textColor = .secondaryLabelColor
         launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
-        rulesSectionDescriptionLabel.textColor = .secondaryLabelColor
         statusLabel.textColor = .secondaryLabelColor
 
         configureRemappingSection()
         configureLaunchBehavior()
-        configureRulesSection()
         configureMenuBarVisibilityPreference()
         configureTextSizeControls()
         configureHomeActions()
@@ -676,7 +697,7 @@ final class MainWindowController:
                 accessibilityPermissionStack,
                 launchBehaviorStack,
                 globalShortcutSettingsView,
-                rulesSectionStack,
+                profilesSectionView,
                 interfaceStack,
                 homeActionsStack,
                 statusLabel
@@ -693,7 +714,7 @@ final class MainWindowController:
         remappingControlStack.translatesAutoresizingMaskIntoConstraints = false
         accessibilityPermissionStack.translatesAutoresizingMaskIntoConstraints =
             false
-        rulesSectionStack.translatesAutoresizingMaskIntoConstraints = false
+        profilesSectionView.translatesAutoresizingMaskIntoConstraints = false
         interfaceStack.translatesAutoresizingMaskIntoConstraints = false
         menuBarIconVisibilityStack.translatesAutoresizingMaskIntoConstraints =
             false
@@ -773,7 +794,7 @@ final class MainWindowController:
                 globalShortcutSettingsView.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
-                rulesSectionStack.widthAnchor.constraint(
+                profilesSectionView.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
                 interfaceStack.widthAnchor.constraint(
@@ -887,7 +908,7 @@ final class MainWindowController:
 
         mainStack.setCustomSpacing(
             sectionSpacing,
-            after: rulesSectionStack
+            after: profilesSectionView
         )
 
         mainStack.setCustomSpacing(
@@ -936,34 +957,6 @@ final class MainWindowController:
                 maximum: 9
             ),
             after: launchBehaviorDescriptionLabel
-        )
-
-        rulesSectionStack.spacing =
-            InterfaceLayoutMetrics.scaled(
-                5,
-                for: textScale,
-                minimum: 4,
-                maximum: 8
-            )
-
-        rulesSectionStack.setCustomSpacing(
-            InterfaceLayoutMetrics.scaled(
-                4,
-                for: textScale,
-                minimum: 3,
-                maximum: 7
-            ),
-            after: rulesSectionTitleLabel
-        )
-
-        rulesSectionStack.setCustomSpacing(
-            InterfaceLayoutMetrics.scaled(
-                6,
-                for: textScale,
-                minimum: 4,
-                maximum: 9
-            ),
-            after: rulesSectionDescriptionLabel
         )
 
         interfaceStack.spacing =
@@ -1380,39 +1373,6 @@ final class MainWindowController:
         }
     }
 
-    private func configureRulesSection() {
-        manageRulesButton.title = "Manage Remapping Rules…"
-        manageRulesButton.image = NSImage(
-            systemSymbolName: "list.bullet.rectangle",
-            accessibilityDescription: "Manage Remapping Rules"
-        )
-        manageRulesButton.imagePosition = .imageLeading
-        manageRulesButton.bezelStyle = .rounded
-        manageRulesButton.target = self
-        manageRulesButton.action = #selector(
-            openRemappingRules
-        )
-        manageRulesButton.toolTip =
-            "Open the dedicated remapping rules window."
-
-        rulesSectionStack.setViews(
-            [
-                rulesSectionTitleLabel,
-                rulesSectionDescriptionLabel,
-                manageRulesButton
-            ],
-            in: .leading
-        )
-        rulesSectionStack.orientation = .vertical
-        rulesSectionStack.alignment = .leading
-    }
-
-    @objc
-    private func openRemappingRules() {
-        endShortcutCapture()
-        openRemappingRulesHandler()
-    }
-
     private func configureMenuBarVisibilityPreference() {
         showMenuBarIconLabel.setContentHuggingPriority(
             .required,
@@ -1578,10 +1538,52 @@ final class MainWindowController:
         globalShortcutSettingsView
             .refreshValidationState()
 
+        if let persistedConfiguration =
+            try? profilesConfigurationProvider()
+        {
+            profilesSectionView
+                .updatePersistedRuleCounts(
+                    from:
+                        persistedConfiguration
+                )
+        }
+
         // Rules are saved independently from Home. Recompute the Home action
         // state because a saved rule change may remove or introduce a shortcut
         // conflict without changing the Home draft itself.
         updateHomeActionControls()
+    }
+
+    private func configureProfilesSectionCallbacks() {
+        profilesSectionView.onOpenProfile = {
+            [weak self] profileID in
+
+            guard let self else {
+                return
+            }
+
+            self.endShortcutCapture()
+            self.openRemappingRulesForProfileHandler(
+                profileID
+            )
+        }
+
+        profilesSectionView.onStatusChange = {
+            [weak self] message,
+            isError in
+
+            self?.setStatus(
+                message,
+                isError:
+                    isError
+            )
+        }
+
+        profilesSectionView.onPreferredHeightChange = {
+            [weak self] in
+
+            self?.requestWindowResizeToFitContent()
+        }
     }
 
     private func configureShortcutSettingsCallbacks() {
@@ -1658,8 +1660,38 @@ final class MainWindowController:
         }
     }
 
+    /// Returns the profile collection that a Home Save would validate now.
+    ///
+    /// Home metadata comes from the shared draft, while Rules content is merged
+    /// from the latest persisted configuration so independent Rules saves are
+    /// reflected immediately without entering Home Undo/Redo history.
+    private func profilesConfigurationForShortcutValidation()
+        throws -> RemappingProfilesConfiguration
+    {
+        let persistedConfiguration =
+            try profilesConfigurationProvider()
+
+        guard
+            let draftConfiguration =
+                homeConfigurationEditorSession?
+                    .draft
+                    .profilesConfiguration
+        else {
+            return persistedConfiguration
+        }
+
+        return HomeProfilesConfigurationMerger
+            .merging(
+                homeDraft:
+                    draftConfiguration,
+                persisted:
+                    persistedConfiguration
+            )
+    }
+
     /// Returns a blocking message when the proposed shortcut configuration
-    /// conflicts with an exact mapping in any persisted profile.
+    /// conflicts with an exact mapping in any profile participating in the
+    /// current Home draft.
     private func shortcutConflictValidationMessage(
         for configuration:
             RemappingShortcutConfiguration
@@ -1674,7 +1706,7 @@ final class MainWindowController:
 
         do {
             let profilesConfiguration =
-                try profilesConfigurationProvider()
+                try profilesConfigurationForShortcutValidation()
 
             let affectedProfiles =
                 profilesConfiguration
@@ -1740,7 +1772,7 @@ final class MainWindowController:
 
         do {
             let profilesConfiguration =
-                try profilesConfigurationProvider()
+                try profilesConfigurationForShortcutValidation()
 
             let affectedProfiles =
                 profilesConfiguration
@@ -2002,6 +2034,24 @@ final class MainWindowController:
     ) {
         synchronizeLaunchBehavior()
 
+        let profilesConfiguration =
+            homeConfigurationEditorSession?
+                .draft
+                .profilesConfiguration
+                ?? (try? profilesConfigurationProvider())
+
+        if let profilesConfiguration {
+            synchronizeDisplayedProfileNames(
+                with:
+                    profilesConfiguration
+            )
+
+            profilesSectionView.load(
+                configuration:
+                    profilesConfiguration
+            )
+        }
+
         let shortcutConfiguration =
             homeConfigurationEditorSession?
                 .draft
@@ -2026,6 +2076,51 @@ final class MainWindowController:
 
         updateHomeActionControls()
         requestWindowResizeToFitContent()
+    }
+
+    private func synchronizeDisplayedProfileNames(
+        with configuration:
+            RemappingProfilesConfiguration
+    ) {
+        let previousNames =
+            lastDisplayedProfileNames
+
+        let currentNames =
+            Dictionary(
+                uniqueKeysWithValues:
+                    configuration
+                        .profiles
+                        .map {
+                            profile in
+
+                            (
+                                profile.id,
+                                profile.name
+                            )
+                        }
+            )
+
+        if !previousNames.isEmpty {
+            for profile in configuration.profiles {
+                guard
+                    let previousName =
+                        previousNames[
+                            profile.id
+                        ],
+                    previousName != profile.name
+                else {
+                    continue
+                }
+
+                profileNameChangeHandler?(
+                    profile,
+                    previousName
+                )
+            }
+        }
+
+        lastDisplayedProfileNames =
+            currentNames
     }
 
     private var hasUnsavedHomeChanges:
@@ -2166,11 +2261,11 @@ final class MainWindowController:
             )
 
             return true
-        } catch HomeConfigurationSaveError
-            .profileChangesRequireProfilesSaveStep
+        } catch HomeConfigurationSaveTransactionError
+            .profileRollbackFailed
         {
             setStatus(
-                "Profile changes cannot be saved until the Profiles section is connected in the next step.",
+                "The Home configuration could not be saved, and the previous profile configuration could not be restored. Remapping was not switched. Reopen the app before making further changes.",
                 isError:
                     true
             )
