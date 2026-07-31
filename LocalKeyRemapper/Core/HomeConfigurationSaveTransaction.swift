@@ -29,6 +29,15 @@ nonisolated struct HomeConfigurationSaveTransactionResult:
     let previousShortcutConfiguration:
         RemappingShortcutConfiguration
 
+    /// Indicates whether the application-wide default changed.
+    var shortcutConfigurationChanged:
+        Bool
+    {
+        previousShortcutConfiguration
+            != committedSnapshot
+                .shortcutConfiguration
+    }
+
     var profilesChanged:
         Bool
     {
@@ -37,26 +46,58 @@ nonisolated struct HomeConfigurationSaveTransactionResult:
                 .profilesConfiguration
     }
 
-    var shortcutConfigurationChanged:
+    /// Indicates whether the shortcut configuration registered with Carbon
+    /// changed, including changes caused by:
+    ///
+    /// - selecting another active profile;
+    /// - changing the active profile's override;
+    /// - changing the default used by an active Use Default profile.
+    var effectiveShortcutConfigurationChanged:
         Bool
     {
-        previousShortcutConfiguration
-            != committedSnapshot
-                .shortcutConfiguration
+        guard
+            let previousActiveProfile =
+                previousProfilesConfiguration
+                    .activeProfile,
+            let committedActiveProfile =
+                committedSnapshot
+                    .activeProfile
+        else {
+            return true
+        }
+
+        let previousEffectiveConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        previousActiveProfile,
+                    defaultConfiguration:
+                        previousShortcutConfiguration
+                )
+
+        let committedEffectiveConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        committedActiveProfile,
+                    defaultConfiguration:
+                        committedSnapshot
+                            .shortcutConfiguration
+                )
+
+        return previousEffectiveConfiguration
+            != committedEffectiveConfiguration
     }
 }
 
 /// Commits every setting owned by the Home window as one coordinated operation.
 ///
-/// The transaction deliberately persists profiles before applying shortcuts so
-/// shortcut validation observes the proposed profile collection. If shortcut
-/// registration or application-preference persistence then fails, the previous
-/// profiles payload and shortcut registration are restored before the error is
-/// returned.
+/// Profiles are persisted before the effective shortcut is registered so
+/// shortcut validation observes the proposed active profile and its latest
+/// rules. If registration or application-preference persistence fails, the
+/// previous profiles payload and effective shortcut are restored.
 ///
 /// Runtime rules are replaced only after every persistence step succeeds.
-/// This guarantees that changing the active profile in the Home draft has no
-/// effect on remapping until Save completes successfully.
 @MainActor
 final class HomeConfigurationSaveTransaction {
 
@@ -123,10 +164,31 @@ final class HomeConfigurationSaveTransaction {
             try profilesStore
                 .loadConfiguration()
 
-        let previousShortcutConfiguration =
+        let previousDefaultConfiguration =
             appPreferencesController
                 .preferences
                 .shortcutConfiguration
+
+        guard
+            let previousActiveProfile =
+                previousProfilesConfiguration
+                    .activeProfile
+        else {
+            throw RemappingProfilesConfigurationValidationError
+                .missingActiveProfile(
+                    previousProfilesConfiguration
+                        .activeProfileID
+                )
+        }
+
+        let previousEffectiveConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        previousActiveProfile,
+                    defaultConfiguration:
+                        previousDefaultConfiguration
+                )
 
         let mergedProfilesConfiguration =
             HomeProfilesConfigurationMerger
@@ -146,11 +208,7 @@ final class HomeConfigurationSaveTransaction {
         guard
             let activeProfile =
                 normalizedProfilesConfiguration
-                    .profile(
-                        id:
-                            normalizedProfilesConfiguration
-                                .activeProfileID
-                    )
+                    .activeProfile
         else {
             throw RemappingProfilesConfigurationValidationError
                 .missingActiveProfile(
@@ -159,13 +217,24 @@ final class HomeConfigurationSaveTransaction {
                 )
         }
 
+        let proposedEffectiveConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        activeProfile,
+                    defaultConfiguration:
+                        draft.shortcutConfiguration
+                )
+
         try validateRulesAndShortcuts(
             profilesConfiguration:
                 normalizedProfilesConfiguration,
             activeProfile:
                 activeProfile,
-            shortcutConfiguration:
-                draft.shortcutConfiguration
+            defaultShortcutConfiguration:
+                draft.shortcutConfiguration,
+            effectiveShortcutConfiguration:
+                proposedEffectiveConfiguration
         )
 
         let profilesChanged =
@@ -188,7 +257,12 @@ final class HomeConfigurationSaveTransaction {
 
             try globalShortcutController
                 .applyConfiguration(
-                    draft.shortcutConfiguration,
+                    defaultConfiguration:
+                        draft.shortcutConfiguration,
+                    effectiveConfiguration:
+                        proposedEffectiveConfiguration,
+                    previousEffectiveConfiguration:
+                        previousEffectiveConfiguration,
                     persistingWith: {
                         [appPreferencesController] in
 
@@ -217,8 +291,8 @@ final class HomeConfigurationSaveTransaction {
             throw error
         }
 
-        // This is intentionally the final state-changing operation. It cannot
-        // make a partially persisted Home draft active.
+        // This remains the final state-changing operation. It cannot make a
+        // partially persisted Home draft active.
         activeRulesApplyHandler(
             activeProfile.rules
         )
@@ -243,28 +317,44 @@ final class HomeConfigurationSaveTransaction {
             previousProfilesConfiguration:
                 previousProfilesConfiguration,
             previousShortcutConfiguration:
-                previousShortcutConfiguration
+                previousDefaultConfiguration
         )
     }
 
     /// Applies every blocking rule and shortcut policy before storage changes.
     ///
-    /// Structural rule validation remains local to every profile. Shortcut
-    /// conflicts are evaluated only for the profile proposed as active because
-    /// inactive profiles cannot affect the current runtime.
+    /// Every profile's Rules and explicit shortcut override are structurally
+    /// validated. Shortcut conflicts are evaluated only between the active
+    /// profile's Rules and its effective shortcut configuration.
     private func validateRulesAndShortcuts(
         profilesConfiguration:
             RemappingProfilesConfiguration,
         activeProfile:
             RemappingProfile,
-        shortcutConfiguration:
+        defaultShortcutConfiguration:
+            RemappingShortcutConfiguration,
+        effectiveShortcutConfiguration:
             RemappingShortcutConfiguration
     ) throws {
+        try GlobalShortcutConfigurationPolicy
+            .validate(
+                defaultShortcutConfiguration
+            )
+
         for profile in profilesConfiguration.profiles {
             try rulesValidator
                 .validate(
                     profile.rules
                 )
+
+            if let shortcutConfigurationOverride =
+                profile.shortcutConfigurationOverride
+            {
+                try GlobalShortcutConfigurationPolicy
+                    .validate(
+                        shortcutConfigurationOverride
+                    )
+            }
         }
 
         try RemappingShortcutRuleConflictPolicy
@@ -272,7 +362,7 @@ final class HomeConfigurationSaveTransaction {
                 rules:
                     activeProfile.rules,
                 shortcutConfiguration:
-                    shortcutConfiguration
+                    effectiveShortcutConfiguration
             )
     }
 }

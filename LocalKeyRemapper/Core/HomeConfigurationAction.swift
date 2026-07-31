@@ -25,6 +25,16 @@ nonisolated enum HomeConfigurationAction:
         after: RemappingShortcutConfiguration
     )
 
+    case setProfileShortcutConfigurationOverride(
+        profileID: UUID,
+        before: RemappingShortcutConfiguration?,
+        after: RemappingShortcutConfiguration?,
+        beforeMemory: RemappingProfileShortcutMemory,
+        afterMemory: RemappingProfileShortcutMemory,
+        beforeUpdatedAt: Date,
+        afterUpdatedAt: Date
+    )
+
     case addProfile(
         profile: RemappingProfile,
         index: Int
@@ -85,6 +95,35 @@ nonisolated enum HomeConfigurationAction:
                     of:
                         after
                 )
+
+        case .setProfileShortcutConfigurationOverride(
+            _,
+            let before,
+            let after,
+            let beforeMemory,
+            let afterMemory,
+            _,
+            _
+        ):
+            return actionOverhead
+                + MemoryLayout<UUID>.size
+                + Self.estimatedSize(
+                    of:
+                        before
+                )
+                + Self.estimatedSize(
+                    of:
+                        after
+                )
+                + Self.estimatedSize(
+                    of:
+                        beforeMemory
+                )
+                + Self.estimatedSize(
+                    of:
+                        afterMemory
+                )
+                + 2 * MemoryLayout<Date>.size
 
         case .addProfile(
             let profile,
@@ -155,6 +194,27 @@ nonisolated enum HomeConfigurationAction:
         ):
             return Self.settingShortcutConfiguration(
                 before,
+                in:
+                    currentSnapshot
+            )
+
+        case .setProfileShortcutConfigurationOverride(
+            let profileID,
+            let before,
+            _,
+            let beforeMemory,
+            _,
+            let beforeUpdatedAt,
+            _
+        ):
+            return Self.settingProfileShortcutConfiguration(
+                before,
+                memory:
+                    beforeMemory,
+                for:
+                    profileID,
+                updatedAt:
+                    beforeUpdatedAt,
                 in:
                     currentSnapshot
             )
@@ -239,6 +299,27 @@ nonisolated enum HomeConfigurationAction:
         ):
             return Self.settingShortcutConfiguration(
                 after,
+                in:
+                    currentSnapshot
+            )
+
+        case .setProfileShortcutConfigurationOverride(
+            let profileID,
+            _,
+            let after,
+            _,
+            let afterMemory,
+            _,
+            let afterUpdatedAt
+        ):
+            return Self.settingProfileShortcutConfiguration(
+                after,
+                memory:
+                    afterMemory,
+                for:
+                    profileID,
+                updatedAt:
+                    afterUpdatedAt,
                 in:
                     currentSnapshot
             )
@@ -328,6 +409,58 @@ nonisolated enum HomeConfigurationAction:
 
         updatedSnapshot.shortcutConfiguration =
             shortcutConfiguration
+
+        return updatedSnapshot
+    }
+
+    private static func settingProfileShortcutConfiguration(
+        _ shortcutConfigurationOverride:
+            RemappingShortcutConfiguration?,
+        memory:
+            RemappingProfileShortcutMemory,
+        for profileID:
+            UUID,
+        updatedAt:
+            Date,
+        in currentSnapshot:
+            HomeConfigurationSnapshot
+    ) -> HomeConfigurationSnapshot {
+        var updatedSnapshot =
+            currentSnapshot
+
+        guard
+            let profileIndex =
+                updatedSnapshot
+                    .profiles
+                    .firstIndex(
+                        where: {
+                            $0.id == profileID
+                        }
+                    )
+        else {
+            return currentSnapshot
+        }
+
+        updatedSnapshot
+            .profiles[
+                profileIndex
+            ]
+            .shortcutConfigurationOverride =
+                shortcutConfigurationOverride
+
+        updatedSnapshot
+            .profiles[
+                profileIndex
+            ]
+            .shortcutMemory =
+                memory
+
+        updatedSnapshot
+            .profiles[
+                profileIndex
+            ]
+            .updatedAt =
+                updatedAt
 
         return updatedSnapshot
     }
@@ -506,6 +639,14 @@ nonisolated enum HomeConfigurationAction:
                             rule
                     )
             }
+            + estimatedSize(
+                of:
+                    profile.shortcutConfigurationOverride
+            )
+            + estimatedSize(
+                of:
+                    profile.shortcutMemory
+            )
     }
 
     private static func estimatedSize(
@@ -521,6 +662,61 @@ nonisolated enum HomeConfigurationAction:
         return ruleOverhead
             + rule.overrides.count
                 * overrideEstimate
+    }
+
+    private static func estimatedSize(
+        of shortcutMemory:
+            RemappingProfileShortcutMemory
+    ) -> Int {
+        estimatedSize(
+            of:
+                shortcutMemory.toggleShortcut
+        )
+        + estimatedSize(
+            of:
+                shortcutMemory.enableShortcut
+        )
+        + estimatedSize(
+            of:
+                shortcutMemory.disableShortcut
+        )
+    }
+
+    private static func estimatedSize(
+        of shortcut:
+            KeyCombination?
+    ) -> Int {
+        let optionalOverhead =
+            MemoryLayout<UInt8>.size
+
+        guard
+            shortcut != nil
+        else {
+            return optionalOverhead
+        }
+
+        return optionalOverhead
+            + 16
+    }
+
+    private static func estimatedSize(
+        of shortcutConfiguration:
+            RemappingShortcutConfiguration?
+    ) -> Int {
+        let optionalOverhead =
+            MemoryLayout<UInt8>.size
+
+        guard
+            let shortcutConfiguration
+        else {
+            return optionalOverhead
+        }
+
+        return optionalOverhead
+            + estimatedSize(
+                of:
+                    shortcutConfiguration
+            )
     }
 
     private static func estimatedSize(

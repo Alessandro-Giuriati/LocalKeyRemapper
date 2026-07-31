@@ -7,21 +7,24 @@
 
 import Foundation
 
-/// Combines profile metadata edited in Home with the latest rules persisted by
-/// the independent Rules windows.
+/// Combines profile metadata, shortcut overrides, and remembered custom
+/// shortcuts edited in Home with the latest rules persisted by the independent
+/// Rules windows.
 ///
-/// Home owns profile creation, deletion, ordering, names, and the active UUID.
-/// Rules windows own each existing profile's persisted rule collection. Keeping
-/// those responsibilities separate prevents a Home Save from overwriting a
-/// newer Rules Save performed while the Home window remained open.
+/// Home owns profile creation, deletion, ordering, names, shortcut overrides,
+/// shortcut memory, and the active UUID. Rules windows own each existing
+/// profile's persisted rule collection. Keeping those responsibilities separate
+/// prevents a Home Save from overwriting a newer Rules Save performed while
+/// Home remained open.
 nonisolated enum HomeProfilesConfigurationMerger {
 
     /// Returns the configuration that should participate in a Home Save.
     ///
     /// Existing profile UUIDs keep the latest persisted rules and original
-    /// creation date. Home metadata remains authoritative. Profiles created only
-    /// in the Home draft keep their draft rules, while profiles deleted from the
-    /// Home draft remain absent.
+    /// creation date. Home metadata, shortcut overrides, and shortcut memory
+    /// remain authoritative. Profiles created only in the Home draft keep their
+    /// complete draft data, while profiles deleted from the Home draft remain
+    /// absent.
     static func merging(
         homeDraft:
             RemappingProfilesConfiguration,
@@ -62,7 +65,13 @@ nonisolated enum HomeProfilesConfigurationMerger {
                             persistedProfile.updatedAt
                         ),
                     rules:
-                        persistedProfile.rules
+                        persistedProfile.rules,
+                    shortcutConfigurationOverride:
+                        draftProfile
+                            .shortcutConfigurationOverride,
+                    shortcutMemory:
+                        draftProfile
+                            .shortcutMemory
                 )
             }
 

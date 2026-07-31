@@ -42,6 +42,8 @@ final class AppCoordinator: NSObject {
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
+    private var homeProfileShortcutSheetCoordinator:
+        HomeProfileShortcutSheetCoordinator?
     private var remappingRulesWindowController:
         RemappingRulesWindowController?
 
@@ -56,18 +58,30 @@ final class AppCoordinator: NSObject {
     private var isStopping = false
 
     override init() {
-        let permissionService = AccessibilityPermissionService()
+        let permissionService =
+            AccessibilityPermissionService()
+
         let profilesConfigurationValidator =
             RemappingProfilesConfigurationValidator()
-        let profilesStore = UserDefaultsRemappingProfilesStore(
-            validator:
-                profilesConfigurationValidator
-        )
-        let rulesValidator = RemappingRulesValidator()
-        let appPreferencesStore = UserDefaultsAppPreferencesStore()
-        let appPreferencesController = AppPreferencesController(
-            store: appPreferencesStore
-        )
+
+        let profilesStore =
+            UserDefaultsRemappingProfilesStore(
+                validator:
+                    profilesConfigurationValidator
+            )
+
+        let rulesValidator =
+            RemappingRulesValidator()
+
+        let appPreferencesStore =
+            UserDefaultsAppPreferencesStore()
+
+        let appPreferencesController =
+            AppPreferencesController(
+                store:
+                    appPreferencesStore
+            )
+
         let rulesWindowAppPreferencesController =
             RulesWindowAppPreferencesController(
                 baseController:
@@ -75,22 +89,45 @@ final class AppCoordinator: NSObject {
                 profilesStore:
                     profilesStore
             )
-        let remappingEngine = RemappingEngine()
-        let eventTapManager = EventTapManager(
-            remappingEngine: remappingEngine
-        )
-        let remappingController = RemappingController(
-            permissionService: permissionService,
-            profilesStore: profilesStore,
-            rulesValidator: rulesValidator,
-            remappingEngine: remappingEngine,
-            eventTapManager: eventTapManager,
-            shortcutConfigurationProvider: {
-                appPreferencesController
-                    .preferences
-                    .shortcutConfiguration
-            }
-        )
+
+        let persistedEffectiveShortcutConfigurationProvider =
+            PersistedEffectiveRemappingShortcutConfigurationProvider(
+                profilesStore:
+                    profilesStore,
+                defaultConfigurationProvider: {
+                    appPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+                }
+            )
+
+        let remappingEngine =
+            RemappingEngine()
+
+        let eventTapManager =
+            EventTapManager(
+                remappingEngine:
+                    remappingEngine
+            )
+
+        let remappingController =
+            RemappingController(
+                permissionService:
+                    permissionService,
+                profilesStore:
+                    profilesStore,
+                rulesValidator:
+                    rulesValidator,
+                remappingEngine:
+                    remappingEngine,
+                eventTapManager:
+                    eventTapManager,
+                shortcutConfigurationProvider: {
+                    appPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+                }
+            )
 
         eventTapManager.onInterruption = {
             [weak remappingController] in
@@ -99,52 +136,65 @@ final class AppCoordinator: NSObject {
                 .handleEventTapInterruption()
         }
 
-        let globalShortcutManager = GlobalShortcutManager()
-        let globalShortcutController = GlobalShortcutController(
-            shortcutManager: globalShortcutManager,
-            appPreferencesController: appPreferencesController,
-            remappingEngine: remappingEngine,
-            configuredRulesProvider: {
-                let configuration =
-                    try profilesStore
-                        .loadConfiguration()
+        let globalShortcutManager =
+            GlobalShortcutManager()
 
-                guard
-                    let activeProfile =
-                        configuration.activeProfile
-                else {
-                    throw RemappingProfilesConfigurationValidationError
-                        .missingActiveProfile(
-                            configuration.activeProfileID
-                        )
+        let globalShortcutController =
+            GlobalShortcutController(
+                shortcutManager:
+                    globalShortcutManager,
+                appPreferencesController:
+                    appPreferencesController,
+                remappingEngine:
+                    remappingEngine,
+                configuredRulesProvider: {
+                    let configuration =
+                        try profilesStore
+                            .loadConfiguration()
+
+                    guard
+                        let activeProfile =
+                            configuration.activeProfile
+                    else {
+                        throw RemappingProfilesConfigurationValidationError
+                            .missingActiveProfile(
+                                configuration.activeProfileID
+                            )
+                    }
+
+                    return activeProfile.rules
+                },
+                effectiveConfigurationProvider: {
+                    try persistedEffectiveShortcutConfigurationProvider
+                        .configuration()
+                },
+                rulesEditorShortcutConfigurationProvider: {
+                    rulesWindowAppPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+                },
+                actionHandler: {
+                    [weak remappingController] action in
+
+                    guard
+                        let remappingController
+                    else {
+                        return
+                    }
+
+                    switch action {
+                    case .toggle:
+                        remappingController.toggle()
+
+                    case .enable:
+                        remappingController.enable()
+
+                    case .disable:
+                        remappingController.disable()
+                    }
                 }
+            )
 
-                return activeProfile.rules
-            },
-            rulesEditorShortcutConfigurationProvider: {
-                rulesWindowAppPreferencesController
-                    .preferences
-                    .shortcutConfiguration
-            },
-            actionHandler: {
-                [weak remappingController] action in
-
-                guard let remappingController else {
-                    return
-                }
-
-                switch action {
-                case .toggle:
-                    remappingController.toggle()
-
-                case .enable:
-                    remappingController.enable()
-
-                case .disable:
-                    remappingController.disable()
-                }
-            }
-        )
         let homeConfigurationSaveTransaction =
             HomeConfigurationSaveTransaction(
                 profilesStore:
@@ -169,30 +219,53 @@ final class AppCoordinator: NSObject {
         let ruleEditorSessionRegistry =
             ProfileRuleEditorSessionRegistry()
 
-        self.permissionService = permissionService
-        self.profilesStore = profilesStore
-        self.rulesValidator = rulesValidator
-        self.appPreferencesStore = appPreferencesStore
-        self.appPreferencesController = appPreferencesController
+        self.permissionService =
+            permissionService
+
+        self.profilesStore =
+            profilesStore
+
+        self.rulesValidator =
+            rulesValidator
+
+        self.appPreferencesStore =
+            appPreferencesStore
+
+        self.appPreferencesController =
+            appPreferencesController
+
         self.rulesWindowAppPreferencesController =
             rulesWindowAppPreferencesController
-        self.remappingEngine = remappingEngine
-        self.eventTapManager = eventTapManager
-        self.remappingController = remappingController
-        self.globalShortcutManager = globalShortcutManager
-        self.globalShortcutController = globalShortcutController
+
+        self.remappingEngine =
+            remappingEngine
+
+        self.eventTapManager =
+            eventTapManager
+
+        self.remappingController =
+            remappingController
+
+        self.globalShortcutManager =
+            globalShortcutManager
+
+        self.globalShortcutController =
+            globalShortcutController
+
         self.homeConfigurationSaveTransaction =
             homeConfigurationSaveTransaction
+
         self.ruleEditorSessionRegistry =
             ruleEditorSessionRegistry
 
         super.init()
     }
 
-    /// Starts the application user interface and registers
-    /// the configured global shortcuts.
+    /// Starts the application user interface and registers the effective global
+    /// shortcuts belonging to the active persisted profile.
     func start() {
-        isStopping = false
+        isStopping =
+            false
 
         loadAppPreferences()
         initializeHomeConfigurationEditorSession()
@@ -200,38 +273,41 @@ final class AppCoordinator: NSObject {
         configureRemappingStateObservation()
         startObservingWorkspaceActivation()
 
-        applicationMenuController = ApplicationMenuController(
-            increaseTextSizeHandler: {
-                [weak self] in
+        applicationMenuController =
+            ApplicationMenuController(
+                increaseTextSizeHandler: {
+                    [weak self] in
 
-                self?.increaseTextSize()
-            },
-            decreaseTextSizeHandler: {
-                [weak self] in
+                    self?.increaseTextSize()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
 
-                self?.decreaseTextSize()
-            },
-            resetTextSizeHandler: {
-                [weak self] in
+                    self?.decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
 
-                self?.resetTextSize()
-            },
-            showsMenuBarIcon:
-                appPreferencesController
-                    .preferences
-                    .showsMenuBarIcon,
-            menuBarVisibilityChangeHandler: {
-                [weak self] showsMenuBarIcon in
+                    self?.resetTextSize()
+                },
+                showsMenuBarIcon:
+                    appPreferencesController
+                        .preferences
+                        .showsMenuBarIcon,
+                menuBarVisibilityChangeHandler: {
+                    [weak self] showsMenuBarIcon in
 
-                guard let self else {
-                    return
+                    guard
+                        let self
+                    else {
+                        return
+                    }
+
+                    try self.setMenuBarIconVisible(
+                        showsMenuBarIcon
+                    )
                 }
-
-                try self.setMenuBarIconVisible(
-                    showsMenuBarIcon
-                )
-            }
-        )
+            )
 
         applyMenuBarIconVisibility(
             appPreferencesController
@@ -249,8 +325,13 @@ final class AppCoordinator: NSObject {
     /// The same operation is used at launch, from the menu bar,
     /// and when the user reopens the application from the Dock.
     func showMainWindow() {
-        remappingRulesWindowController?.endActiveCapture()
-        getOrCreateMainWindowController().showWindow(nil)
+        remappingRulesWindowController?
+            .endActiveCapture()
+
+        getOrCreateMainWindowController()
+            .showWindow(
+                nil
+            )
     }
 
     /// Shows the Rules window for the currently active profile.
@@ -272,7 +353,8 @@ final class AppCoordinator: NSObject {
 
     /// Shows the one reusable Rules window for a specific profile UUID.
     func showRemappingRulesWindow(
-        for profileID: UUID
+        for profileID:
+            UUID
     ) {
         do {
             let profilesConfiguration =
@@ -290,7 +372,8 @@ final class AppCoordinator: NSObject {
     }
 
     private func showRemappingRulesWindow(
-        for profileID: UUID,
+        for profileID:
+            UUID,
         in configuration:
             RemappingProfilesConfiguration
     ) {
@@ -304,7 +387,8 @@ final class AppCoordinator: NSObject {
             return
         }
 
-        mainWindowController?.endActiveCapture()
+        mainWindowController?
+            .endActiveCapture()
 
         let ruleEditorSession =
             ruleEditorSessionRegistry
@@ -334,24 +418,35 @@ final class AppCoordinator: NSObject {
         displayedRulesProfileID =
             profileID
 
-        controller.showWindow(nil)
+        controller.showWindow(
+            nil
+        )
     }
 
     /// Checks whether Accessibility permission was granted
     /// after the application becomes active again.
     func applicationDidBecomeActive() {
-        remappingController.refreshAccessibilityPermission()
+        remappingController
+            .refreshAccessibilityPermission()
     }
 
     /// Stops active system components before
     /// the application terminates.
     func stop() {
-        isStopping = true
+        isStopping =
+            true
 
         stopObservingWorkspaceActivation()
 
+        homeProfileShortcutSheetCoordinator?
+            .stop()
+
+        homeProfileShortcutSheetCoordinator =
+            nil
+
         mainWindowController?
             .prepareForApplicationTermination()
+
         remappingRulesWindowController?
             .prepareForApplicationTermination()
 
@@ -362,13 +457,22 @@ final class AppCoordinator: NSObject {
         homeConfigurationEditorSession =
             nil
 
-        mainWindowController = nil
-        remappingRulesWindowController = nil
-        displayedRulesProfileID = nil
-        rulesWindowAppPreferencesController.profileID = nil
+        mainWindowController =
+            nil
+
+        remappingRulesWindowController =
+            nil
+
+        displayedRulesProfileID =
+            nil
+
+        rulesWindowAppPreferencesController.profileID =
+            nil
+
         rulesWindowAppPreferencesController
             .homeProfilesConfigurationProvider =
                 nil
+
         rulesWindowAppPreferencesController
             .homeShortcutConfigurationProvider =
                 nil
@@ -378,18 +482,27 @@ final class AppCoordinator: NSObject {
 
         globalShortcutController.stop()
         remappingController.disable()
-        remappingController.onStateChange = nil
 
-        statusBarController?.stop()
-        statusBarController = nil
-        applicationMenuController = nil
+        remappingController.onStateChange =
+            nil
+
+        statusBarController?
+            .stop()
+
+        statusBarController =
+            nil
+
+        applicationMenuController =
+            nil
     }
 
     private func configureRemappingStateObservation() {
         remappingController.onStateChange = {
             [weak self] state in
 
-            self?.handleRemappingStateChange(state)
+            self?.handleRemappingStateChange(
+                state
+            )
         }
     }
 
@@ -397,7 +510,9 @@ final class AppCoordinator: NSObject {
     ///
     /// This is event-driven. It does not use a repeating timer or polling.
     private func startObservingWorkspaceActivation() {
-        guard !isObservingWorkspaceActivation else {
+        guard
+            !isObservingWorkspaceActivation
+        else {
             return
         }
 
@@ -416,11 +531,14 @@ final class AppCoordinator: NSObject {
                     nil
             )
 
-        isObservingWorkspaceActivation = true
+        isObservingWorkspaceActivation =
+            true
     }
 
     private func stopObservingWorkspaceActivation() {
-        guard isObservingWorkspaceActivation else {
+        guard
+            isObservingWorkspaceActivation
+        else {
             return
         }
 
@@ -435,21 +553,27 @@ final class AppCoordinator: NSObject {
                     nil
             )
 
-        isObservingWorkspaceActivation = false
+        isObservingWorkspaceActivation =
+            false
     }
 
     @objc
     private func workspaceDidActivateApplication(
-        _ notification: Notification
+        _ notification:
+            Notification
     ) {
         remappingController
             .refreshAccessibilityPermission()
     }
 
-    private func makeStatusBarController() -> StatusBarController {
+    private func makeStatusBarController()
+        -> StatusBarController
+    {
         StatusBarController(
-            remappingController: remappingController,
-            accessibilitySettingsOpener: permissionService,
+            remappingController:
+                remappingController,
+            accessibilitySettingsOpener:
+                permissionService,
             refreshRemappingStateHandler: {
                 [weak self] in
 
@@ -480,134 +604,192 @@ final class AppCoordinator: NSObject {
     }
 
     private func setMenuBarIconVisible(
-        _ showsMenuBarIcon: Bool
+        _ showsMenuBarIcon:
+            Bool
     ) throws {
-        try appPreferencesController.setShowsMenuBarIcon(
-            showsMenuBarIcon
-        )
+        try appPreferencesController
+            .setShowsMenuBarIcon(
+                showsMenuBarIcon
+            )
+
         applyMenuBarIconVisibility(
             showsMenuBarIcon
         )
     }
 
     private func applyMenuBarIconVisibility(
-        _ showsMenuBarIcon: Bool
+        _ showsMenuBarIcon:
+            Bool
     ) {
         if showsMenuBarIcon {
             if statusBarController == nil {
-                statusBarController = makeStatusBarController()
+                statusBarController =
+                    makeStatusBarController()
             }
 
-            statusBarController?.update(
-                for: remappingController.state
-            )
+            statusBarController?
+                .update(
+                    for:
+                        remappingController.state
+                )
         } else {
-            statusBarController?.stop()
-            statusBarController = nil
+            statusBarController?
+                .stop()
+
+            statusBarController =
+                nil
         }
 
-        applicationMenuController?.updateMenuBarIconVisibility(
-            showsMenuBarIcon
-        )
-        mainWindowController?.updateMenuBarIconVisibility(
-            showsMenuBarIcon
-        )
+        applicationMenuController?
+            .updateMenuBarIconVisibility(
+                showsMenuBarIcon
+            )
+
+        mainWindowController?
+            .updateMenuBarIconVisibility(
+                showsMenuBarIcon
+            )
     }
 
-    private func getOrCreateMainWindowController() ->
-        MainWindowController
+    private func getOrCreateMainWindowController()
+        -> MainWindowController
     {
         if let mainWindowController {
             return mainWindowController
         }
 
-        let controller = MainWindowController(
-            remappingController: remappingController,
-            appPreferencesController: appPreferencesController,
-            globalShortcutController: globalShortcutController,
-            homeConfigurationEditorSession:
-                homeConfigurationEditorSession,
-            saveHomeConfigurationHandler: {
-                [weak self] in
+        let controller =
+            MainWindowController(
+                remappingController:
+                    remappingController,
+                appPreferencesController:
+                    appPreferencesController,
+                globalShortcutController:
+                    globalShortcutController,
+                homeConfigurationEditorSession:
+                    homeConfigurationEditorSession,
+                saveHomeConfigurationHandler: {
+                    [weak self] in
 
-                guard let self else {
-                    throw HomeConfigurationSaveError
-                        .editorSessionUnavailable
-                }
+                    guard
+                        let self
+                    else {
+                        throw HomeConfigurationSaveError
+                            .editorSessionUnavailable
+                    }
 
-                try self.saveHomeConfiguration()
-            },
-            profilesConfigurationProvider: {
-                [weak self] in
+                    try self.saveHomeConfiguration()
+                },
+                profilesConfigurationProvider: {
+                    [weak self] in
 
-                guard let self else {
-                    throw HomeConfigurationSaveError
-                        .editorSessionUnavailable
-                }
+                    guard
+                        let self
+                    else {
+                        throw HomeConfigurationSaveError
+                            .editorSessionUnavailable
+                    }
 
-                return try self.profilesStore
-                    .loadConfiguration()
-            },
-            menuBarVisibilityChangeHandler: {
-                [weak self] showsMenuBarIcon in
+                    return try self.profilesStore
+                        .loadConfiguration()
+                },
+                menuBarVisibilityChangeHandler: {
+                    [weak self] showsMenuBarIcon in
 
-                guard let self else {
-                    return
-                }
+                    guard
+                        let self
+                    else {
+                        return
+                    }
 
-                try self.setMenuBarIconVisible(
-                    showsMenuBarIcon
+                    try self.setMenuBarIconVisible(
+                        showsMenuBarIcon
+                    )
+                },
+                openAccessibilitySettingsHandler: {
+                    [weak self] in
+
+                    self?.permissionService
+                        .openAccessibilitySettings()
+                },
+                openRemappingRulesHandler: {
+                    [weak self] in
+
+                    self?.showRemappingRulesWindow()
+                },
+                openRemappingRulesForProfileHandler: {
+                    [weak self] profileID in
+
+                    self?.showRemappingRulesWindow(
+                        for:
+                            profileID
+                    )
+                },
+                profileNameChangeHandler: {
+                    [weak self] profile,
+                    previousName in
+
+                    self?.refreshOpenRulesWindowProfileName(
+                        profile,
+                        previousName:
+                            previousName
+                    )
+                },
+                increaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.increaseTextSize()
+                },
+                decreaseTextSizeHandler: {
+                    [weak self] in
+
+                    self?.decreaseTextSize()
+                },
+                resetTextSizeHandler: {
+                    [weak self] in
+
+                    self?.resetTextSize()
+                },
+                textScale:
+                    InterfaceTextScalePreference
+                        .currentScale
+            )
+
+        mainWindowController =
+            controller
+
+        if let homeConfigurationEditorSession {
+            let profileShortcutCoordinator =
+                HomeProfileShortcutSheetCoordinator(
+                    mainWindowController:
+                        controller,
+                    remappingController:
+                        remappingController,
+                    globalShortcutController:
+                        globalShortcutController,
+                    homeConfigurationEditorSession:
+                        homeConfigurationEditorSession,
+                    profilesConfigurationProvider: {
+                        [weak self] in
+
+                        guard
+                            let self
+                        else {
+                            throw HomeConfigurationSaveError
+                                .editorSessionUnavailable
+                        }
+
+                        return try self.profilesStore
+                            .loadConfiguration()
+                    }
                 )
-            },
-            openAccessibilitySettingsHandler: {
-                [weak self] in
 
-                self?.permissionService
-                    .openAccessibilitySettings()
-            },
-            openRemappingRulesHandler: {
-                [weak self] in
+            profileShortcutCoordinator.start()
 
-                self?.showRemappingRulesWindow()
-            },
-            openRemappingRulesForProfileHandler: {
-                [weak self] profileID in
+            homeProfileShortcutSheetCoordinator =
+                profileShortcutCoordinator
+        }
 
-                self?.showRemappingRulesWindow(
-                    for:
-                        profileID
-                )
-            },
-            profileNameChangeHandler: {
-                [weak self] profile,
-                previousName in
-
-                self?.refreshOpenRulesWindowProfileName(
-                    profile,
-                    previousName:
-                        previousName
-                )
-            },
-            increaseTextSizeHandler: {
-                [weak self] in
-
-                self?.increaseTextSize()
-            },
-            decreaseTextSizeHandler: {
-                [weak self] in
-
-                self?.decreaseTextSize()
-            },
-            resetTextSizeHandler: {
-                [weak self] in
-
-                self?.resetTextSize()
-            },
-            textScale:
-                InterfaceTextScalePreference.currentScale
-        )
-
-        mainWindowController = controller
         return controller
     }
 
@@ -617,7 +799,8 @@ final class AppCoordinator: NSObject {
         previousName:
             String
     ) {
-        _ = previousName
+        _ =
+            previousName
 
         guard
             let remappingRulesWindowController,
@@ -643,8 +826,10 @@ final class AppCoordinator: NSObject {
     }
 
     private func getOrCreateRemappingRulesWindowController(
-        profile: RemappingProfile,
-        ruleEditorSession: RemappingRuleEditorSession
+        profile:
+            RemappingProfile,
+        ruleEditorSession:
+            RemappingRuleEditorSession
     ) -> RemappingRulesWindowController {
         if let remappingRulesWindowController {
             remappingRulesWindowController.bind(
@@ -687,7 +872,8 @@ final class AppCoordinator: NSObject {
                     self?.resetTextSize()
                 },
                 textScale:
-                    InterfaceTextScalePreference.currentScale
+                    InterfaceTextScalePreference
+                        .currentScale
             )
 
         remappingRulesWindowController =
@@ -698,10 +884,10 @@ final class AppCoordinator: NSObject {
 
     /// Connects Rules-related validation to the latest Home draft.
     ///
-    /// Rules and Custom Exceptions therefore evaluate the profile currently
-    /// proposed as active against the shortcut configuration currently proposed
-    /// in Home, even before Home Save. Inactive draft profiles continue to see
-    /// shortcuts as disabled.
+    /// Rules and Custom Exceptions evaluate the profile currently proposed as
+    /// active against its effective draft shortcut configuration. This includes
+    /// the proposed Default and the profile's optional override. Inactive draft
+    /// profiles continue to see shortcuts as disabled.
     private func configureRulesWindowShortcutScope() {
         rulesWindowAppPreferencesController
             .homeProfilesConfigurationProvider = {
@@ -748,7 +934,8 @@ final class AppCoordinator: NSObject {
                             launchBehavior:
                                 preferences.launchBehavior,
                             shortcutConfiguration:
-                                preferences.shortcutConfiguration
+                                preferences
+                                    .shortcutConfiguration
                         )
                 )
         } catch {
@@ -765,7 +952,9 @@ final class AppCoordinator: NSObject {
     /// Profile metadata is merged with the latest independently saved Rules
     /// content before persistence. Runtime rules and committed-deletion cleanup
     /// happen only after every storage and shortcut-registration step succeeds.
-    private func saveHomeConfiguration() throws {
+    private func saveHomeConfiguration()
+        throws
+    {
         guard
             let homeConfigurationEditorSession
         else {
@@ -798,7 +987,9 @@ final class AppCoordinator: NSObject {
                 )
         }
 
-        if result.shortcutConfigurationChanged {
+        if result.shortcutConfigurationChanged
+            || result.effectiveShortcutConfigurationChanged
+        {
             NotificationCenter.default.post(
                 name:
                     AppConfigurationNotification
@@ -845,8 +1036,8 @@ final class AppCoordinator: NSObject {
     ///
     /// The storage fallback preserves Rules-window behavior in tests and in
     /// defensive call paths that open Rules before the normal start sequence.
-    private func currentHomeProfilesConfiguration() throws
-        -> RemappingProfilesConfiguration
+    private func currentHomeProfilesConfiguration()
+        throws -> RemappingProfilesConfiguration
     {
         if let homeConfigurationEditorSession {
             return homeConfigurationEditorSession
@@ -860,7 +1051,8 @@ final class AppCoordinator: NSObject {
 
     private func loadAppPreferences() {
         do {
-            try appPreferencesController.loadPreferences()
+            try appPreferencesController
+                .loadPreferences()
         } catch {
             // Safe in-memory defaults remain active.
         }
@@ -868,19 +1060,23 @@ final class AppCoordinator: NSObject {
 
     private func startGlobalShortcuts() {
         do {
-            try globalShortcutController.start()
+            try globalShortcutController
+                .start()
         } catch {
-            // A shortcut conflict, invalid configuration, or registration
-            // failure must not prevent the application from launching.
+            // A shortcut conflict, invalid configuration, profile-loading
+            // failure, or registration failure must not prevent the application
+            // from launching.
             //
             // No keyboard input or error details are logged.
         }
     }
 
     private func enableRemappingAtLaunchIfRequested() {
-        guard appPreferencesController
-            .preferences
-            .shouldEnableRemappingAtLaunch else {
+        guard
+            appPreferencesController
+                .preferences
+                .shouldEnableRemappingAtLaunch
+        else {
             return
         }
 
@@ -888,27 +1084,37 @@ final class AppCoordinator: NSObject {
     }
 
     private func handleRemappingStateChange(
-        _ state: RemappingState
+        _ state:
+            RemappingState
     ) {
-        guard !isStopping else {
+        guard
+            !isStopping
+        else {
             return
         }
 
-        statusBarController?.update(
-            for: state
-        )
-        mainWindowController?.updateRemappingState(
-            state
-        )
+        statusBarController?
+            .update(
+                for:
+                    state
+            )
 
-        let isEnabled: Bool
+        mainWindowController?
+            .updateRemappingState(
+                state
+            )
+
+        let isEnabled:
+            Bool
 
         switch state {
         case .enabled:
-            isEnabled = true
+            isEnabled =
+                true
 
         case .disabled:
-            isEnabled = false
+            isEnabled =
+                false
 
         case .enabling,
              .permissionRequired,
@@ -917,9 +1123,10 @@ final class AppCoordinator: NSObject {
         }
 
         do {
-            try appPreferencesController.setLastRemappingEnabled(
-                isEnabled
-            )
+            try appPreferencesController
+                .setLastRemappingEnabled(
+                    isEnabled
+                )
         } catch {
             // A preference write failure must not interrupt remapping.
         }
@@ -927,32 +1134,48 @@ final class AppCoordinator: NSObject {
 
     private func increaseTextSize() {
         ensureAnApplicationWindowIsVisible()
+
         applyTextScaleToExistingWindows(
-            InterfaceTextScalePreference.increase()
+            InterfaceTextScalePreference
+                .increase()
         )
     }
 
     private func decreaseTextSize() {
         ensureAnApplicationWindowIsVisible()
+
         applyTextScaleToExistingWindows(
-            InterfaceTextScalePreference.decrease()
+            InterfaceTextScalePreference
+                .decrease()
         )
     }
 
     private func resetTextSize() {
         ensureAnApplicationWindowIsVisible()
+
         applyTextScaleToExistingWindows(
-            InterfaceTextScalePreference.reset()
+            InterfaceTextScalePreference
+                .reset()
         )
     }
 
     private func ensureAnApplicationWindowIsVisible() {
         let mainIsVisible =
-            mainWindowController?.window?.isVisible == true
-        let rulesAreVisible =
-            remappingRulesWindowController?.window?.isVisible == true
+            mainWindowController?
+                .window?
+                .isVisible
+                == true
 
-        guard !mainIsVisible && !rulesAreVisible else {
+        let rulesAreVisible =
+            remappingRulesWindowController?
+                .window?
+                .isVisible
+                == true
+
+        guard
+            !mainIsVisible,
+            !rulesAreVisible
+        else {
             return
         }
 
@@ -960,13 +1183,22 @@ final class AppCoordinator: NSObject {
     }
 
     private func applyTextScaleToExistingWindows(
-        _ scale: CGFloat
+        _ scale:
+            CGFloat
     ) {
-        mainWindowController?.applyTextScale(
-            scale
-        )
-        remappingRulesWindowController?.applyTextScale(
-            scale
-        )
+        mainWindowController?
+            .applyTextScale(
+                scale
+            )
+
+        homeProfileShortcutSheetCoordinator?
+            .applyTextScale(
+                scale
+            )
+
+        remappingRulesWindowController?
+            .applyTextScale(
+                scale
+            )
     }
 }

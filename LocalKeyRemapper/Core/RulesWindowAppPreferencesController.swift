@@ -12,9 +12,8 @@ import Foundation
 /// current Home draft.
 ///
 /// The Home draft is authoritative for editor-time validation because it may
-/// contain a proposed active profile or a proposed shortcut configuration that
-/// has not been committed yet. This lets Rules and Custom Exceptions reject a
-/// conflict before Home Save is attempted.
+/// contain a proposed active profile, proposed default shortcut configuration,
+/// or proposed profile-specific override that has not been committed yet.
 ///
 /// Profiles that are inactive in the Home draft still expose every normal
 /// application preference, but their shortcut configuration is presented as
@@ -42,7 +41,8 @@ final class RulesWindowAppPreferencesController:
     var homeProfilesConfigurationProvider:
         (() -> RemappingProfilesConfiguration?)?
 
-    /// Supplies the latest Home-draft shortcut configuration when Home exists.
+    /// Supplies the latest Home-draft default shortcut configuration when Home
+    /// exists.
     ///
     /// Returning nil falls back to the locally stored application preference.
     var homeShortcutConfigurationProvider:
@@ -81,6 +81,11 @@ final class RulesWindowAppPreferencesController:
         guard
             let profileID,
             let profilesConfiguration,
+            let displayedProfile =
+                profilesConfiguration.profile(
+                    id:
+                        profileID
+                ),
             profilesConfiguration.activeProfileID
                 == profileID
         else {
@@ -90,11 +95,20 @@ final class RulesWindowAppPreferencesController:
             return scopedPreferences
         }
 
-        scopedPreferences.shortcutConfiguration =
+        let defaultConfiguration =
             homeShortcutConfigurationProvider?()
             ?? baseController
                 .preferences
                 .shortcutConfiguration
+
+        scopedPreferences.shortcutConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        displayedProfile,
+                    defaultConfiguration:
+                        defaultConfiguration
+                )
 
         return scopedPreferences
     }

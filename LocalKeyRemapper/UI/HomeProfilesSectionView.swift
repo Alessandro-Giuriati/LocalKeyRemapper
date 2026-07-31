@@ -12,7 +12,8 @@ import AppKit
 private final class ProfileIDButton:
     NSButton
 {
-    var profileID: UUID?
+    var profileID:
+        UUID?
 }
 
 /// Displays and edits the presentation-facing Home profiles section.
@@ -31,6 +32,13 @@ final class HomeProfilesSectionView:
     var onOpenProfile:
         ((UUID) -> Void)?
 
+    /// Requests presentation of the profile shortcut editor.
+    ///
+    /// The section supplies only the stable profile UUID. It does not create
+    /// the sheet, capture keyboard input, or modify the Home draft directly.
+    var onEditShortcut:
+        ((UUID) -> Void)?
+
     var onStatusChange:
         ((String, Bool) -> Void)?
 
@@ -46,6 +54,11 @@ final class HomeProfilesSectionView:
         static let rules =
             NSUserInterfaceItemIdentifier(
                 "home.profiles.rules"
+            )
+
+        static let shortcut =
+            NSUserInterfaceItemIdentifier(
+                "home.profiles.shortcut"
             )
 
         static let created =
@@ -98,7 +111,7 @@ final class HomeProfilesSectionView:
     private let descriptionLabel =
         NSTextField(
             wrappingLabelWithString:
-                "Create independent remapping configurations and choose which profile will become active after Home Save."
+                "Create independent remapping configurations, choose their shortcuts, and select which profile will become active after Home Save."
         )
 
     private let searchField =
@@ -162,10 +175,12 @@ final class HomeProfilesSectionView:
 
         dateFormatter.dateStyle =
             .medium
+
         dateFormatter.timeStyle =
             .none
 
         configureContent()
+
         load(
             configuration:
                 initialConfiguration
@@ -284,11 +299,14 @@ final class HomeProfilesSectionView:
                 36 * scale
             )
 
-        tableView.headerView?.frame.size.height =
-            max(
-                24,
-                25 * scale
-            )
+        tableView.headerView?
+            .frame
+            .size
+            .height =
+                max(
+                    24,
+                    25 * scale
+                )
 
         titleStack.spacing =
             InterfaceLayoutMetrics.scaled(
@@ -397,6 +415,12 @@ final class HomeProfilesSectionView:
                     profile
             )
 
+        case Column.shortcut:
+            return makeShortcutCell(
+                for:
+                    profile
+            )
+
         case Column.created:
             return makeCreatedCell(
                 for:
@@ -428,6 +452,7 @@ final class HomeProfilesSectionView:
         else {
             selectedProfileID =
                 nil
+
             return
         }
 
@@ -465,6 +490,12 @@ final class HomeProfilesSectionView:
         )
     }
 
+    var selectedProfileIDForTesting:
+        UUID?
+    {
+        selectedProfileID
+    }
+
     var visibleRowCapacityForTesting:
         Int
     {
@@ -480,7 +511,18 @@ final class HomeProfilesSectionView:
     var usesVerticalScrollingForTesting:
         Bool
     {
-        tableScrollView.hasVerticalScroller
+        tableScrollView
+            .hasVerticalScroller
+    }
+
+    var columnIdentifiersForTesting:
+        [String]
+    {
+        tableView
+            .tableColumns
+            .map {
+                $0.identifier.rawValue
+            }
     }
 
     func setSearchTextForTesting(
@@ -489,8 +531,10 @@ final class HomeProfilesSectionView:
     ) {
         searchField.stringValue =
             searchText
+
         presentationModel.searchText =
             searchText
+
         reloadPresentation()
     }
 
@@ -501,6 +545,7 @@ final class HomeProfilesSectionView:
         presentationModel.toggleSort(
             sortKey
         )
+
         reloadPresentation()
     }
 
@@ -524,6 +569,71 @@ final class HomeProfilesSectionView:
         )
     }
 
+    func editShortcutForVisibleProfileForTesting(
+        at index:
+            Int
+    ) {
+        guard
+            editorSession != nil,
+            visibleProfiles.indices.contains(
+                index
+            )
+        else {
+            return
+        }
+
+        onEditShortcut?(
+            visibleProfiles[
+                index
+            ]
+            .id
+        )
+    }
+
+    func duplicateVisibleProfileForTesting(
+        at index:
+            Int
+    ) {
+        guard
+            editorSession != nil,
+            visibleProfiles.indices.contains(
+                index
+            )
+        else {
+            return
+        }
+
+        duplicateProfile(
+            id:
+                visibleProfiles[
+                    index
+                ]
+                .id
+        )
+    }
+
+    func shortcutTitleForVisibleProfileForTesting(
+        at index:
+            Int
+    ) -> String? {
+        guard
+            visibleProfiles.indices.contains(
+                index
+            )
+        else {
+            return nil
+        }
+
+        return ProfileShortcutConfigurationPresentation
+            .tableTitle(
+                for:
+                    visibleProfiles[
+                        index
+                    ]
+                    .shortcutConfigurationOverride
+            )
+    }
+
     private func configureContent() {
         wantsLayer =
             true
@@ -536,6 +646,7 @@ final class HomeProfilesSectionView:
 
         addButton.title =
             ""
+
         addButton.image =
             NSImage(
                 systemSymbolName:
@@ -543,23 +654,31 @@ final class HomeProfilesSectionView:
                 accessibilityDescription:
                     "Add profile"
             )
+
         addButton.imagePosition =
             .imageOnly
+
         addButton.bezelStyle =
             .rounded
+
         addButton.target =
             self
+
         addButton.action =
             #selector(
                 addProfile
             )
+
         addButton.toolTip =
             "Add a new empty remapping profile."
+
         addButton.setAccessibilityLabel(
             "Add profile"
         )
+
         addButton.isEnabled =
             editorSession != nil
+
         addButton.setContentHuggingPriority(
             .required,
             for:
@@ -574,8 +693,10 @@ final class HomeProfilesSectionView:
             in:
                 .leading
         )
+
         titleStack.orientation =
             .horizontal
+
         titleStack.alignment =
             .centerY
 
@@ -584,12 +705,16 @@ final class HomeProfilesSectionView:
 
         searchField.placeholderString =
             "Search profiles"
+
         searchField.delegate =
             self
+
         searchField.sendsSearchStringImmediately =
             true
+
         searchField.sendsWholeSearchString =
             false
+
         searchField.setAccessibilityLabel(
             "Search profiles"
         )
@@ -629,10 +754,13 @@ final class HomeProfilesSectionView:
             in:
                 .leading
         )
+
         searchAndSortStack.orientation =
             .horizontal
+
         searchAndSortStack.alignment =
             .centerY
+
         searchAndSortStack.distribution =
             .fill
 
@@ -648,10 +776,13 @@ final class HomeProfilesSectionView:
             in:
                 .leading
         )
+
         contentStack.orientation =
             .vertical
+
         contentStack.alignment =
             .leading
+
         contentStack.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -665,30 +796,37 @@ final class HomeProfilesSectionView:
                     equalTo:
                         topAnchor
                 ),
+
                 contentStack.leadingAnchor.constraint(
                     equalTo:
                         leadingAnchor
                 ),
+
                 contentStack.trailingAnchor.constraint(
                     equalTo:
                         trailingAnchor
                 ),
+
                 contentStack.bottomAnchor.constraint(
                     equalTo:
                         bottomAnchor
                 ),
+
                 titleStack.widthAnchor.constraint(
                     lessThanOrEqualTo:
                         contentStack.widthAnchor
                 ),
+
                 descriptionLabel.widthAnchor.constraint(
                     equalTo:
                         contentStack.widthAnchor
                 ),
+
                 searchAndSortStack.widthAnchor.constraint(
                     equalTo:
                         contentStack.widthAnchor
                 ),
+
                 tableScrollView.widthAnchor.constraint(
                     equalTo:
                         contentStack.widthAnchor
@@ -711,13 +849,17 @@ final class HomeProfilesSectionView:
     ) {
         button.bezelStyle =
             .rounded
+
         button.target =
             self
+
         button.action =
             action
+
         button.setAccessibilityLabel(
             accessibilityLabel
         )
+
         button.setContentHuggingPriority(
             .required,
             for:
@@ -728,22 +870,31 @@ final class HomeProfilesSectionView:
     private func configureTable() {
         tableView.usesAlternatingRowBackgroundColors =
             true
+
         tableView.allowsMultipleSelection =
             false
+
         tableView.allowsEmptySelection =
             true
+
         tableView.allowsColumnReordering =
             false
+
         tableView.allowsColumnResizing =
             true
+
         tableView.columnAutoresizingStyle =
             .lastColumnOnlyAutoresizingStyle
+
         tableView.delegate =
             self
+
         tableView.dataSource =
             self
+
         tableView.target =
             self
+
         tableView.doubleAction =
             #selector(
                 openSelectedProfile
@@ -754,81 +905,123 @@ final class HomeProfilesSectionView:
                 identifier:
                     Column.profile
             )
+
         profileColumn.title =
             "Profile"
+
         profileColumn.minWidth =
-            210
+            155
+
         profileColumn.width =
-            270
+            210
 
         let rulesColumn =
             NSTableColumn(
                 identifier:
                     Column.rules
             )
+
         rulesColumn.title =
             "Rules"
+
         rulesColumn.minWidth =
-            60
+            48
+
         rulesColumn.width =
-            70
+            60
+
+        let shortcutColumn =
+            NSTableColumn(
+                identifier:
+                    Column.shortcut
+            )
+
+        shortcutColumn.title =
+            "Shortcut"
+
+        shortcutColumn.minWidth =
+            135
+
+        shortcutColumn.width =
+            165
 
         let createdColumn =
             NSTableColumn(
                 identifier:
                     Column.created
             )
+
         createdColumn.title =
             "Created"
+
         createdColumn.minWidth =
-            105
+            90
+
         createdColumn.width =
-            125
+            110
 
         let actionsColumn =
             NSTableColumn(
                 identifier:
                     Column.actions
             )
+
         actionsColumn.title =
             "Actions"
+
         actionsColumn.minWidth =
-            190
+            185
+
         actionsColumn.width =
-            210
+            205
 
         tableView.addTableColumn(
             profileColumn
         )
+
         tableView.addTableColumn(
             rulesColumn
         )
+
+        tableView.addTableColumn(
+            shortcutColumn
+        )
+
         tableView.addTableColumn(
             createdColumn
         )
+
         tableView.addTableColumn(
             actionsColumn
         )
 
         tableScrollView.borderType =
             .bezelBorder
+
         tableScrollView.drawsBackground =
             true
+
         tableScrollView.hasHorizontalScroller =
             false
+
         tableScrollView.autohidesScrollers =
             true
+
         tableScrollView.documentView =
             tableView
+
         tableScrollView.translatesAutoresizingMaskIntoConstraints =
             false
 
         emptyResultsLabel.textColor =
             .secondaryLabelColor
+
         emptyResultsLabel.alignment =
             .center
+
         emptyResultsLabel.isHidden =
             true
+
         emptyResultsLabel.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -842,18 +1035,21 @@ final class HomeProfilesSectionView:
                     equalTo:
                         tableScrollView.centerXAnchor
                 ),
+
                 emptyResultsLabel.centerYAnchor.constraint(
                     equalTo:
                         tableScrollView.centerYAnchor,
                     constant:
                         10
                 ),
+
                 emptyResultsLabel.leadingAnchor.constraint(
                     greaterThanOrEqualTo:
                         tableScrollView.leadingAnchor,
                     constant:
                         12
                 ),
+
                 emptyResultsLabel.trailingAnchor.constraint(
                     lessThanOrEqualTo:
                         tableScrollView.trailingAnchor,
@@ -895,13 +1091,15 @@ final class HomeProfilesSectionView:
             let visibleIndex =
                 visibleProfiles.firstIndex(
                     where: {
-                        $0.id == selectedProfileID
+                        $0.id
+                            == selectedProfileID
                     }
                 )
         else {
             tableView.deselectAll(
                 nil
             )
+
             return
         }
 
@@ -931,15 +1129,16 @@ final class HomeProfilesSectionView:
                 .height
                 ?? 25
 
-        tableHeightConstraint?.constant =
-            ceil(
-                headerHeight
-                    + CGFloat(
-                        visibleRowCapacity
-                    )
-                    * tableView.rowHeight
-                    + 3
-            )
+        tableHeightConstraint?
+            .constant =
+                ceil(
+                    headerHeight
+                        + CGFloat(
+                            visibleRowCapacity
+                        )
+                        * tableView.rowHeight
+                        + 3
+                )
 
         tableScrollView.hasVerticalScroller =
             visibleProfiles.count > 4
@@ -974,7 +1173,10 @@ final class HomeProfilesSectionView:
         key:
             HomeProfilesPresentationModel.SortKey
     ) -> String {
-        guard presentationModel.sortKey == key else {
+        guard
+            presentationModel.sortKey
+                == key
+        else {
             return baseTitle
         }
 
@@ -1005,17 +1207,22 @@ final class HomeProfilesSectionView:
                         activeProfileChanged
                     )
             )
+
         activeButton.profileID =
             profile.id
+
         activeButton.state =
             configuration.activeProfileID
                 == profile.id
                     ? .on
                     : .off
+
         activeButton.isEnabled =
             editorSession != nil
+
         activeButton.toolTip =
             "Set “\(profile.name)” as the active profile after Home Save."
+
         activeButton.setAccessibilityLabel(
             "Set “\(profile.name)” as active profile"
         )
@@ -1025,6 +1232,7 @@ final class HomeProfilesSectionView:
                 labelWithString:
                     profile.name
             )
+
         nameLabel.font =
             NSFont.systemFont(
                 ofSize:
@@ -1032,8 +1240,10 @@ final class HomeProfilesSectionView:
                 weight:
                     .regular
             )
+
         nameLabel.lineBreakMode =
             .byTruncatingTail
+
         nameLabel.toolTip =
             profile.name
 
@@ -1045,6 +1255,7 @@ final class HomeProfilesSectionView:
                             ? "Active"
                             : ""
             )
+
         activeLabel.font =
             NSFont.systemFont(
                 ofSize:
@@ -1052,8 +1263,10 @@ final class HomeProfilesSectionView:
                 weight:
                     .semibold
             )
+
         activeLabel.textColor =
             .secondaryLabelColor
+
         activeLabel.setContentHuggingPriority(
             .required,
             for:
@@ -1068,12 +1281,16 @@ final class HomeProfilesSectionView:
                     activeLabel
                 ]
             )
+
         stack.orientation =
             .horizontal
+
         stack.alignment =
             .centerY
+
         stack.spacing =
             6
+
         stack.translatesAutoresizingMaskIntoConstraints =
             false
 
@@ -1089,12 +1306,14 @@ final class HomeProfilesSectionView:
                     constant:
                         6
                 ),
+
                 stack.trailingAnchor.constraint(
                     equalTo:
                         cell.trailingAnchor,
                     constant:
                         -6
                 ),
+
                 stack.centerYAnchor.constraint(
                     equalTo:
                         cell.centerYAnchor
@@ -1122,8 +1341,10 @@ final class HomeProfilesSectionView:
                         ruleCount
                     )
             )
+
         label.alignment =
             .center
+
         label.font =
             NSFont.systemFont(
                 ofSize:
@@ -1138,6 +1359,139 @@ final class HomeProfilesSectionView:
         )
     }
 
+    private func makeShortcutCell(
+        for profile:
+            RemappingProfile
+    ) -> NSView {
+        let summary =
+            ProfileShortcutConfigurationPresentation
+                .tableTitle(
+                    for:
+                        profile
+                            .shortcutConfigurationOverride
+                )
+
+        let summaryLabel =
+            NSTextField(
+                labelWithString:
+                    summary
+            )
+
+        summaryLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    12 * textScale,
+                weight:
+                    .regular
+            )
+
+        summaryLabel.lineBreakMode =
+            .byTruncatingTail
+
+        summaryLabel.toolTip =
+            shortcutToolTip(
+                for:
+                    profile
+            )
+
+        summaryLabel.setContentCompressionResistancePriority(
+            .defaultLow,
+            for:
+                .horizontal
+        )
+
+        let editButton =
+            actionButton(
+                title:
+                    "Edit…",
+                systemImageName:
+                    "keyboard",
+                accessibilityLabel:
+                    "Edit shortcut for “\(profile.name)”",
+                toolTip:
+                    "Edit the shortcut configuration for “\(profile.name)”.",
+                selector:
+                    #selector(
+                        editProfileShortcut
+                    ),
+                profileID:
+                    profile.id
+            )
+
+        editButton.isEnabled =
+            editorSession != nil
+
+        let stack =
+            NSStackView(
+                views: [
+                    summaryLabel,
+                    editButton
+                ]
+            )
+
+        stack.orientation =
+            .horizontal
+
+        stack.alignment =
+            .centerY
+
+        stack.spacing =
+            6
+
+        stack.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        let cell =
+            NSTableCellView()
+
+        cell.addSubview(
+            stack
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                stack.leadingAnchor.constraint(
+                    equalTo:
+                        cell.leadingAnchor,
+                    constant:
+                        5
+                ),
+
+                stack.trailingAnchor.constraint(
+                    equalTo:
+                        cell.trailingAnchor,
+                    constant:
+                        -5
+                ),
+
+                stack.centerYAnchor.constraint(
+                    equalTo:
+                        cell.centerYAnchor
+                )
+            ]
+        )
+
+        return cell
+    }
+
+    private func shortcutToolTip(
+        for profile:
+            RemappingProfile
+    ) -> String {
+        guard
+            let override =
+                profile
+                    .shortcutConfigurationOverride
+        else {
+            return "Uses Default Global Shortcuts."
+        }
+
+        return ProfileShortcutConfigurationPresentation
+            .configurationTitle(
+                override
+            )
+    }
+
     private func makeCreatedCell(
         for profile:
             RemappingProfile
@@ -1150,8 +1504,10 @@ final class HomeProfilesSectionView:
                             profile.createdAt
                     )
             )
+
         label.alignment =
             .center
+
         label.font =
             NSFont.systemFont(
                 ofSize:
@@ -1159,6 +1515,7 @@ final class HomeProfilesSectionView:
                 weight:
                     .regular
             )
+
         label.textColor =
             .secondaryLabelColor
 
@@ -1207,7 +1564,32 @@ final class HomeProfilesSectionView:
                 profileID:
                     profile.id
             )
+
         renameButton.isEnabled =
+            editorSession != nil
+
+        let duplicateButton =
+            actionButton(
+                title:
+                    "",
+                systemImageName:
+                    "doc.on.doc",
+                accessibilityLabel:
+                    "Duplicate “\(profile.name)”",
+                toolTip:
+                    "Duplicate “\(profile.name)” with its rules, exceptions, and shortcut settings.",
+                selector:
+                    #selector(
+                        duplicateProfileButtonPressed
+                    ),
+                profileID:
+                    profile.id
+            )
+
+        duplicateButton.imagePosition =
+            .imageOnly
+
+        duplicateButton.isEnabled =
             editorSession != nil
 
         let deleteButton =
@@ -1230,10 +1612,13 @@ final class HomeProfilesSectionView:
                 profileID:
                     profile.id
             )
+
         deleteButton.imagePosition =
             .imageOnly
+
         deleteButton.contentTintColor =
             .systemRed
+
         deleteButton.isEnabled =
             canDelete(
                 profile
@@ -1244,20 +1629,26 @@ final class HomeProfilesSectionView:
                 views: [
                     openButton,
                     renameButton,
+                    duplicateButton,
                     deleteButton
                 ]
             )
+
         stack.orientation =
             .horizontal
+
         stack.alignment =
             .centerY
+
         stack.spacing =
             5
+
         stack.translatesAutoresizingMaskIntoConstraints =
             false
 
         let cell =
             NSTableCellView()
+
         cell.addSubview(
             stack
         )
@@ -1268,16 +1659,19 @@ final class HomeProfilesSectionView:
                     equalTo:
                         cell.centerXAnchor
                 ),
+
                 stack.centerYAnchor.constraint(
                     equalTo:
                         cell.centerYAnchor
                 ),
+
                 stack.leadingAnchor.constraint(
                     greaterThanOrEqualTo:
                         cell.leadingAnchor,
                     constant:
                         4
                 ),
+
                 stack.trailingAnchor.constraint(
                     lessThanOrEqualTo:
                         cell.trailingAnchor,
@@ -1299,6 +1693,7 @@ final class HomeProfilesSectionView:
 
         view.translatesAutoresizingMaskIntoConstraints =
             false
+
         cell.addSubview(
             view
         )
@@ -1311,12 +1706,14 @@ final class HomeProfilesSectionView:
                     constant:
                         4
                 ),
+
                 view.trailingAnchor.constraint(
                     equalTo:
                         cell.trailingAnchor,
                     constant:
                         -4
                 ),
+
                 view.centerYAnchor.constraint(
                     equalTo:
                         cell.centerYAnchor
@@ -1343,10 +1740,13 @@ final class HomeProfilesSectionView:
     ) -> ProfileIDButton {
         let button =
             ProfileIDButton()
+
         button.profileID =
             profileID
+
         button.title =
             title
+
         button.image =
             NSImage(
                 systemSymbolName:
@@ -1354,23 +1754,31 @@ final class HomeProfilesSectionView:
                 accessibilityDescription:
                     accessibilityLabel
             )
+
         button.imagePosition =
             title.isEmpty
                 ? .imageOnly
                 : .imageLeading
+
         button.bezelStyle =
             .rounded
+
         button.controlSize =
             .small
+
         button.target =
             self
+
         button.action =
             selector
+
         button.toolTip =
             toolTip
+
         button.setAccessibilityLabel(
             accessibilityLabel
         )
+
         button.setContentHuggingPriority(
             .required,
             for:
@@ -1394,15 +1802,20 @@ final class HomeProfilesSectionView:
         for profile:
             RemappingProfile
     ) -> String {
-        guard editorSession != nil else {
+        guard
+            editorSession != nil
+        else {
             return "Profile editing is unavailable."
         }
 
-        guard configuration.profiles.count > 1 else {
+        guard
+            configuration.profiles.count > 1
+        else {
             return "The final remaining profile cannot be deleted."
         }
 
-        guard configuration.activeProfileID
+        guard
+            configuration.activeProfileID
                 != profile.id
         else {
             return "Select another active profile before deleting this profile."
@@ -1413,7 +1826,9 @@ final class HomeProfilesSectionView:
 
     @objc
     private func addProfile() {
-        guard let editorSession else {
+        guard
+            let editorSession
+        else {
             return
         }
 
@@ -1424,6 +1839,7 @@ final class HomeProfilesSectionView:
 
             selectedProfileID =
                 profile.id
+
             reloadPresentation()
 
             onStatusChange?(
@@ -1443,6 +1859,7 @@ final class HomeProfilesSectionView:
         presentationModel.toggleSort(
             .name
         )
+
         reloadPresentation()
     }
 
@@ -1451,6 +1868,7 @@ final class HomeProfilesSectionView:
         presentationModel.toggleSort(
             .creationDate
         )
+
         reloadPresentation()
     }
 
@@ -1482,13 +1900,98 @@ final class HomeProfilesSectionView:
         _ sender:
             ProfileIDButton
     ) {
-        guard let profileID = sender.profileID else {
+        guard
+            let profileID =
+                sender.profileID
+        else {
             return
         }
 
         onOpenProfile?(
             profileID
         )
+    }
+
+    @objc
+    private func editProfileShortcut(
+        _ sender:
+            ProfileIDButton
+    ) {
+        guard
+            editorSession != nil,
+            let profileID =
+                sender.profileID,
+            configuration.profile(
+                id:
+                    profileID
+            ) != nil
+        else {
+            return
+        }
+
+        onEditShortcut?(
+            profileID
+        )
+    }
+
+    @objc
+    private func duplicateProfileButtonPressed(
+        _ sender:
+            ProfileIDButton
+    ) {
+        guard
+            let profileID =
+                sender.profileID
+        else {
+            return
+        }
+
+        duplicateProfile(
+            id:
+                profileID
+        )
+    }
+
+    private func duplicateProfile(
+        id profileID:
+            UUID
+    ) {
+        guard
+            let editorSession,
+            let sourceProfile =
+                configuration.profile(
+                    id:
+                        profileID
+                )
+        else {
+            return
+        }
+
+        do {
+            let duplicate =
+                try editorSession
+                    .duplicateProfile(
+                        id:
+                            profileID
+                    )
+
+            selectedProfileID =
+                duplicate.id
+
+            reloadPresentation()
+
+            onStatusChange?(
+                "“\(duplicate.name)” was duplicated from “\(sourceProfile.name)” in the Home draft.",
+                false
+            )
+        } catch {
+            reloadPresentation()
+
+            onStatusChange?(
+                "The profile could not be duplicated.",
+                true
+            )
+        }
     }
 
     @objc
@@ -1524,6 +2027,7 @@ final class HomeProfilesSectionView:
             }
         } catch {
             reloadPresentation()
+
             onStatusChange?(
                 "The active profile could not be changed.",
                 true
@@ -1558,22 +2062,29 @@ final class HomeProfilesSectionView:
         for profile:
             RemappingProfile
     ) {
-        guard let editorSession else {
+        guard
+            let editorSession
+        else {
             return
         }
 
         let alert =
             NSAlert()
+
         alert.messageText =
             "Rename “\(profile.name)”"
+
         alert.informativeText =
             "Profile names must be non-empty and unique. Name comparison is case-sensitive."
+
         alert.alertStyle =
             .informational
+
         alert.addButton(
             withTitle:
                 "Rename"
         )
+
         alert.addButton(
             withTitle:
                 "Cancel"
@@ -1584,6 +2095,7 @@ final class HomeProfilesSectionView:
                 string:
                     profile.name
             )
+
         nameField.frame =
             NSRect(
                 x:
@@ -1595,9 +2107,11 @@ final class HomeProfilesSectionView:
                 height:
                     24
             )
+
         nameField.setAccessibilityLabel(
             "Profile name"
         )
+
         alert.accessoryView =
             nameField
 
@@ -1605,7 +2119,8 @@ final class HomeProfilesSectionView:
             let response =
                 alert.runModal()
 
-            guard response
+            guard
+                response
                     == .alertFirstButtonReturn
             else {
                 return
@@ -1639,6 +2154,7 @@ final class HomeProfilesSectionView:
                         for:
                             error
                     )
+
                 nameField.selectText(
                     nil
                 )
@@ -1667,7 +2183,8 @@ final class HomeProfilesSectionView:
                     .profiles
                     .firstIndex(
                         where: {
-                            $0.id == profileID
+                            $0.id
+                                == profileID
                         }
                     )
         else {
@@ -1698,7 +2215,8 @@ final class HomeProfilesSectionView:
             Error
     ) -> String {
         switch error {
-        case RemappingProfileNameValidationError.empty:
+        case RemappingProfileNameValidationError
+            .empty:
             return "Enter a profile name before continuing."
 
         case RemappingProfileNameValidationError
@@ -1706,7 +2224,9 @@ final class HomeProfilesSectionView:
             return "Profile names cannot contain line breaks or control characters."
 
         case let RemappingProfilesConfigurationValidationError
-            .duplicateProfileName(name):
+            .duplicateProfileName(
+                name
+            ):
             return "A profile named “\(name)” already exists."
 
         default:
@@ -1738,22 +2258,28 @@ final class HomeProfilesSectionView:
 
         let alert =
             NSAlert()
+
         alert.messageText =
             "Delete “\(profile.name)”?"
+
         alert.informativeText =
             "This will remove the profile and all of its remapping rules and exceptions. You can undo this change until the application is closed."
+
         alert.alertStyle =
             .warning
+
         alert.addButton(
             withTitle:
                 "Delete Profile"
         )
+
         alert.addButton(
             withTitle:
                 "Cancel"
         )
 
-        guard alert.runModal()
+        guard
+            alert.runModal()
                 == .alertFirstButtonReturn
         else {
             return
@@ -1779,6 +2305,7 @@ final class HomeProfilesSectionView:
             )
         } catch {
             reloadPresentation()
+
             onStatusChange?(
                 "The profile could not be deleted.",
                 true

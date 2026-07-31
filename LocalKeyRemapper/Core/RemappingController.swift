@@ -61,12 +61,10 @@ final class RemappingController:
     private let eventTapManager:
         EventTapManaging
 
-    /// Returns the shortcut configuration currently effective for the active
-    /// profile.
+    /// Returns the application-wide default shortcut configuration.
     ///
-    /// In this incremental step the provider returns the application-wide
-    /// default configuration. A later profile-shortcut step will resolve an
-    /// optional profile override before supplying the value here.
+    /// The effective active-profile configuration is resolved by combining this
+    /// value with the active profile's optional override.
     private let shortcutConfigurationProvider:
         () -> RemappingShortcutConfiguration
 
@@ -148,12 +146,21 @@ final class RemappingController:
             .enabling
         )
 
-        let rules:
-            [RemapRule]
+        let activeProfile:
+            RemappingProfile
 
         do {
-            rules =
-                try loadConfiguredRules()
+            let configuration =
+                try profilesStore
+                    .loadConfiguration()
+
+            activeProfile =
+                try profile(
+                    id:
+                        configuration.activeProfileID,
+                    in:
+                        configuration
+                )
         } catch {
             updateState(
                 .failed(
@@ -164,11 +171,20 @@ final class RemappingController:
             return
         }
 
+        let effectiveShortcutConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        activeProfile,
+                    defaultConfiguration:
+                        shortcutConfigurationProvider()
+                )
+
         do {
             try validate(
-                rules,
-                includesShortcutValidation:
-                    true
+                activeProfile.rules,
+                shortcutConfiguration:
+                    effectiveShortcutConfiguration
             )
         } catch {
             updateState(
@@ -182,7 +198,7 @@ final class RemappingController:
 
         remappingEngine
             .replaceRules(
-                rules
+                activeProfile.rules
             )
 
         do {
@@ -378,9 +394,8 @@ final class RemappingController:
     /// Validates and replaces the rules belonging to one specific profile.
     ///
     /// Inactive profiles are validated structurally and persisted, but they are
-    /// intentionally not compared with the currently registered application
-    /// shortcut. They cannot affect the current runtime until a later Home Save
-    /// makes them active.
+    /// intentionally not compared with any shortcut configuration. They cannot
+    /// affect the current runtime until a later Home Save makes them active.
     func replaceConfiguredRules(
         _ rules: [RemapRule],
         for profileID: UUID
@@ -436,13 +451,13 @@ final class RemappingController:
         eventTapManager.resume()
     }
 
-    /// Applies structural rule validation and, only when requested, the active
-    /// profile's shortcut-conflict policy.
+    /// Applies structural rule validation and, when supplied, the effective
+    /// active-profile shortcut-conflict policy.
     private func validate(
         _ rules:
             [RemapRule],
-        includesShortcutValidation:
-            Bool
+        shortcutConfiguration:
+            RemappingShortcutConfiguration?
     ) throws {
         try rulesValidator
             .validate(
@@ -450,7 +465,7 @@ final class RemappingController:
             )
 
         guard
-            includesShortcutValidation
+            let shortcutConfiguration
         else {
             return
         }
@@ -460,7 +475,7 @@ final class RemappingController:
                 rules:
                     rules,
                 shortcutConfiguration:
-                    shortcutConfigurationProvider()
+                    shortcutConfiguration
             )
     }
 
@@ -485,14 +500,37 @@ final class RemappingController:
                 )
         }
 
+        let existingProfile =
+            configuration
+                .profiles[
+                    profileIndex
+                ]
+
         let isActiveProfile =
             configuration.activeProfileID
                 == profileID
 
+        let effectiveShortcutConfiguration:
+            RemappingShortcutConfiguration?
+
+        if isActiveProfile {
+            effectiveShortcutConfiguration =
+                EffectiveRemappingShortcutConfigurationResolver
+                    .resolve(
+                        profile:
+                            existingProfile,
+                        defaultConfiguration:
+                            shortcutConfigurationProvider()
+                    )
+        } else {
+            effectiveShortcutConfiguration =
+                nil
+        }
+
         try validate(
             rules,
-            includesShortcutValidation:
-                isActiveProfile
+            shortcutConfiguration:
+                effectiveShortcutConfiguration
         )
 
         var updatedConfiguration =

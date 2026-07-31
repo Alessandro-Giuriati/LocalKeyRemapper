@@ -155,7 +155,9 @@ final class HomeConfigurationEditorSession {
         )
     }
 
-    /// Changes the complete global shortcut configuration as one action.
+    /// Changes the application-wide default shortcut configuration.
+    ///
+    /// Profiles whose override is `nil` resolve to this configuration.
     func setShortcutConfiguration(
         _ shortcutConfiguration:
             RemappingShortcutConfiguration
@@ -176,6 +178,79 @@ final class HomeConfigurationEditorSession {
                     previousConfiguration,
                 after:
                     shortcutConfiguration
+            )
+        )
+    }
+
+    /// Changes one profile's optional shortcut override as one reversible
+    /// Home action.
+    ///
+    /// Passing `nil` selects Use Default. Passing `.disabled` selects an
+    /// explicit Off state. An override equal to the current default remains
+    /// explicit and is not converted to `nil`.
+    ///
+    /// Custom Toggle and Separate values are also copied into the profile's
+    /// persistent shortcut memory. Use Default and Off preserve every
+    /// previously remembered custom value.
+    func setShortcutConfigurationOverride(
+        _ shortcutConfigurationOverride:
+            RemappingShortcutConfiguration?,
+        for profileID:
+            UUID,
+        timestamp:
+            Date = Date()
+    ) throws {
+        guard
+            let profile =
+                draft.profile(
+                    id:
+                        profileID
+                )
+        else {
+            throw HomeConfigurationEditorSessionError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        let previousOverride =
+            profile
+                .shortcutConfigurationOverride
+
+        let previousMemory =
+            profile
+                .shortcutMemory
+
+        let updatedMemory =
+            previousMemory.remembering(
+                shortcutConfigurationOverride
+            )
+
+        guard
+            previousOverride
+                != shortcutConfigurationOverride
+            || previousMemory
+                != updatedMemory
+        else {
+            return
+        }
+
+        applyNewAction(
+            .setProfileShortcutConfigurationOverride(
+                profileID:
+                    profileID,
+                before:
+                    previousOverride,
+                after:
+                    shortcutConfigurationOverride,
+                beforeMemory:
+                    previousMemory,
+                afterMemory:
+                    updatedMemory,
+                beforeUpdatedAt:
+                    profile.updatedAt,
+                afterUpdatedAt:
+                    timestamp
             )
         )
     }
@@ -214,7 +289,11 @@ final class HomeConfigurationEditorSession {
                 updatedAt:
                     timestamp,
                 rules:
-                    []
+                    [],
+                shortcutConfigurationOverride:
+                    nil,
+                shortcutMemory:
+                    .empty
             )
 
         applyNewAction(
@@ -234,8 +313,9 @@ final class HomeConfigurationEditorSession {
     /// Duplicates a complete profile as one Home Undo/Redo action.
     ///
     /// The duplicate receives a new UUID and new dates while preserving the
-    /// complete rule collection. It is inserted immediately after its source
-    /// profile and does not become active automatically.
+    /// complete rule collection, shortcut override, and remembered custom
+    /// shortcuts. It is inserted immediately after its source profile and does
+    /// not become active automatically.
     @discardableResult
     func duplicateProfile(
         id sourceProfileID:
@@ -305,7 +385,13 @@ final class HomeConfigurationEditorSession {
                 updatedAt:
                     timestamp,
                 rules:
-                    sourceProfile.rules
+                    sourceProfile.rules,
+                shortcutConfigurationOverride:
+                    sourceProfile
+                        .shortcutConfigurationOverride,
+                shortcutMemory:
+                    sourceProfile
+                        .shortcutMemory
             )
 
         applyNewAction(
@@ -320,7 +406,8 @@ final class HomeConfigurationEditorSession {
         return duplicate
     }
 
-    /// Renames one profile while preserving its UUID, creation date, and rules.
+    /// Renames one profile while preserving its UUID, creation date, rules,
+    /// shortcut override, and remembered shortcut values.
     ///
     /// Name normalization and uniqueness validation intentionally happen before
     /// persistence, not inside the history layer. This allows the UI to keep an
