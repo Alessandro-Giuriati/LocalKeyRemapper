@@ -514,6 +514,216 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
         )
     }
 
+    func testInactiveProfileShortcutConflictDoesNotBlockHomeSave()
+        throws
+    {
+        let context =
+            makeContext()
+
+        let reservedShortcut =
+            shortcut(
+                keyCode:
+                    KeyCode.r
+            )
+
+        var inactiveProfile =
+            context.secondProfile
+        inactiveProfile.rules = [
+            RemapRule(
+                source:
+                    reservedShortcut,
+                destination:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.j
+                    )
+            )
+        ]
+
+        var persistedConfiguration =
+            context.profilesStore
+                .configuration
+
+        guard
+            let inactiveProfileIndex =
+                persistedConfiguration
+                    .profiles
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == inactiveProfile.id
+                        }
+                    )
+        else {
+            XCTFail(
+                "The inactive profile was not present in the persisted configuration."
+            )
+            return
+        }
+
+        persistedConfiguration
+            .profiles[
+                inactiveProfileIndex
+            ] =
+                inactiveProfile
+
+        context.profilesStore
+            .configuration =
+                persistedConfiguration
+
+        let draft =
+            HomeConfigurationSnapshot(
+                profilesConfiguration:
+                    RemappingProfilesConfiguration(
+                        profiles: [
+                            context.firstProfile,
+                            inactiveProfile
+                        ],
+                        activeProfileID:
+                            context.firstProfile.id
+                    ),
+                launchBehavior:
+                    context.preferencesController
+                        .preferences
+                        .launchBehavior,
+                shortcutConfiguration:
+                    .toggle(
+                        reservedShortcut
+                    )
+            )
+
+        let result =
+            try context.transaction
+                .commit(
+                    draft
+                )
+
+        XCTAssertEqual(
+            result.committedSnapshot
+                .activeProfileID,
+            context.firstProfile.id
+        )
+
+        XCTAssertEqual(
+            result.committedSnapshot
+                .profile(
+                    id:
+                        inactiveProfile.id
+                )?
+                .rules,
+            inactiveProfile.rules
+        )
+
+        XCTAssertEqual(
+            context.appliedRules,
+            context.firstProfile.rules
+        )
+    }
+
+    func testProposedActiveProfileShortcutConflictBlocksHomeSave() {
+        let context =
+            makeContext()
+
+        let reservedShortcut =
+            shortcut(
+                keyCode:
+                    KeyCode.r
+            )
+
+        var proposedActiveProfile =
+            context.secondProfile
+        proposedActiveProfile.rules = [
+            RemapRule(
+                source:
+                    reservedShortcut,
+                destination:
+                    KeyCombination(
+                        keyCode:
+                            KeyCode.j
+                    )
+            )
+        ]
+
+        var persistedConfiguration =
+            context.profilesStore
+                .configuration
+
+        guard
+            let proposedActiveProfileIndex =
+                persistedConfiguration
+                    .profiles
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == proposedActiveProfile.id
+                        }
+                    )
+        else {
+            XCTFail(
+                "The proposed active profile was not present in the persisted configuration."
+            )
+            return
+        }
+
+        persistedConfiguration
+            .profiles[
+                proposedActiveProfileIndex
+            ] =
+                proposedActiveProfile
+
+        context.profilesStore
+            .configuration =
+                persistedConfiguration
+
+        let previousConfiguration =
+            context.profilesStore
+                .configuration
+
+        let draft =
+            HomeConfigurationSnapshot(
+                profilesConfiguration:
+                    RemappingProfilesConfiguration(
+                        profiles: [
+                            context.firstProfile,
+                            proposedActiveProfile
+                        ],
+                        activeProfileID:
+                            proposedActiveProfile.id
+                    ),
+                launchBehavior:
+                    context.preferencesController
+                        .preferences
+                        .launchBehavior,
+                shortcutConfiguration:
+                    .toggle(
+                        reservedShortcut
+                    )
+            )
+
+        XCTAssertThrowsError(
+            try context.transaction
+                .commit(
+                    draft
+                )
+        ) {
+            error in
+
+            XCTAssertNotNil(
+                error as? RemappingShortcutRuleConflict
+            )
+        }
+
+        XCTAssertEqual(
+            context.profilesStore
+                .configuration,
+            previousConfiguration
+        )
+
+        XCTAssertNil(
+            context.appliedRules
+        )
+    }
+
     private func makeContext()
         -> UnifiedHomeTransactionContext
     {
@@ -615,12 +825,21 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
                 appPreferencesController:
                     preferencesController,
                 configuredRulesProvider: {
-                    try profilesStore
-                        .loadConfiguration()
-                        .profiles
-                        .flatMap {
-                            $0.rules
-                        }
+                    let configuration =
+                        try profilesStore
+                            .loadConfiguration()
+
+                    guard
+                        let activeProfile =
+                            configuration.activeProfile
+                    else {
+                        throw RemappingProfilesConfigurationValidationError
+                            .missingActiveProfile(
+                                configuration.activeProfileID
+                            )
+                    }
+
+                    return activeProfile.rules
                 },
                 actionHandler: {
                     _ in

@@ -143,13 +143,6 @@ final class HomeConfigurationSaveTransaction {
                     mergedProfilesConfiguration
                 )
 
-        try validateRulesAndShortcuts(
-            profilesConfiguration:
-                normalizedProfilesConfiguration,
-            shortcutConfiguration:
-                draft.shortcutConfiguration
-        )
-
         guard
             let activeProfile =
                 normalizedProfilesConfiguration
@@ -165,6 +158,15 @@ final class HomeConfigurationSaveTransaction {
                         .activeProfileID
                 )
         }
+
+        try validateRulesAndShortcuts(
+            profilesConfiguration:
+                normalizedProfilesConfiguration,
+            activeProfile:
+                activeProfile,
+            shortcutConfiguration:
+                draft.shortcutConfiguration
+        )
 
         let profilesChanged =
             normalizedProfilesConfiguration
@@ -247,11 +249,14 @@ final class HomeConfigurationSaveTransaction {
 
     /// Applies every blocking rule and shortcut policy before storage changes.
     ///
-    /// Profiles remain independent: rules are validated one profile at a time,
-    /// so identical mappings may legitimately exist in separate profiles.
+    /// Structural rule validation remains local to every profile. Shortcut
+    /// conflicts are evaluated only for the profile proposed as active because
+    /// inactive profiles cannot affect the current runtime.
     private func validateRulesAndShortcuts(
         profilesConfiguration:
             RemappingProfilesConfiguration,
+        activeProfile:
+            RemappingProfile,
         shortcutConfiguration:
             RemappingShortcutConfiguration
     ) throws {
@@ -260,14 +265,14 @@ final class HomeConfigurationSaveTransaction {
                 .validate(
                     profile.rules
                 )
-
-            try RemappingShortcutRuleConflictPolicy
-                .validate(
-                    rules:
-                        profile.rules,
-                    shortcutConfiguration:
-                        shortcutConfiguration
-                )
         }
+
+        try RemappingShortcutRuleConflictPolicy
+            .validate(
+                rules:
+                    activeProfile.rules,
+                shortcutConfiguration:
+                    shortcutConfiguration
+            )
     }
 }

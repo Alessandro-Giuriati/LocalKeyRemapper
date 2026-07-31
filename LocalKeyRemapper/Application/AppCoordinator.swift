@@ -24,6 +24,8 @@ final class AppCoordinator: NSObject {
     private let rulesValidator: RemappingRulesValidator
     private let appPreferencesStore: UserDefaultsAppPreferencesStore
     private let appPreferencesController: AppPreferencesController
+    private let rulesWindowAppPreferencesController:
+        RulesWindowAppPreferencesController
     private let remappingEngine: RemappingEngine
     private let eventTapManager: EventTapManager
     private let remappingController: RemappingController
@@ -66,6 +68,13 @@ final class AppCoordinator: NSObject {
         let appPreferencesController = AppPreferencesController(
             store: appPreferencesStore
         )
+        let rulesWindowAppPreferencesController =
+            RulesWindowAppPreferencesController(
+                baseController:
+                    appPreferencesController,
+                profilesStore:
+                    profilesStore
+            )
         let remappingEngine = RemappingEngine()
         let eventTapManager = EventTapManager(
             remappingEngine: remappingEngine
@@ -100,11 +109,22 @@ final class AppCoordinator: NSObject {
                     try profilesStore
                         .loadConfiguration()
 
-                return configuration
-                    .profiles
-                    .flatMap {
-                        $0.rules
-                    }
+                guard
+                    let activeProfile =
+                        configuration.activeProfile
+                else {
+                    throw RemappingProfilesConfigurationValidationError
+                        .missingActiveProfile(
+                            configuration.activeProfileID
+                        )
+                }
+
+                return activeProfile.rules
+            },
+            rulesEditorShortcutConfigurationProvider: {
+                rulesWindowAppPreferencesController
+                    .preferences
+                    .shortcutConfiguration
             },
             actionHandler: {
                 [weak remappingController] action in
@@ -154,6 +174,8 @@ final class AppCoordinator: NSObject {
         self.rulesValidator = rulesValidator
         self.appPreferencesStore = appPreferencesStore
         self.appPreferencesController = appPreferencesController
+        self.rulesWindowAppPreferencesController =
+            rulesWindowAppPreferencesController
         self.remappingEngine = remappingEngine
         self.eventTapManager = eventTapManager
         self.remappingController = remappingController
@@ -174,6 +196,7 @@ final class AppCoordinator: NSObject {
 
         loadAppPreferences()
         initializeHomeConfigurationEditorSession()
+        configureRulesWindowShortcutScope()
         configureRemappingStateObservation()
         startObservingWorkspaceActivation()
 
@@ -297,6 +320,9 @@ final class AppCoordinator: NSObject {
             )
         }
 
+        rulesWindowAppPreferencesController.profileID =
+            profileID
+
         let controller =
             getOrCreateRemappingRulesWindowController(
                 profile:
@@ -339,6 +365,13 @@ final class AppCoordinator: NSObject {
         mainWindowController = nil
         remappingRulesWindowController = nil
         displayedRulesProfileID = nil
+        rulesWindowAppPreferencesController.profileID = nil
+        rulesWindowAppPreferencesController
+            .homeProfilesConfigurationProvider =
+                nil
+        rulesWindowAppPreferencesController
+            .homeShortcutConfigurationProvider =
+                nil
 
         ruleEditorSessionRegistry
             .removeAllSessions()
@@ -629,7 +662,7 @@ final class AppCoordinator: NSObject {
                 remappingController:
                     remappingController,
                 appPreferencesController:
-                    appPreferencesController,
+                    rulesWindowAppPreferencesController,
                 globalShortcutController:
                     globalShortcutController,
                 profileID:
@@ -661,6 +694,34 @@ final class AppCoordinator: NSObject {
             controller
 
         return controller
+    }
+
+    /// Connects Rules-related validation to the latest Home draft.
+    ///
+    /// Rules and Custom Exceptions therefore evaluate the profile currently
+    /// proposed as active against the shortcut configuration currently proposed
+    /// in Home, even before Home Save. Inactive draft profiles continue to see
+    /// shortcuts as disabled.
+    private func configureRulesWindowShortcutScope() {
+        rulesWindowAppPreferencesController
+            .homeProfilesConfigurationProvider = {
+                [weak self] in
+
+                self?
+                    .homeConfigurationEditorSession?
+                    .draft
+                    .profilesConfiguration
+            }
+
+        rulesWindowAppPreferencesController
+            .homeShortcutConfigurationProvider = {
+                [weak self] in
+
+                self?
+                    .homeConfigurationEditorSession?
+                    .draft
+                    .shortcutConfiguration
+            }
     }
 
     /// Creates the single Home editor session owned for this app run.

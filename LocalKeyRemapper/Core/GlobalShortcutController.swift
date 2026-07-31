@@ -22,13 +22,26 @@ final class GlobalShortcutController {
     private let remappingEngine:
         RemappingEngine
 
-    /// Loads the complete stored rule configuration whenever an active
-    /// shortcut configuration must be validated.
+    /// Loads the active profile's stored rules whenever an effective shortcut
+    /// configuration must be validated for runtime registration.
     ///
     /// The provider returns configured rules only. It does not inspect
     /// keyboard input or perform event-time work.
     private let configuredRulesProvider:
         () throws -> [RemapRule]
+
+    /// Supplies the shortcut configuration that Rules-related editors should
+    /// use for validation and warning presentation.
+    ///
+    /// AppCoordinator scopes this provider to the profile currently displayed
+    /// by the reusable Rules window. An inactive profile therefore sees
+    /// `.disabled`, while the active profile sees the stored application
+    /// shortcut configuration.
+    ///
+    /// Runtime registration never uses this provider. It always uses the
+    /// configuration stored in application preferences.
+    private let rulesEditorShortcutConfigurationProvider:
+        (() -> RemappingShortcutConfiguration)?
 
     private let actionHandler:
         (
@@ -36,17 +49,29 @@ final class GlobalShortcutController {
         ) -> Void
 
     /// Indicates that active global registrations are temporarily
-    /// suspended while the Settings window records a shortcut.
+    /// suspended while a configuration window records a shortcut.
     private var isCaptureSuspended = false
 
-    /// The shortcut configuration currently stored
-    /// in local application preferences.
-    var configuredConfiguration:
+    /// The shortcut configuration currently stored in local application
+    /// preferences and used for registration, reservation, persistence,
+    /// rollback, and capture restoration.
+    private var storedConfiguration:
         RemappingShortcutConfiguration
     {
         appPreferencesController
             .preferences
             .shortcutConfiguration
+    }
+
+    /// The shortcut configuration exposed to Rules-related editors.
+    ///
+    /// Tests and call sites that do not provide a Rules-editor scope retain the
+    /// original behavior and receive the stored application configuration.
+    var configuredConfiguration:
+        RemappingShortcutConfiguration
+    {
+        rulesEditorShortcutConfigurationProvider?()
+            ?? storedConfiguration
     }
 
     init(
@@ -60,6 +85,8 @@ final class GlobalShortcutController {
             @escaping () throws -> [RemapRule] = {
                 []
             },
+        rulesEditorShortcutConfigurationProvider:
+            (() -> RemappingShortcutConfiguration)? = nil,
         actionHandler:
             @escaping (
                 GlobalShortcutAction
@@ -77,6 +104,9 @@ final class GlobalShortcutController {
         self.configuredRulesProvider =
             configuredRulesProvider
 
+        self.rulesEditorShortcutConfigurationProvider =
+            rulesEditorShortcutConfigurationProvider
+
         self.actionHandler =
             actionHandler
     }
@@ -84,13 +114,13 @@ final class GlobalShortcutController {
     /// Registers and protects the configuration currently stored
     /// in local preferences.
     ///
-    /// Stored shortcuts are validated against the complete stored rule
-    /// configuration before any global registration becomes active.
+    /// Stored shortcuts are validated against the active profile's stored rules
+    /// before any global registration becomes active.
     func start() throws {
         isCaptureSuspended = false
 
         let configuration =
-            configuredConfiguration
+            storedConfiguration
 
         do {
             try applyRegistration(
@@ -145,7 +175,7 @@ final class GlobalShortcutController {
     /// are restored whenever possible.
     ///
     /// The persistence closure must update the application preferences so that
-    /// `configuredConfiguration` reflects `newConfiguration` after success.
+    /// `storedConfiguration` reflects `newConfiguration` after success.
     func applyConfiguration(
         _ newConfiguration:
             RemappingShortcutConfiguration,
@@ -153,7 +183,7 @@ final class GlobalShortcutController {
             () throws -> Void
     ) throws {
         let previousConfiguration =
-            configuredConfiguration
+            storedConfiguration
 
         let configurationChanged =
             previousConfiguration
@@ -223,7 +253,7 @@ final class GlobalShortcutController {
     }
 
     /// Temporarily removes active Carbon registrations while
-    /// the Settings window records a new shortcut.
+    /// a configuration window records a shortcut.
     func beginShortcutCapture() {
         guard !isCaptureSuspended else {
             return
@@ -235,8 +265,8 @@ final class GlobalShortcutController {
 
     /// Restores the stored shortcut configuration after capture ends.
     ///
-    /// The stored configuration is revalidated against the current stored
-    /// rules before it is registered again.
+    /// Rules-editor scoping affects only validation presentation. Ending
+    /// capture always restores the actual stored shortcut configuration.
     func endShortcutCapture() throws {
         guard isCaptureSuspended else {
             return
@@ -244,15 +274,18 @@ final class GlobalShortcutController {
 
         isCaptureSuspended = false
 
+        let configuration =
+            storedConfiguration
+
         do {
             try applyRegistration(
                 for:
-                    configuredConfiguration
+                    configuration
             )
 
             applyReservation(
                 for:
-                    configuredConfiguration
+                    configuration
             )
         } catch {
             shortcutManager.unregister()
@@ -303,7 +336,7 @@ final class GlobalShortcutController {
     }
 
     /// Validates both the shortcut configuration itself and its interaction
-    /// with the complete stored remapping-rule configuration.
+    /// with the active profile's stored remapping-rule configuration.
     private func validate(
         _ configuration:
             RemappingShortcutConfiguration

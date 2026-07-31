@@ -1690,8 +1690,12 @@ final class MainWindowController:
     }
 
     /// Returns a blocking message when the proposed shortcut configuration
-    /// conflicts with an exact mapping in any profile participating in the
-    /// current Home draft.
+    /// conflicts with an exact mapping in the profile proposed as active by
+    /// the current Home draft.
+    ///
+    /// Inactive profiles are intentionally ignored. Their rules do not run and
+    /// may overlap application shortcuts until that profile is proposed for
+    /// activation and Home Save validates the resulting pair.
     private func shortcutConflictValidationMessage(
         for configuration:
             RemappingShortcutConfiguration
@@ -1708,56 +1712,38 @@ final class MainWindowController:
             let profilesConfiguration =
                 try profilesConfigurationForShortcutValidation()
 
-            let affectedProfiles =
-                profilesConfiguration
-                    .profiles
-                    .compactMap {
-                        profile -> String? in
-
-                        guard
-                            !RemappingShortcutRuleConflictPolicy
-                                .conflicts(
-                                    rules:
-                                        profile.rules,
-                                    shortcutConfiguration:
-                                        configuration
-                                )
-                                .isEmpty
-                        else {
-                            return nil
-                        }
-
-                        return profile.name
-                    }
+            guard
+                let activeProfile =
+                    profilesConfiguration
+                        .activeProfile
+            else {
+                return "The active remapping profile could not be loaded for shortcut validation."
+            }
 
             guard
-                !affectedProfiles.isEmpty
+                !RemappingShortcutRuleConflictPolicy
+                    .conflicts(
+                        rules:
+                            activeProfile.rules,
+                        shortcutConfiguration:
+                            configuration
+                    )
+                    .isEmpty
             else {
                 return nil
             }
 
-            let quotedNames =
-                affectedProfiles
-                    .map {
-                        "“\($0)”"
-                    }
-                    .joined(
-                        separator:
-                            ", "
-                    )
-
-            if affectedProfiles.count == 1 {
-                return "The proposed shortcut conflicts with an exact mapping in \(quotedNames). Change the mapping, remove the matching exception, or choose a different shortcut before saving."
-            }
-
-            return "The proposed shortcuts conflict with exact mappings in \(affectedProfiles.count) profiles: \(quotedNames)."
+            return "The proposed shortcut conflicts with an exact mapping in “\(activeProfile.name)”. Change the mapping, remove the matching exception, or choose a different shortcut before saving."
         } catch {
             return "The remapping profiles could not be loaded for shortcut validation."
         }
     }
 
-    /// Returns non-blocking guidance when one or more profiles contain a
-    /// matching Preserve Modifiers rule.
+    /// Returns non-blocking guidance when the profile proposed as active by
+    /// the Home draft contains a matching Preserve Modifiers rule.
+    ///
+    /// Inactive profiles produce no shortcut bypass warning because none of
+    /// their rules participate in runtime remapping.
     private func shortcutPreserveWarningMessage(
         for configuration:
             RemappingShortcutConfiguration
@@ -1774,49 +1760,28 @@ final class MainWindowController:
             let profilesConfiguration =
                 try profilesConfigurationForShortcutValidation()
 
-            let affectedProfiles =
-                profilesConfiguration
-                    .profiles
-                    .compactMap {
-                        profile -> String? in
-
-                        guard
-                            !RemappingShortcutRuleConflictPolicy
-                                .warnings(
-                                    rules:
-                                        profile.rules,
-                                    shortcutConfiguration:
-                                        configuration
-                                )
-                                .isEmpty
-                        else {
-                            return nil
-                        }
-
-                        return profile.name
-                    }
-
             guard
-                !affectedProfiles.isEmpty
+                let activeProfile =
+                    profilesConfiguration
+                        .activeProfile
             else {
                 return nil
             }
 
-            let quotedNames =
-                affectedProfiles
-                    .map {
-                        "“\($0)”"
-                    }
-                    .joined(
-                        separator:
-                            ", "
+            guard
+                !RemappingShortcutRuleConflictPolicy
+                    .warnings(
+                        rules:
+                            activeProfile.rules,
+                        shortcutConfiguration:
+                            configuration
                     )
-
-            if affectedProfiles.count == 1 {
-                return "The application shortcuts remain reserved and bypass matching Preserve Modifiers rules in \(quotedNames)."
+                    .isEmpty
+            else {
+                return nil
             }
 
-            return "The application shortcuts remain reserved and bypass matching Preserve Modifiers rules in \(affectedProfiles.count) profiles: \(quotedNames)."
+            return "The application shortcuts remain reserved and bypass matching Preserve Modifiers rules in “\(activeProfile.name)”."
         } catch {
             // Loading failures are surfaced by blocking validation.
             return nil
