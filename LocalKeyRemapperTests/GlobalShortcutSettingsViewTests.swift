@@ -13,34 +13,34 @@ import XCTest
 final class GlobalShortcutSettingsViewTests:
     XCTestCase
 {
-    func testSaveButtonUsesAccentColorOnlyWhenEnabled() {
+    func testIndependentSaveAndCancelButtonsAreRemoved() {
         let view =
             makeView()
 
-        let saveButton =
+        XCTAssertNil(
             button(
                 withIdentifier:
                     "globalShortcut.save",
                 in:
                     view
             )
-
-        XCTAssertNotNil(
-            saveButton
-        )
-
-        XCTAssertEqual(
-            saveButton?
-                .isEnabled,
-            false
         )
 
         XCTAssertNil(
-            saveButton?
-                .bezelColor
+            button(
+                withIdentifier:
+                    "globalShortcut.cancel",
+                in:
+                    view
+            )
         )
+    }
 
-        view.setCapturedShortcut(
+    func testCapturedShortcutReportsCompleteConfigurationToHome() {
+        let view =
+            makeView()
+
+        let capturedShortcut =
             KeyCombination(
                 keyCode:
                     KeyCode.e,
@@ -48,176 +48,177 @@ final class GlobalShortcutSettingsViewTests:
                     .control,
                     .command
                 ]
-            ),
+            )
+
+        var reportedConfigurations:
+            [RemappingShortcutConfiguration] = []
+
+        view.onConfigurationChangeRequested = {
+            configuration in
+
+            reportedConfigurations.append(
+                configuration
+            )
+        }
+
+        view.setCapturedShortcut(
+            capturedShortcut,
             for:
                 .toggle
         )
 
         XCTAssertEqual(
-            saveButton?
-                .isEnabled,
-            true
-        )
-
-        XCTAssertTrue(
-            saveButton?
-                .bezelColor?
-                .isEqual(
-                    NSColor
-                        .controlAccentColor
-                ) == true
-        )
-
-        view.discardChanges()
-
-        XCTAssertEqual(
-            saveButton?
-                .isEnabled,
-            false
-        )
-
-        XCTAssertNil(
-            saveButton?
-                .bezelColor
+            reportedConfigurations,
+            [
+                .toggle(
+                    capturedShortcut
+                )
+            ]
         )
     }
 
-    func testCancelButtonIsAdjacentToSaveButton() {
+    func testExternalLoadDoesNotReportAUserChange() {
         let view =
             makeView()
 
-        let saveButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.save",
-                in:
-                    view
-            )
+        var reportCount =
+            0
 
-        let cancelButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.cancel",
-                in:
-                    view
-            )
+        view.onConfigurationChangeRequested = {
+            _ in
 
-        XCTAssertNotNil(
-            saveButton
+            reportCount +=
+                1
+        }
+
+        let configuration =
+            RemappingShortcutConfiguration
+                .separate(
+                    enable:
+                        KeyCombination(
+                            keyCode:
+                                KeyCode.e,
+                            modifiers: [
+                                .control,
+                                .option,
+                                .command
+                            ]
+                        ),
+                    disable:
+                        KeyCombination(
+                            keyCode:
+                                KeyCode.d,
+                            modifiers: [
+                                .control,
+                                .option,
+                                .command
+                            ]
+                        )
+                )
+
+        view.load(
+            configuration:
+                configuration
         )
-
-        XCTAssertNotNil(
-            cancelButton
-        )
-
-        XCTAssertTrue(
-            saveButton?
-                .superview
-                === cancelButton?
-                    .superview
-        )
-
-        let arrangedSubviews =
-            (
-                saveButton?
-                    .superview as?
-                        NSStackView
-            )?
-            .arrangedSubviews
 
         XCTAssertEqual(
-            arrangedSubviews?
-                .firstIndex {
-                    $0 === saveButton
-                },
+            reportCount,
             0
         )
 
         XCTAssertEqual(
-            arrangedSubviews?
-                .firstIndex {
-                    $0 === cancelButton
-                },
-            1
+            view.currentConfiguration,
+            configuration
+        )
+
+        XCTAssertFalse(
+            view.hasTransientEditorChanges
         )
     }
 
-    func testClearCanBeUndoneWithCancel() {
+    func testChangingModeReportsTheNewCompleteConfiguration() throws {
         let view =
             makeView()
 
-        let recordButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.toggle.record",
-                in:
-                    view
+        var reportedConfiguration:
+            RemappingShortcutConfiguration?
+
+        view.onConfigurationChangeRequested = {
+            configuration in
+
+            reportedConfiguration =
+                configuration
+        }
+
+        let modeControl =
+            try XCTUnwrap(
+                segmentedControl(
+                    withIdentifier:
+                        "globalShortcut.mode",
+                    in:
+                        view
+                )
             )
 
-        let clearButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.toggle.clear",
-                in:
-                    view
-            )
+        modeControl.selectedSegment =
+            0
 
-        let cancelButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.cancel",
-                in:
-                    view
-            )
-
-        let savedTitle =
-            recordButton?
-                .title
-
-        clearButton?
-            .performClick(
-                nil
-            )
-
-        XCTAssertTrue(
-            view.hasUnsavedChanges
+        _ = modeControl.sendAction(
+            modeControl.action,
+            to:
+                modeControl.target
         )
 
         XCTAssertEqual(
-            recordButton?
-                .title,
-            "Choose Shortcut…"
-        )
-
-        XCTAssertEqual(
-            cancelButton?
-                .isEnabled,
-            true
-        )
-
-        cancelButton?
-            .performClick(
-                nil
-            )
-
-        XCTAssertFalse(
-            view.hasUnsavedChanges
-        )
-
-        XCTAssertEqual(
-            recordButton?
-                .title,
-            savedTitle
-        )
-
-        XCTAssertEqual(
-            cancelButton?
-                .isEnabled,
-            false
+            reportedConfiguration,
+            .disabled
         )
     }
 
-    func testCancelEndsCaptureAndRestoresSavedConfiguration() {
+    func testClearingRequiredShortcutKeepsIncompleteStateLocal() {
+        let view =
+            makeView()
+
+        var reportCount =
+            0
+
+        view.onConfigurationChangeRequested = {
+            _ in
+
+            reportCount +=
+                1
+        }
+
+        button(
+            withIdentifier:
+                "globalShortcut.toggle.clear",
+            in:
+                view
+        )?
+        .performClick(
+            nil
+        )
+
+        XCTAssertNil(
+            view.currentConfiguration
+        )
+
+        XCTAssertTrue(
+            view.hasTransientEditorChanges
+        )
+
+        XCTAssertEqual(
+            view.currentValidationMessage,
+            "Choose every shortcut required by the selected mode."
+        )
+
+        XCTAssertEqual(
+            reportCount,
+            0
+        )
+    }
+
+    func testRowCancelIsDisplayedDuringCaptureAndRequestsCancellation() {
         let view =
             makeView()
 
@@ -229,53 +230,6 @@ final class GlobalShortcutSettingsViewTests:
             cancellationWasRequested =
                 true
         }
-
-        let cancelButton =
-            button(
-                withIdentifier:
-                    "globalShortcut.cancel",
-                in:
-                    view
-            )
-
-        view.beginCapturePrompt(
-            for:
-                .toggle
-        )
-
-        XCTAssertEqual(
-            cancelButton?
-                .isEnabled,
-            true
-        )
-
-        cancelButton?
-            .performClick(
-                nil
-            )
-
-        XCTAssertTrue(
-            cancellationWasRequested
-        )
-
-        XCTAssertNil(
-            view.activeCaptureField
-        )
-
-        XCTAssertFalse(
-            view.hasUnsavedChanges
-        )
-
-        XCTAssertEqual(
-            cancelButton?
-                .isEnabled,
-            false
-        )
-    }
-
-    func testRowLevelCancelIsNeverDisplayed() {
-        let view =
-            makeView()
 
         let rowCancelButton =
             button(
@@ -293,7 +247,35 @@ final class GlobalShortcutSettingsViewTests:
         XCTAssertEqual(
             rowCancelButton?
                 .isHidden,
-            true
+            false
+        )
+
+        rowCancelButton?
+            .performClick(
+                nil
+            )
+
+        XCTAssertTrue(
+            cancellationWasRequested
+        )
+    }
+
+    func testStructurallyInvalidShortcutExposesValidationMessage() {
+        let view =
+            makeView()
+
+        view.setCapturedShortcut(
+            KeyCombination(
+                keyCode:
+                    KeyCode.e
+            ),
+            for:
+                .toggle
+        )
+
+        XCTAssertEqual(
+            view.currentValidationMessage,
+            "Every global shortcut must contain at least one modifier."
         )
     }
 
@@ -315,29 +297,66 @@ final class GlobalShortcutSettingsViewTests:
         in view:
             NSView
     ) -> NSButton? {
+        matchingView(
+            withIdentifier:
+                identifier,
+            in:
+                view,
+            as:
+                NSButton.self
+        )
+    }
+
+    private func segmentedControl(
+        withIdentifier identifier:
+            String,
+        in view:
+            NSView
+    ) -> NSSegmentedControl? {
+        matchingView(
+            withIdentifier:
+                identifier,
+            in:
+                view,
+            as:
+                NSSegmentedControl.self
+        )
+    }
+
+    private func matchingView<
+        View: NSView
+    >(
+        withIdentifier identifier:
+            String,
+        in view:
+            NSView,
+        as viewType:
+            View.Type
+    ) -> View? {
         if
-            let button =
-                view as?
-                    NSButton,
-            button.identifier?
+            let matchingView =
+                view as? View,
+            matchingView.identifier?
                 .rawValue
                 == identifier
         {
-            return button
+            return matchingView
         }
 
         for subview in
             view.subviews
         {
-            if let matchingButton =
-                button(
+            if let matchingView =
+                matchingView(
                     withIdentifier:
                         identifier,
                     in:
-                        subview
+                        subview,
+                    as:
+                        viewType
                 )
             {
-                return matchingButton
+                return matchingView
             }
         }
 

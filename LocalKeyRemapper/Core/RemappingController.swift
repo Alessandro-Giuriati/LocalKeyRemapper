@@ -5,6 +5,16 @@
 //  Created by Alessandro Giuriati on 7/15/26.
 //
 
+import Foundation
+
+/// Represents a failure while resolving one profile by its stable identity.
+nonisolated enum RemappingProfileRulesAccessError:
+    Error,
+    Equatable
+{
+    case profileNotFound(UUID)
+}
+
 /// Defines the operations exposed by the remapping controller
 /// to the application user interface.
 @MainActor
@@ -26,7 +36,7 @@ protocol RemappingControlling: AnyObject {
     func toggle()
 }
 
-/// Coordinates permissions, rule validation, storage,
+/// Coordinates permissions, profile resolution, rule validation, storage,
 /// the remapping engine, and the keyboard event tap.
 ///
 /// This controller does not process individual keyboard events
@@ -36,12 +46,11 @@ final class RemappingController:
     RemappingControlling,
     RemappingSettingsControlling
 {
-
     private let permissionService:
         AccessibilityPermissionChecking
 
-    private let rulesStore:
-        RulesStore
+    private let profilesStore:
+        RemappingProfilesStore
 
     private let rulesValidator:
         RemappingRulesValidating
@@ -52,14 +61,18 @@ final class RemappingController:
     private let eventTapManager:
         EventTapManaging
 
-    /// Returns the complete shortcut configuration currently stored
-    /// in application preferences.
+    /// Returns the application-wide default shortcut configuration.
     ///
-    /// The provider is evaluated whenever rules are saved or activated,
-    /// ensuring conflicts are detected regardless of which configuration
-    /// was created first.
+    /// The effective active-profile configuration is resolved by combining this
+    /// value with the active profile's optional override.
     private let shortcutConfigurationProvider:
         () -> RemappingShortcutConfiguration
+
+    /// Supplies modification dates when a profile's rules change.
+    ///
+    /// Injection keeps controller tests deterministic.
+    private let dateProvider:
+        () -> Date
 
     private var isKeyCaptureActive = false
 
@@ -72,8 +85,8 @@ final class RemappingController:
     init(
         permissionService:
             AccessibilityPermissionChecking,
-        rulesStore:
-            RulesStore,
+        profilesStore:
+            RemappingProfilesStore,
         rulesValidator:
             RemappingRulesValidating,
         remappingEngine:
@@ -83,13 +96,17 @@ final class RemappingController:
         shortcutConfigurationProvider:
             @escaping () -> RemappingShortcutConfiguration = {
                 .disabled
+            },
+        dateProvider:
+            @escaping () -> Date = {
+                Date()
             }
     ) {
         self.permissionService =
             permissionService
 
-        self.rulesStore =
-            rulesStore
+        self.profilesStore =
+            profilesStore
 
         self.rulesValidator =
             rulesValidator
@@ -102,6 +119,9 @@ final class RemappingController:
 
         self.shortcutConfigurationProvider =
             shortcutConfigurationProvider
+
+        self.dateProvider =
+            dateProvider
     }
 
     func enable() {
@@ -114,9 +134,11 @@ final class RemappingController:
 
         guard permissionService.isGranted else {
             permissionService.requestAccess()
+
             updateState(
                 .permissionRequired
             )
+
             return
         }
 
@@ -124,25 +146,45 @@ final class RemappingController:
             .enabling
         )
 
-        let rules:
-            [RemapRule]
+        let activeProfile:
+            RemappingProfile
 
         do {
-            rules =
-                try rulesStore
-                    .loadRules()
+            let configuration =
+                try profilesStore
+                    .loadConfiguration()
+
+            activeProfile =
+                try profile(
+                    id:
+                        configuration.activeProfileID,
+                    in:
+                        configuration
+                )
         } catch {
             updateState(
                 .failed(
                     .rulesLoadingFailed
                 )
             )
+
             return
         }
 
+        let effectiveShortcutConfiguration =
+            EffectiveRemappingShortcutConfigurationResolver
+                .resolve(
+                    profile:
+                        activeProfile,
+                    defaultConfiguration:
+                        shortcutConfigurationProvider()
+                )
+
         do {
             try validate(
-                rules
+                activeProfile.rules,
+                shortcutConfiguration:
+                    effectiveShortcutConfiguration
             )
         } catch {
             updateState(
@@ -150,12 +192,13 @@ final class RemappingController:
                     .invalidRules
                 )
             )
+
             return
         }
 
         remappingEngine
             .replaceRules(
-                rules
+                activeProfile.rules
             )
 
         do {
@@ -169,6 +212,7 @@ final class RemappingController:
                     .eventTapStartFailed
                 )
             )
+
             return
         }
 
@@ -204,10 +248,9 @@ final class RemappingController:
 
     /// Handles an event tap interruption reported by Core Graphics.
     ///
-    /// When Accessibility permission was revoked, the invalid tap is
-    /// removed immediately and the controller enters the
-    /// permission-required state. Transient interruptions are recovered
-    /// by creating a fresh event tap.
+    /// When Accessibility permission was revoked, the invalid tap is removed
+    /// immediately. Transient interruptions are recovered by creating a fresh
+    /// event tap.
     func handleEventTapInterruption() {
         guard
             state == .enabled
@@ -222,6 +265,7 @@ final class RemappingController:
             updateState(
                 .permissionRequired
             )
+
             return
         }
 
@@ -254,12 +298,8 @@ final class RemappingController:
         )
     }
 
-    /// Revalidates Accessibility permission after a relevant
-    /// application or user-interface event.
-    ///
-    /// This method does not recreate a healthy event tap. It only removes
-    /// the tap when permission was revoked, or retries activation after
-    /// permission was granted.
+    /// Revalidates Accessibility permission after a relevant application or
+    /// user-interface event.
     func refreshAccessibilityPermission() {
         switch state {
         case .enabled,
@@ -295,42 +335,85 @@ final class RemappingController:
         }
     }
 
-    /// Returns the rules currently stored by the application.
+    /// Returns the rules belonging to the currently active profile.
     func loadConfiguredRules()
         throws -> [RemapRule]
     {
-        try rulesStore
-            .loadRules()
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        let activeProfile =
+            try profile(
+                id:
+                    configuration.activeProfileID,
+                in:
+                    configuration
+            )
+
+        return activeProfile.rules
     }
 
-    /// Validates and replaces all configured rules.
-    ///
-    /// Structural rule validation and shortcut-conflict validation are both
-    /// completed before storage or the prepared runtime engine is modified.
-    ///
-    /// This guarantees that a rule cannot become active merely because the
-    /// conflicting shortcut was configured first.
+    /// Returns the rules belonging to one specific profile.
+    func loadConfiguredRules(
+        for profileID: UUID
+    ) throws -> [RemapRule] {
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        let requestedProfile =
+            try profile(
+                id:
+                    profileID,
+                in:
+                    configuration
+            )
+
+        return requestedProfile.rules
+    }
+
+    /// Validates and replaces the active profile's rules.
     func replaceConfiguredRules(
         _ rules:
             [RemapRule]
     ) throws {
-        try validate(
-            rules
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        try replaceConfiguredRules(
+            rules,
+            for:
+                configuration.activeProfileID,
+            in:
+                configuration
         )
-
-        try rulesStore
-            .saveRules(
-                rules
-            )
-
-        remappingEngine
-            .replaceRules(
-                rules
-            )
     }
 
-    /// Temporarily suspends remapping while the Settings
-    /// window captures a physical keyboard key.
+    /// Validates and replaces the rules belonging to one specific profile.
+    ///
+    /// Inactive profiles are validated structurally and persisted, but they are
+    /// intentionally not compared with any shortcut configuration. They cannot
+    /// affect the current runtime until a later Home Save makes them active.
+    func replaceConfiguredRules(
+        _ rules: [RemapRule],
+        for profileID: UUID
+    ) throws {
+        let configuration =
+            try profilesStore
+                .loadConfiguration()
+
+        try replaceConfiguredRules(
+            rules,
+            for:
+                profileID,
+            in:
+                configuration
+        )
+    }
+
+    /// Temporarily suspends remapping while a window captures a physical key.
     func beginKeyCapture() {
         guard
             !isKeyCaptureActive
@@ -349,8 +432,7 @@ final class RemappingController:
         eventTapManager.pause()
     }
 
-    /// Ends keyboard capture and restores remapping
-    /// when the backend is still enabled.
+    /// Ends keyboard capture and restores remapping when appropriate.
     func endKeyCapture() {
         guard
             isKeyCaptureActive
@@ -369,26 +451,151 @@ final class RemappingController:
         eventTapManager.resume()
     }
 
-    /// Applies every blocking rule validation policy.
-    ///
-    /// The shortcut policy uses effective matching behavior, including
-    /// Preserve Modifiers, enabled exceptions, disabled rules, and Reverse.
+    /// Applies structural rule validation and, when supplied, the effective
+    /// active-profile shortcut-conflict policy.
     private func validate(
         _ rules:
-            [RemapRule]
+            [RemapRule],
+        shortcutConfiguration:
+            RemappingShortcutConfiguration?
     ) throws {
         try rulesValidator
             .validate(
                 rules
             )
 
+        guard
+            let shortcutConfiguration
+        else {
+            return
+        }
+
         try RemappingShortcutRuleConflictPolicy
             .validate(
                 rules:
                     rules,
                 shortcutConfiguration:
-                    shortcutConfigurationProvider()
+                    shortcutConfiguration
             )
+    }
+
+    private func replaceConfiguredRules(
+        _ rules: [RemapRule],
+        for profileID: UUID,
+        in configuration:
+            RemappingProfilesConfiguration
+    ) throws {
+        guard
+            let profileIndex =
+                configuration.profiles
+                    .firstIndex(
+                        where: {
+                            $0.id == profileID
+                        }
+                    )
+        else {
+            throw RemappingProfileRulesAccessError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        let existingProfile =
+            configuration
+                .profiles[
+                    profileIndex
+                ]
+
+        let isActiveProfile =
+            configuration.activeProfileID
+                == profileID
+
+        let effectiveShortcutConfiguration:
+            RemappingShortcutConfiguration?
+
+        if isActiveProfile {
+            effectiveShortcutConfiguration =
+                EffectiveRemappingShortcutConfigurationResolver
+                    .resolve(
+                        profile:
+                            existingProfile,
+                        defaultConfiguration:
+                            shortcutConfigurationProvider()
+                    )
+        } else {
+            effectiveShortcutConfiguration =
+                nil
+        }
+
+        try validate(
+            rules,
+            shortcutConfiguration:
+                effectiveShortcutConfiguration
+        )
+
+        var updatedConfiguration =
+            configuration
+
+        let rulesChanged =
+            updatedConfiguration
+                .profiles[
+                    profileIndex
+                ]
+                .rules
+                != rules
+
+        updatedConfiguration
+            .profiles[
+                profileIndex
+            ]
+            .rules =
+                rules
+
+        if rulesChanged {
+            updatedConfiguration
+                .profiles[
+                    profileIndex
+                ]
+                .updatedAt =
+                    dateProvider()
+        }
+
+        try profilesStore
+            .saveConfiguration(
+                updatedConfiguration
+            )
+
+        guard
+            isActiveProfile
+        else {
+            return
+        }
+
+        remappingEngine
+            .replaceRules(
+                rules
+            )
+    }
+
+    private func profile(
+        id profileID: UUID,
+        in configuration:
+            RemappingProfilesConfiguration
+    ) throws -> RemappingProfile {
+        guard
+            let profile =
+                configuration.profile(
+                    id:
+                        profileID
+                )
+        else {
+            throw RemappingProfileRulesAccessError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        return profile
     }
 
     private func updateState(

@@ -5,19 +5,38 @@
 //  Created by Alessandro Giuriati on 7/16/26.
 //
 
-/// Defines the backend operations required by the Settings window.
+import Foundation
+
+/// Defines the backend operations required by the Rules window.
 ///
-/// The Settings UI can load and replace configured rules and can
-/// temporarily suspend remapping while capturing a physical key.
+/// The interface supports both the temporary active-profile compatibility
+/// operations and explicit profile access through stable UUIDs.
 @MainActor
 protocol RemappingSettingsControlling: AnyObject {
 
-    /// Returns the rules currently stored by the application.
-    func loadConfiguredRules() throws -> [RemapRule]
+    /// Returns the rules belonging to the currently active profile.
+    ///
+    /// Retained temporarily while every caller is migrated to explicit
+    /// profile identity.
+    func loadConfiguredRules()
+        throws -> [RemapRule]
+    /// Returns the rules belonging to one specific profile.
+    func loadConfiguredRules(
+        for profileID: UUID
+    ) throws -> [RemapRule]
 
-    /// Replaces all configured rules.
+    /// Replaces the rules belonging to the currently active profile.
+    ///
+    /// Retained temporarily while every caller is migrated to explicit
+    /// profile identity.
     func replaceConfiguredRules(
         _ rules: [RemapRule]
+    ) throws
+
+    /// Replaces the rules belonging to one specific profile.
+    func replaceConfiguredRules(
+        _ rules: [RemapRule],
+        for profileID: UUID
     ) throws
 
     /// Temporarily suspends remapping during key capture.

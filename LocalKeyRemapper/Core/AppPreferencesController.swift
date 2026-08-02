@@ -27,6 +27,17 @@ protocol AppPreferencesControlling:
             RemappingLaunchBehavior
     ) throws
 
+    /// Replaces the two preferences owned by the unified Home editor.
+    ///
+    /// Concrete implementations should persist both values in one storage
+    /// operation whenever possible.
+    func setHomeConfiguration(
+        launchBehavior:
+            RemappingLaunchBehavior,
+        shortcutConfiguration:
+            RemappingShortcutConfiguration
+    ) throws
+
     /// Updates the most recently observed enabled or disabled state.
     func setLastRemappingEnabled(
         _ isEnabled:
@@ -61,6 +72,45 @@ protocol AppPreferencesControlling:
     ) throws
 }
 
+/// Compatibility implementation for test doubles and lightweight conformers.
+///
+/// `AppPreferencesController` overrides this operation with one atomic store
+/// write. The fallback restores the previous values when either individual
+/// setter fails.
+extension AppPreferencesControlling {
+    func setHomeConfiguration(
+        launchBehavior:
+            RemappingLaunchBehavior,
+        shortcutConfiguration:
+            RemappingShortcutConfiguration
+    ) throws {
+        let previousPreferences =
+            preferences
+
+        do {
+            try setLaunchBehavior(
+                launchBehavior
+            )
+
+            try setShortcutConfiguration(
+                shortcutConfiguration
+            )
+        } catch {
+            try? setLaunchBehavior(
+                previousPreferences
+                    .launchBehavior
+            )
+
+            try? setShortcutConfiguration(
+                previousPreferences
+                    .shortcutConfiguration
+            )
+
+            throw error
+        }
+    }
+}
+
 /// Coordinates in-memory application preferences and local storage.
 ///
 /// The controller stores application behavior and configured shortcuts
@@ -91,6 +141,35 @@ final class AppPreferencesController:
     func loadPreferences() throws {
         preferences =
             try store.loadPreferences()
+    }
+
+    func setHomeConfiguration(
+        launchBehavior:
+            RemappingLaunchBehavior,
+        shortcutConfiguration:
+            RemappingShortcutConfiguration
+    ) throws {
+        guard
+            preferences.launchBehavior
+                != launchBehavior
+                || preferences.shortcutConfiguration
+                    != shortcutConfiguration
+        else {
+            return
+        }
+
+        var updatedPreferences =
+            preferences
+
+        updatedPreferences.launchBehavior =
+            launchBehavior
+
+        updatedPreferences.shortcutConfiguration =
+            shortcutConfiguration
+
+        try saveAndApply(
+            updatedPreferences
+        )
     }
 
     func setLaunchBehavior(

@@ -1,22 +1,23 @@
 //
-//  GlobalShortcutSettingsView.swift
+//  ProfileShortcutConfigurationEditorView.swift
 //  LocalKeyRemapper
 //
-//  Created by Alessandro Giuriati on 7/18/26.
+//  Created by Alessandro Giuriati on 7/31/26.
 //
 
 import AppKit
 
-/// Displays and edits the application's global shortcut configuration.
+/// Displays the temporary shortcut configuration edited for one profile.
 ///
-/// The authoritative configuration is owned by
-/// `HomeConfigurationEditorSession`. This view keeps only temporary
-/// presentation state, such as the field currently being captured or an
-/// incomplete shortcut selection.
+/// The view owns presentation state only. It never persists an override,
+/// changes the active profile, registers a Carbon shortcut, or modifies the
+/// remapping engine.
 ///
-/// It never receives global keyboard input and never persists configuration.
+/// The future sheet controller will read `proposal` and apply the resulting
+/// override through `HomeConfigurationEditorSession` only after the user
+/// explicitly confirms the change.
 @MainActor
-final class GlobalShortcutSettingsView:
+final class ProfileShortcutConfigurationEditorView:
     NSView
 {
     enum CaptureField:
@@ -25,14 +26,6 @@ final class GlobalShortcutSettingsView:
         case toggle
         case enable
         case disable
-    }
-
-    private enum Mode:
-        Int
-    {
-        case disabled = 0
-        case toggle = 1
-        case separate = 2
     }
 
     private final class ShortcutRowView:
@@ -76,11 +69,13 @@ final class GlobalShortcutSettingsView:
             spacing =
                 10
 
-            titleLabel.widthAnchor.constraint(
-                equalToConstant:
-                    150
-            ).isActive =
-                true
+            titleLabel.widthAnchor
+                .constraint(
+                    equalToConstant:
+                        150
+                )
+                .isActive =
+                    true
 
             recordButton.bezelStyle =
                 .rounded
@@ -107,11 +102,13 @@ final class GlobalShortcutSettingsView:
                     "\(identifierPrefix).clear"
                 )
 
-            clearButton.widthAnchor.constraint(
-                equalToConstant:
-                    70
-            ).isActive =
-                true
+            clearButton.widthAnchor
+                .constraint(
+                    equalToConstant:
+                        70
+                )
+                .isActive =
+                    true
 
             cancelButton.title =
                 "Cancel"
@@ -127,11 +124,13 @@ final class GlobalShortcutSettingsView:
             cancelButton.isHidden =
                 true
 
-            cancelButton.widthAnchor.constraint(
-                equalToConstant:
-                    70
-            ).isActive =
-                true
+            cancelButton.widthAnchor
+                .constraint(
+                    equalToConstant:
+                        70
+                )
+                .isActive =
+                    true
 
             setViews(
                 [
@@ -179,31 +178,17 @@ final class GlobalShortcutSettingsView:
                 font
 
             spacing =
-                10 * scale
+                InterfaceLayoutMetrics.scaled(
+                    10,
+                    for:
+                        scale,
+                    minimum:
+                        7,
+                    maximum:
+                        15
+                )
         }
     }
-
-    private static let defaultEnableShortcut =
-        KeyCombination(
-            keyCode:
-                KeyCode.e,
-            modifiers: [
-                .control,
-                .option,
-                .command
-            ]
-        )
-
-    private static let defaultDisableShortcut =
-        KeyCombination(
-            keyCode:
-                KeyCode.d,
-            modifiers: [
-                .control,
-                .option,
-                .command
-            ]
-        )
 
     var onCaptureRequested:
         ((CaptureField) -> Void)?
@@ -211,36 +196,45 @@ final class GlobalShortcutSettingsView:
     var onCaptureCancellationRequested:
         (() -> Void)?
 
-    /// Reports a complete configuration proposed by the user.
+    /// Called whenever the temporary editor state or its validation changes.
     ///
-    /// The receiver decides whether to record it in the Home draft. This view
-    /// never persists or globally registers the configuration itself.
-    var onConfigurationChangeRequested:
-        ((RemappingShortcutConfiguration) -> Void)?
+    /// The receiver may use this to enable or disable the sheet's Apply button.
+    var onStateChange:
+        (() -> Void)?
 
-    /// Performs validation that depends on the current remapping profiles.
+    /// Performs blocking validation that depends on the profile collection.
+    ///
+    /// The closure receives the effective configuration represented by the
+    /// editor. For Use Default this is the current default configuration.
     var onAdditionalValidationRequested:
         ((RemappingShortcutConfiguration) -> String?)?
 
-    /// Provides non-blocking guidance that depends on remapping profiles.
+    /// Provides non-blocking guidance that depends on the profile collection.
     var onAdditionalSuggestionRequested:
         ((RemappingShortcutConfiguration) -> String?)?
 
     private let titleLabel =
         NSTextField(
             labelWithString:
-                "Global shortcuts"
+                "Profile Shortcut"
         )
 
     private let descriptionLabel =
         NSTextField(
             wrappingLabelWithString:
-                "Use one shortcut to toggle remapping, use separate shortcuts to enable and disable it, or turn keyboard control off. Changes are saved with the Home configuration."
+                "Use Default Global Shortcuts, turn shortcuts off for this profile, or configure a custom Toggle or Separate shortcut."
+        )
+
+    private let defaultConfigurationLabel =
+        NSTextField(
+            wrappingLabelWithString:
+                ""
         )
 
     private let modeControl =
         NSSegmentedControl(
             labels: [
+                "Use Default",
                 "Off",
                 "Toggle",
                 "Separate"
@@ -258,7 +252,7 @@ final class GlobalShortcutSettingsView:
             title:
                 "Toggle Remapping",
             identifierPrefix:
-                "globalShortcut.toggle"
+                "profileShortcut.toggle"
         )
 
     private let enableRow =
@@ -266,7 +260,7 @@ final class GlobalShortcutSettingsView:
             title:
                 "Enable Remapping",
             identifierPrefix:
-                "globalShortcut.enable"
+                "profileShortcut.enable"
         )
 
     private let disableRow =
@@ -274,7 +268,7 @@ final class GlobalShortcutSettingsView:
             title:
                 "Disable Remapping",
             identifierPrefix:
-                "globalShortcut.disable"
+                "profileShortcut.disable"
         )
 
     private let statusLabel =
@@ -286,40 +280,39 @@ final class GlobalShortcutSettingsView:
     private let mainStack =
         NSStackView()
 
-    /// Last complete configuration supplied by the Home draft.
-    private var controlledConfiguration:
+    private(set) var draft:
+        ProfileShortcutConfigurationDraft
+
+    private(set) var originalOverride:
+        RemappingShortcutConfiguration?
+
+    private(set) var defaultConfiguration:
         RemappingShortcutConfiguration
-
-    private var toggleShortcut:
-        KeyCombination?
-
-    private var enableShortcut:
-        KeyCombination?
-
-    private var disableShortcut:
-        KeyCombination?
 
     private(set) var activeCaptureField:
         CaptureField?
 
     init(
-        configuration:
+        shortcutConfigurationOverride:
+            RemappingShortcutConfiguration?,
+        shortcutMemory:
+            RemappingProfileShortcutMemory = .empty,
+        defaultConfiguration:
             RemappingShortcutConfiguration
     ) {
-        controlledConfiguration =
-            configuration
+        originalOverride =
+            shortcutConfigurationOverride
 
-        toggleShortcut =
-            AppPreferences
-                .defaultToggleShortcut
+        self.defaultConfiguration =
+            defaultConfiguration
 
-        enableShortcut =
-            Self
-                .defaultEnableShortcut
-
-        disableShortcut =
-            Self
-                .defaultDisableShortcut
+        draft =
+            ProfileShortcutConfigurationDraft(
+                shortcutConfigurationOverride:
+                    shortcutConfigurationOverride,
+                shortcutMemory:
+                    shortcutMemory
+            )
 
         super.init(
             frame:
@@ -327,11 +320,7 @@ final class GlobalShortcutSettingsView:
         )
 
         configureContent()
-
-        load(
-            configuration:
-                configuration
-        )
+        synchronizeControlsFromDraft()
     }
 
     required init?(
@@ -343,58 +332,112 @@ final class GlobalShortcutSettingsView:
         )
     }
 
-    /// Replaces the displayed configuration with the authoritative Home draft.
+    /// Complete override currently represented by the editor.
     ///
-    /// This operation never reports a user change back to the session.
-    func load(
-        configuration:
-            RemappingShortcutConfiguration
-    ) {
-        controlledConfiguration =
-            configuration
+    /// `.complete(nil)` means Use Default.
+    /// `.complete(.disabled)` means explicit Off.
+    var proposal:
+        ProfileShortcutConfigurationOverrideProposal
+    {
+        draft.proposal
+    }
 
-        toggleShortcut =
-            AppPreferences
-                .defaultToggleShortcut
+    /// Effective configuration represented by the current editor controls.
+    ///
+    /// Nil means that the selected custom mode is incomplete.
+    var effectiveConfiguration:
+        RemappingShortcutConfiguration?
+    {
+        proposal.effectiveConfiguration(
+            defaultConfiguration:
+                defaultConfiguration
+        )
+    }
 
-        enableShortcut =
-            Self
-                .defaultEnableShortcut
+    /// Indicates whether the editor represents a change from the profile value
+    /// present when the view was loaded.
+    var hasChanges:
+        Bool
+    {
+        draft.differs(
+            from:
+                originalOverride
+        )
+    }
 
-        disableShortcut =
-            Self
-                .defaultDisableShortcut
-
-        switch configuration {
-        case .disabled:
-            modeControl.selectedSegment =
-                Mode.disabled.rawValue
-
-        case .toggle(
-            let shortcut
-        ):
-            modeControl.selectedSegment =
-                Mode.toggle.rawValue
-
-            toggleShortcut =
-                shortcut
-
-        case .separate(
-            let enable,
-            let disable
-        ):
-            modeControl.selectedSegment =
-                Mode.separate.rawValue
-
-            enableShortcut =
-                enable
-
-            disableShortcut =
-                disable
+    /// Current blocking validation message.
+    ///
+    /// Nil means that Apply may proceed, provided capture is not active.
+    var currentValidationMessage:
+        String?
+    {
+        guard
+            let effectiveConfiguration
+        else {
+            return "Choose every shortcut required by the selected mode."
         }
 
+        do {
+            try GlobalShortcutConfigurationPolicy
+                .validate(
+                    effectiveConfiguration
+                )
+        } catch let error as
+            GlobalShortcutConfigurationError
+        {
+            switch error {
+            case .duplicateShortcut:
+                return "Enable and Disable must use different shortcuts."
+
+            case .insufficientModifiers:
+                return "Every custom shortcut must contain at least one modifier."
+            }
+        } catch {
+            return "The profile shortcut configuration is not valid."
+        }
+
+        return onAdditionalValidationRequested?(
+            effectiveConfiguration
+        )
+    }
+
+    /// True only when the editor is complete, valid, changed, and not capturing.
+    var canApply:
+        Bool
+    {
+        activeCaptureField == nil
+            && hasChanges
+            && currentValidationMessage == nil
+    }
+
+    /// Replaces the complete temporary editor state.
+    ///
+    /// This operation does not report a user edit or modify Home history.
+    func load(
+        shortcutConfigurationOverride:
+            RemappingShortcutConfiguration?,
+        shortcutMemory:
+            RemappingProfileShortcutMemory = .empty,
+        defaultConfiguration:
+            RemappingShortcutConfiguration
+    ) {
         endCapturePrompt()
-        updateControls()
+
+        originalOverride =
+            shortcutConfigurationOverride
+
+        self.defaultConfiguration =
+            defaultConfiguration
+
+        draft =
+            ProfileShortcutConfigurationDraft(
+                shortcutConfigurationOverride:
+                    shortcutConfigurationOverride,
+                shortcutMemory:
+                    shortcutMemory
+            )
+
+        synchronizeControlsFromDraft()
     }
 
     func beginCapturePrompt(
@@ -418,9 +461,11 @@ final class GlobalShortcutSettingsView:
 
         setStatus(
             "Press a key with one or more modifiers. Use Cancel or press Escape to stop recording.",
-            isError:
-                false
+            presentation:
+                .normal
         )
+
+        onStateChange?()
     }
 
     func setCapturedShortcut(
@@ -431,21 +476,20 @@ final class GlobalShortcutSettingsView:
     ) {
         switch field {
         case .toggle:
-            toggleShortcut =
+            draft.toggleShortcut =
                 shortcut
 
         case .enable:
-            enableShortcut =
+            draft.enableShortcut =
                 shortcut
 
         case .disable:
-            disableShortcut =
+            draft.disableShortcut =
                 shortcut
         }
 
         endCapturePrompt()
-        updateControls()
-        reportCompleteConfigurationIfNeeded()
+        refreshState()
     }
 
     func endCapturePrompt() {
@@ -454,71 +498,11 @@ final class GlobalShortcutSettingsView:
 
         restoreButtonTitles()
         updateCaptureControls()
-        refreshChangeState()
+        refreshState()
     }
 
-    /// Complete shortcut configuration currently owned by the Home draft.
-    var authoritativeConfiguration:
-        RemappingShortcutConfiguration
-    {
-        controlledConfiguration
-    }
-
-    /// Complete configuration currently represented by the controls.
-    ///
-    /// Nil means the selected mode still requires one or more shortcuts.
-    var currentConfiguration:
-        RemappingShortcutConfiguration?
-    {
-        proposedConfiguration
-    }
-
-    /// Indicates that local presentation state does not yet match the draft.
-    ///
-    /// This is normally false because complete edits are synchronously reported
-    /// to Home. It remains true for intentionally incomplete shortcut input.
-    var hasTransientEditorChanges:
-        Bool
-    {
-        guard
-            let proposedConfiguration
-        else {
-            return true
-        }
-
-        return proposedConfiguration
-            != controlledConfiguration
-    }
-
-    /// Returns the current blocking message used by Home Save.
-    var currentValidationMessage:
-        String?
-    {
-        guard
-            let proposedConfiguration
-        else {
-            return "Choose every shortcut required by the selected mode."
-        }
-
-        return validationMessage(
-            for:
-                proposedConfiguration
-        )
-    }
-
-    /// Re-evaluates the current editor state against external profile changes.
     func refreshValidationState() {
-        refreshChangeState()
-    }
-
-    /// Shows that the previously stored shortcut could not be restored after a
-    /// local capture session.
-    func showCaptureRestorationFailure() {
-        setStatus(
-            "The previous global shortcut could not be restored. It may now be used by macOS or another application.",
-            isError:
-                true
-        )
+        refreshState()
     }
 
     func applyTextScale(
@@ -528,7 +512,7 @@ final class GlobalShortcutSettingsView:
         titleLabel.font =
             NSFont.systemFont(
                 ofSize:
-                    14 * scale,
+                    16 * scale,
                 weight:
                     .semibold
             )
@@ -537,6 +521,14 @@ final class GlobalShortcutSettingsView:
             NSFont.systemFont(
                 ofSize:
                     13 * scale,
+                weight:
+                    .regular
+            )
+
+        defaultConfigurationLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    12 * scale,
                 weight:
                     .regular
             )
@@ -570,14 +562,82 @@ final class GlobalShortcutSettingsView:
             )
 
         mainStack.spacing =
-            8 * scale
+            InterfaceLayoutMetrics.scaled(
+                8,
+                for:
+                    scale,
+                minimum:
+                    6,
+                maximum:
+                    13
+            )
 
         needsLayout =
             true
     }
 
+    // MARK: - Test support
+
+    var modeForTesting:
+        ProfileShortcutConfigurationMode
+    {
+        draft.mode
+    }
+
+    var defaultDescriptionForTesting:
+        String
+    {
+        defaultConfigurationLabel
+            .stringValue
+    }
+
+    var statusTextForTesting:
+        String
+    {
+        statusLabel.stringValue
+    }
+
+    func setModeForTesting(
+        _ mode:
+            ProfileShortcutConfigurationMode
+    ) {
+        modeControl.selectedSegment =
+            mode.rawValue
+
+        modeChanged()
+    }
+
+    func clearShortcutForTesting(
+        _ field:
+            CaptureField
+    ) {
+        clear(
+            field
+        )
+    }
+
+    func isRowVisibleForTesting(
+        _ field:
+            CaptureField
+    ) -> Bool {
+        !row(
+            for:
+                field
+        )
+        .isHidden
+    }
+
+    private enum StatusPresentation {
+        case normal
+        case suggestion
+        case error
+    }
+
     private func configureContent() {
         descriptionLabel.textColor =
+            .secondaryLabelColor
+
+        defaultConfigurationLabel.textColor =
             .secondaryLabelColor
 
         modeControl.segmentStyle =
@@ -585,7 +645,7 @@ final class GlobalShortcutSettingsView:
 
         modeControl.identifier =
             NSUserInterfaceItemIdentifier(
-                "globalShortcut.mode"
+                "profileShortcut.mode"
             )
 
         modeControl.target =
@@ -648,6 +708,7 @@ final class GlobalShortcutSettingsView:
             [
                 titleLabel,
                 descriptionLabel,
+                defaultConfigurationLabel,
                 modeControl,
                 toggleRow,
                 enableRow,
@@ -665,9 +726,6 @@ final class GlobalShortcutSettingsView:
             .leading
 
         mainStack.translatesAutoresizingMaskIntoConstraints =
-            false
-
-        modeControl.translatesAutoresizingMaskIntoConstraints =
             false
 
         addSubview(
@@ -696,6 +754,16 @@ final class GlobalShortcutSettingsView:
                         bottomAnchor
                 ),
 
+                descriptionLabel.widthAnchor.constraint(
+                    equalTo:
+                        mainStack.widthAnchor
+                ),
+
+                defaultConfigurationLabel.widthAnchor.constraint(
+                    equalTo:
+                        mainStack.widthAnchor
+                ),
+
                 modeControl.widthAnchor.constraint(
                     equalTo:
                         mainStack.widthAnchor
@@ -712,6 +780,11 @@ final class GlobalShortcutSettingsView:
                 ),
 
                 disableRow.widthAnchor.constraint(
+                    equalTo:
+                        mainStack.widthAnchor
+                ),
+
+                statusLabel.widthAnchor.constraint(
                     equalTo:
                         mainStack.widthAnchor
                 )
@@ -752,32 +825,46 @@ final class GlobalShortcutSettingsView:
             cancelAction
     }
 
+    private func synchronizeControlsFromDraft() {
+        modeControl.selectedSegment =
+            draft.mode.rawValue
+
+        defaultConfigurationLabel.stringValue =
+            ProfileShortcutConfigurationPresentation
+                .detailTitle(
+                    for:
+                        nil,
+                    defaultConfiguration:
+                        defaultConfiguration
+                )
+
+        updateControls()
+    }
+
     private func updateControls() {
         toggleRow.isHidden =
-            selectedMode
+            draft.mode
                 != .toggle
 
         enableRow.isHidden =
-            selectedMode
+            draft.mode
                 != .separate
 
         disableRow.isHidden =
-            selectedMode
+            draft.mode
                 != .separate
 
         restoreButtonTitles()
         updateCaptureControls()
-        refreshChangeState()
+        refreshState()
     }
 
     private func updateCaptureControls() {
-        for field in
-            [
-                CaptureField.toggle,
-                CaptureField.enable,
-                CaptureField.disable
-            ]
-        {
+        for field in [
+            CaptureField.toggle,
+            CaptureField.enable,
+            CaptureField.disable
+        ] {
             let shortcutRow =
                 row(
                     for:
@@ -809,19 +896,19 @@ final class GlobalShortcutSettingsView:
         toggleRow.recordButton.title =
             title(
                 for:
-                    toggleShortcut
+                    draft.toggleShortcut
             )
 
         enableRow.recordButton.title =
             title(
                 for:
-                    enableShortcut
+                    draft.enableShortcut
             )
 
         disableRow.recordButton.title =
             title(
                 for:
-                    disableShortcut
+                    draft.disableShortcut
             )
     }
 
@@ -829,7 +916,9 @@ final class GlobalShortcutSettingsView:
         for shortcut:
             KeyCombination?
     ) -> String {
-        guard let shortcut else {
+        guard
+            let shortcut
+        else {
             return "Choose Shortcut…"
         }
 
@@ -840,161 +929,68 @@ final class GlobalShortcutSettingsView:
             )
     }
 
-    private var selectedMode:
-        Mode
-    {
-        Mode(
-            rawValue:
-                modeControl
-                    .selectedSegment
-        ) ?? .disabled
-    }
-
-    private var proposedConfiguration:
-        RemappingShortcutConfiguration?
-    {
-        switch selectedMode {
-        case .disabled:
-            return .disabled
-
-        case .toggle:
-            guard let toggleShortcut else {
-                return nil
-            }
-
-            return .toggle(
-                toggleShortcut
-            )
-
-        case .separate:
-            guard
-                let enableShortcut,
-                let disableShortcut
-            else {
-                return nil
-            }
-
-            return .separate(
-                enable:
-                    enableShortcut,
-                disable:
-                    disableShortcut
-            )
-        }
-    }
-
-    private func validationMessage(
-        for configuration:
-            RemappingShortcutConfiguration
-    ) -> String? {
-        do {
-            try GlobalShortcutConfigurationPolicy
-                .validate(
-                    configuration
-                )
-        } catch let error as
-            GlobalShortcutConfigurationError
-        {
-            switch error {
-            case .duplicateShortcut:
-                return "Enable and Disable must use different shortcuts."
-
-            case .insufficientModifiers:
-                return "Every global shortcut must contain at least one modifier."
-            }
-        } catch {
-            return "The shortcut configuration is not valid."
-        }
-
-        return onAdditionalValidationRequested?(
-            configuration
-        )
-    }
-
-    private func refreshChangeState() {
+    private func refreshState() {
         guard
             activeCaptureField == nil
         else {
+            onStateChange?()
             return
         }
 
-        guard
-            let proposedConfiguration
-        else {
+        if let currentValidationMessage {
             setStatus(
-                "Choose every shortcut required by the selected mode.",
-                isError:
-                    true
+                currentValidationMessage,
+                presentation:
+                    .error
             )
 
+            onStateChange?()
             return
         }
 
-        if let message =
-            validationMessage(
-                for:
-                    proposedConfiguration
-            )
+        if let effectiveConfiguration,
+           let additionalSuggestion =
+               onAdditionalSuggestionRequested?(
+                   effectiveConfiguration
+               )
         {
             setStatus(
-                message,
-                isError:
-                    true
+                additionalSuggestion,
+                presentation:
+                    .suggestion
             )
 
+            onStateChange?()
             return
         }
 
-        if let additionalSuggestion =
-            onAdditionalSuggestionRequested?(
-                proposedConfiguration
-            )
+        if let effectiveConfiguration,
+           let suggestion =
+               GlobalShortcutConfigurationPolicy
+                   .suggestion(
+                       for:
+                           effectiveConfiguration
+                   )
         {
-            setSuggestion(
-                additionalSuggestion
+            setStatus(
+                suggestion.message,
+                presentation:
+                    .suggestion
             )
 
-            return
-        }
-
-        if let suggestion =
-            GlobalShortcutConfigurationPolicy
-                .suggestion(
-                    for:
-                        proposedConfiguration
-                )
-        {
-            setSuggestion(
-                suggestion.message
-            )
-
+            onStateChange?()
             return
         }
 
         setStatus(
-            hasTransientEditorChanges
-                ? "Shortcut changes are waiting to be included in the Home draft."
-                : "Shortcut settings are included in the Home Save workflow.",
-            isError:
-                false
-        )
-    }
-
-    private func reportCompleteConfigurationIfNeeded() {
-        guard
-            let proposedConfiguration,
-            proposedConfiguration
-                != controlledConfiguration
-        else {
-            refreshChangeState()
-            return
-        }
-
-        onConfigurationChangeRequested?(
-            proposedConfiguration
+            hasChanges
+                ? "The profile shortcut change is ready to apply."
+                : "No profile shortcut changes.",
+            presentation:
+                .normal
         )
 
-        refreshChangeState()
+        onStateChange?()
     }
 
     private func row(
@@ -1030,55 +1026,59 @@ final class GlobalShortcutSettingsView:
 
         switch field {
         case .toggle:
-            toggleShortcut =
+            draft.toggleShortcut =
                 nil
 
         case .enable:
-            enableShortcut =
+            draft.enableShortcut =
                 nil
 
         case .disable:
-            disableShortcut =
+            draft.disableShortcut =
                 nil
         }
 
         endCapturePrompt()
         updateControls()
-        reportCompleteConfigurationIfNeeded()
     }
 
     private func setStatus(
         _ message:
             String,
-        isError:
-            Bool
+        presentation:
+            StatusPresentation
     ) {
         statusLabel.stringValue =
             message
 
-        statusLabel.textColor =
-            isError
-                ? .systemRed
-                : .secondaryLabelColor
-    }
+        switch presentation {
+        case .normal:
+            statusLabel.textColor =
+                .secondaryLabelColor
 
-    private func setSuggestion(
-        _ message:
-            String
-    ) {
-        statusLabel.stringValue =
-            message
+        case .suggestion:
+            statusLabel.textColor =
+                .systemOrange
 
-        statusLabel.textColor =
-            .systemOrange
+        case .error:
+            statusLabel.textColor =
+                .systemRed
+        }
     }
 
     @objc
     private func modeChanged() {
         onCaptureCancellationRequested?()
         endCapturePrompt()
+
+        draft.mode =
+            ProfileShortcutConfigurationMode(
+                rawValue:
+                    modeControl.selectedSegment
+            )
+            ?? .useDefault
+
         updateControls()
-        reportCompleteConfigurationIfNeeded()
     }
 
     @objc
