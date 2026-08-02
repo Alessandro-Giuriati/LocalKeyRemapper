@@ -168,13 +168,19 @@ final class MainWindowController:
     private let contentScrollView = NSScrollView()
     private let contentDocumentView = MainContentFlippedView()
 
+    private lazy var pinnedHomeFooterView =
+        PinnedHomeFooterView(
+            statusView:
+                statusLabel,
+            actionsView:
+                homeActionsStack
+        )
+
     private var contentDocumentHeightConstraint:
         NSLayoutConstraint?
 
     private var mainStackTopConstraint:
         NSLayoutConstraint?
-
-    private var isAdjustingWindowFrame = false
 
     private var shortcutCaptureField:
         GlobalShortcutSettingsView.CaptureField?
@@ -278,7 +284,7 @@ final class MainWindowController:
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 780,
+                width: 760,
                 height: 760
             ),
             styleMask: [
@@ -293,14 +299,17 @@ final class MainWindowController:
 
         window.title = "LocalKeyRemapper"
         window.isReleasedWhenClosed = false
+
         window.contentMinSize = NSSize(
-            width: 680,
+            width: 760,
             height: 420
         )
+
         window.contentMaxSize = NSSize(
-            width: 980,
+            width: 1440,
             height: CGFloat.greatestFiniteMagnitude
         )
+
         window.center()
 
         super.init(window: window)
@@ -652,10 +661,20 @@ final class MainWindowController:
     func windowDidResize(
         _ notification: Notification
     ) {
-        guard !isAdjustingWindowFrame else {
+        guard
+            let resizedWindow =
+                notification.object as? NSWindow,
+            !resizedWindow.inLiveResize
+        else {
             return
         }
 
+        updateScrollableContentHeight()
+    }
+
+    func windowDidEndLiveResize(
+        _ notification: Notification
+    ) {
         updateScrollableContentHeight()
     }
 
@@ -668,6 +687,8 @@ final class MainWindowController:
         remappingSectionDescriptionLabel.textColor = .secondaryLabelColor
         launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
         statusLabel.textColor = .secondaryLabelColor
+        statusLabel.isHidden =
+            statusLabel.stringValue.isEmpty
 
         configureRemappingSection()
         configureLaunchBehavior()
@@ -698,9 +719,7 @@ final class MainWindowController:
                 launchBehaviorStack,
                 globalShortcutSettingsView,
                 profilesSectionView,
-                interfaceStack,
-                homeActionsStack,
-                statusLabel
+                interfaceStack
             ],
             in: .leading
         )
@@ -729,6 +748,13 @@ final class MainWindowController:
 
         contentView.addSubview(
             contentScrollView
+        )
+
+        pinnedHomeFooterView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        contentView.addSubview(
+            pinnedHomeFooterView
         )
 
         let mainStackTopConstraint =
@@ -763,6 +789,18 @@ final class MainWindowController:
                         contentView.trailingAnchor
                 ),
                 contentScrollView.bottomAnchor.constraint(
+                    equalTo:
+                        pinnedHomeFooterView.topAnchor
+                ),
+                pinnedHomeFooterView.leadingAnchor.constraint(
+                    equalTo:
+                        contentView.leadingAnchor
+                ),
+                pinnedHomeFooterView.trailingAnchor.constraint(
+                    equalTo:
+                        contentView.trailingAnchor
+                ),
+                pinnedHomeFooterView.bottomAnchor.constraint(
                     equalTo:
                         contentView.bottomAnchor
                 ),
@@ -802,12 +840,6 @@ final class MainWindowController:
                 ),
                 menuBarIconVisibilityStack.widthAnchor.constraint(
                     equalTo: interfaceStack.widthAnchor
-                ),
-                homeActionsStack.widthAnchor.constraint(
-                    equalTo: mainStack.widthAnchor
-                ),
-                statusLabel.widthAnchor.constraint(
-                    equalTo: mainStack.widthAnchor
                 )
             ]
         )
@@ -921,16 +953,6 @@ final class MainWindowController:
             after: interfaceStack
         )
 
-        mainStack.setCustomSpacing(
-            InterfaceLayoutMetrics.scaled(
-                8,
-                for: textScale,
-                minimum: 6,
-                maximum: 12
-            ),
-            after: homeActionsStack
-        )
-
         launchBehaviorStack.spacing =
             InterfaceLayoutMetrics.scaled(
                 5,
@@ -1023,145 +1045,32 @@ final class MainWindowController:
         return requiredHeight
     }
 
+    /// Refreshes the scrollable document and pinned footer without changing
+    /// the user-selected window frame.
+    ///
+    /// The Home content is intentionally scrollable. Content changes must not
+    /// expand the window to the full visible screen height.
     private func requestWindowResizeToFitContent() {
         DispatchQueue.main.async {
             [weak self] in
 
-            self?.resizeWindowToFitContent()
-        }
-    }
+            guard let self else {
+                return
+            }
 
-    private func resizeWindowToFitContent() {
-        guard
-            let window,
-            let screen =
-                window.screen
-                    ?? NSScreen.main
-        else {
-            return
-        }
+            self.pinnedHomeFooterView.needsLayout =
+                true
 
-        window.contentView?.layoutSubtreeIfNeeded()
+            self.window?
+                .contentView?
+                .needsLayout =
+                    true
 
-        let requiredContentHeight =
-            updateScrollableContentHeight()
+            self.window?
+                .contentView?
+                .layoutSubtreeIfNeeded()
 
-        guard requiredContentHeight > 0 else {
-            return
-        }
-
-        let currentContentRect =
-            window.contentRect(
-                forFrameRect:
-                    window.frame
-            )
-
-        let desiredFrameRect =
-            window.frameRect(
-                forContentRect:
-                    NSRect(
-                        origin: .zero,
-                        size:
-                            NSSize(
-                                width:
-                                    currentContentRect.width,
-                                height:
-                                    requiredContentHeight
-                            )
-                    )
-            )
-
-        let minimumFrameRect =
-            window.frameRect(
-                forContentRect:
-                    NSRect(
-                        origin: .zero,
-                        size:
-                            window.contentMinSize
-                    )
-            )
-
-        let visibleFrame =
-            screen.visibleFrame
-
-        let targetHeight =
-            min(
-                max(
-                    desiredFrameRect.height,
-                    minimumFrameRect.height
-                ),
-                visibleFrame.height
-            )
-
-        let preservedTop =
-            min(
-                window.frame.maxY,
-                visibleFrame.maxY
-            )
-
-        var targetFrame =
-            window.frame
-
-        targetFrame.size.height =
-            targetHeight
-
-        targetFrame.origin.y =
-            preservedTop - targetHeight
-
-        if targetFrame.minY
-            < visibleFrame.minY
-        {
-            targetFrame.origin.y =
-                visibleFrame.minY
-        }
-
-        if targetFrame.maxY
-            > visibleFrame.maxY
-        {
-            targetFrame.origin.y =
-                visibleFrame.maxY
-                    - targetHeight
-        }
-
-        targetFrame.origin.x =
-            min(
-                max(
-                    targetFrame.origin.x,
-                    visibleFrame.minX
-                ),
-                visibleFrame.maxX
-                    - targetFrame.width
-            )
-
-        isAdjustingWindowFrame = true
-
-        window.setFrame(
-            targetFrame,
-            display: true,
-            animate: false
-        )
-
-        isAdjustingWindowFrame = false
-
-        updateScrollableContentHeight()
-
-        if requiredContentHeight
-            > contentScrollView
-                .contentView
-                .bounds
-                .height
-        {
-            contentScrollView
-                .contentView
-                .scroll(
-                    to: .zero
-                )
-
-            contentScrollView
-                .reflectScrolledClipView(
-                    contentScrollView
-                        .contentView
-                )
+            self.updateScrollableContentHeight()
         }
     }
 
@@ -2266,8 +2175,20 @@ final class MainWindowController:
         _ message: String,
         isError: Bool
     ) {
-        statusLabel.stringValue = message
+        statusLabel.stringValue =
+            message
+
         statusLabel.textColor =
-            isError ? .systemRed : .secondaryLabelColor
+            isError
+                ? .systemRed
+                : .secondaryLabelColor
+
+        statusLabel.isHidden =
+            message.isEmpty
+
+        pinnedHomeFooterView.needsLayout =
+            true
+
+        requestWindowResizeToFitContent()
     }
 }
