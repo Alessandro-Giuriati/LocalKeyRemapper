@@ -29,6 +29,12 @@ final class StatusBarController:
     private let refreshRemappingStateHandler:
         () -> Void
 
+    private let profilesSnapshotProvider:
+        () throws -> StatusPopoverProfilesSnapshot
+
+    private let activeProfileSelectionHandler:
+        (UUID) throws -> Void
+
     private let openMainWindowHandler:
         () -> Void
 
@@ -57,8 +63,10 @@ final class StatusBarController:
 
         static let size =
             NSSize(
-                width: 25,
-                height: 25
+                width:
+                    25,
+                height:
+                    25
             )
     }
 
@@ -69,6 +77,14 @@ final class StatusBarController:
             AccessibilitySettingsOpening,
         refreshRemappingStateHandler:
             @escaping () -> Void = {},
+        profilesSnapshotProvider:
+            @escaping () throws -> StatusPopoverProfilesSnapshot = {
+                .unavailable
+            },
+        activeProfileSelectionHandler:
+            @escaping (UUID) throws -> Void = {
+                _ in
+            },
         openSettingsHandler:
             @escaping () -> Void,
         increaseTextSizeHandler:
@@ -86,6 +102,12 @@ final class StatusBarController:
 
         self.refreshRemappingStateHandler =
             refreshRemappingStateHandler
+
+        self.profilesSnapshotProvider =
+            profilesSnapshotProvider
+
+        self.activeProfileSelectionHandler =
+            activeProfileSelectionHandler
 
         self.openMainWindowHandler =
             openSettingsHandler
@@ -114,8 +136,11 @@ final class StatusBarController:
 
         update(
             for:
-                remappingController.state
+                remappingController
+                    .state
         )
+
+        refreshProfiles()
     }
 
     /// Refreshes the menu bar icon and popover
@@ -134,6 +159,25 @@ final class StatusBarController:
                 for:
                     state
             )
+    }
+
+    /// Reloads profile names, availability, and active identity without polling.
+    func refreshProfiles() {
+        do {
+            let snapshot =
+                try profilesSnapshotProvider()
+
+            popoverViewController?
+                .updateProfiles(
+                    snapshot
+                )
+
+            popoverViewController?
+                .clearProfileStatus()
+        } catch {
+            popoverViewController?
+                .showProfilesLoadingFailure()
+        }
     }
 
     /// Removes the menu bar item and closes its popover.
@@ -188,14 +232,16 @@ final class StatusBarController:
         switch state {
         case .enabled:
             assetName =
-                StatusIcon.enabledAssetName
+                StatusIcon
+                    .enabledAssetName
 
         case .disabled,
              .enabling,
              .permissionRequired,
              .failed:
             assetName =
-                StatusIcon.disabledAssetName
+                StatusIcon
+                    .disabledAssetName
         }
 
         setStatusIcon(
@@ -286,6 +332,14 @@ final class StatusBarController:
 
                     self?
                         .performPrimaryAction()
+                },
+                activeProfileSelectionHandler: {
+                    [weak self] profileID in
+
+                    self?
+                        .performActiveProfileSelection(
+                            profileID
+                        )
                 },
                 openSettingsHandler: {
                     [weak self] in
@@ -379,8 +433,11 @@ final class StatusBarController:
 
         update(
             for:
-                remappingController.state
+                remappingController
+                    .state
         )
+
+        refreshProfiles()
 
         popover.show(
             relativeTo:
@@ -431,7 +488,8 @@ final class StatusBarController:
     private func configureDisplayedPopoverWindow() {
         guard
             let window =
-                popover.contentViewController?
+                popover
+                    .contentViewController?
                     .view
                     .window
         else {
@@ -467,21 +525,43 @@ final class StatusBarController:
 
     private func performPrimaryAction() {
         if
-            remappingController.state
+            remappingController
+                .state
                 == .permissionRequired
         {
             checkPermissionOrOpenSettings()
             return
         }
 
-        remappingController.toggle()
+        remappingController
+            .toggle()
+    }
+
+    private func performActiveProfileSelection(
+        _ profileID:
+            UUID
+    ) {
+        do {
+            try activeProfileSelectionHandler(
+                profileID
+            )
+
+            refreshProfiles()
+        } catch {
+            refreshProfiles()
+
+            popoverViewController?
+                .showProfileSelectionFailure()
+        }
     }
 
     private func checkPermissionOrOpenSettings() {
-        remappingController.enable()
+        remappingController
+            .enable()
 
         guard
-            remappingController.state
+            remappingController
+                .state
                 == .permissionRequired
         else {
             return

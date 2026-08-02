@@ -7,25 +7,75 @@
 
 import AppKit
 
+/// One profile displayed by the lightweight menu-bar popover.
+///
+/// Identity uses the stable profile UUID. The editable name is presentation
+/// only and is never used to select or persist a profile.
+nonisolated struct StatusPopoverProfileItem:
+    Equatable
+{
+    let id:
+        UUID
+
+    let name:
+        String
+
+    /// Allows the provider to disable a profile defensively when it is not
+    /// available for runtime activation.
+    let isActivatable:
+        Bool
+}
+
+/// Complete profile-selection state displayed by the status popover.
+nonisolated struct StatusPopoverProfilesSnapshot:
+    Equatable
+{
+    let profiles:
+        [StatusPopoverProfileItem]
+
+    let activeProfileID:
+        UUID?
+
+    static let unavailable =
+        StatusPopoverProfilesSnapshot(
+            profiles: [],
+            activeProfileID: nil
+        )
+}
+
 /// Displays the status-bar controls inside a lightweight AppKit popover.
 ///
 /// The view controller contains only interface logic. It does not manage
-/// keyboard events, remapping rules, permissions, or persistence.
+/// keyboard events, remapping rules, permissions, shortcuts, or persistence.
 @MainActor
 final class StatusPopoverViewController:
     NSViewController
 {
     private enum Layout {
-        static let width: CGFloat = 300
-        static let horizontalPadding: CGFloat = 16
-        static let verticalPadding: CGFloat = 14
-        static let sectionSpacing: CGFloat = 12
-        static let controlSpacing: CGFloat = 8
-        static let buttonHeight: CGFloat = 30
+        static let width:
+            CGFloat = 300
+
+        static let horizontalPadding:
+            CGFloat = 16
+
+        static let verticalPadding:
+            CGFloat = 14
+
+        static let controlSpacing:
+            CGFloat = 8
+
+        static let buttonHeight:
+            CGFloat = 30
+
+        static let profileControlHeight:
+            CGFloat = 26
     }
 
     private let primaryActionHandler:
         () -> Void
+
+    private let activeProfileSelectionHandler:
+        (UUID) -> Void
 
     private let openMainWindowHandler:
         () -> Void
@@ -42,10 +92,38 @@ final class StatusPopoverViewController:
     private let quitHandler:
         () -> Void
 
+    private var isUpdatingProfiles =
+        false
+
+    /// Stores the newest authoritative profile snapshot even before AppKit
+    /// lazily loads the popover view for the first time.
+    private var latestProfilesSnapshot =
+        StatusPopoverProfilesSnapshot.unavailable
+
     private let stateLabel =
         NSTextField(
             labelWithString:
                 "Remapping: Off"
+        )
+
+    private let activeProfileLabel =
+        NSTextField(
+            labelWithString:
+                "Active Profile"
+        )
+
+    private let activeProfilePopUpButton =
+        NSPopUpButton(
+            frame:
+                .zero,
+            pullsDown:
+                false
+        )
+
+    private let profileStatusLabel =
+        NSTextField(
+            wrappingLabelWithString:
+                ""
         )
 
     private let primaryActionButton =
@@ -61,6 +139,10 @@ final class StatusPopoverViewController:
     init(
         primaryActionHandler:
             @escaping () -> Void,
+        activeProfileSelectionHandler:
+            @escaping (UUID) -> Void = {
+                _ in
+            },
         openSettingsHandler:
             @escaping () -> Void,
         increaseTextSizeHandler:
@@ -74,6 +156,9 @@ final class StatusPopoverViewController:
     ) {
         self.primaryActionHandler =
             primaryActionHandler
+
+        self.activeProfileSelectionHandler =
+            activeProfileSelectionHandler
 
         self.openMainWindowHandler =
             openSettingsHandler
@@ -97,14 +182,17 @@ final class StatusPopoverViewController:
 
         preferredContentSize =
             NSSize(
-                width: Layout.width,
-                height: 226
+                width:
+                    Layout.width,
+                height:
+                    318
             )
     }
 
     @available(*, unavailable)
     required init?(
-        coder: NSCoder
+        coder:
+            NSCoder
     ) {
         fatalError(
             "init(coder:) has not been implemented"
@@ -112,11 +200,16 @@ final class StatusPopoverViewController:
     }
 
     override func loadView() {
-        let rootView = NSView()
+        let rootView =
+            NSView()
 
-        view = rootView
+        view =
+            rootView
 
         configureInterface()
+        applyProfilesSnapshot(
+            latestProfilesSnapshot
+        )
     }
 
     /// Updates the visible controls from the real backend state.
@@ -165,22 +258,240 @@ final class StatusPopoverViewController:
             primaryActionButton.isEnabled =
                 true
 
-        case .failed(let failure):
+        case .failed(
+            let failure
+        ):
             updateForFailure(
                 failure
             )
         }
     }
 
+    /// Rebuilds the profile menu from one authoritative snapshot.
+    ///
+    /// Menu items carry UUID strings as represented objects. Profile names are
+    /// never used as identity, so renaming and duplicate-looking draft names
+    /// cannot activate the wrong profile.
+    func updateProfiles(
+        _ snapshot:
+            StatusPopoverProfilesSnapshot
+    ) {
+        latestProfilesSnapshot =
+            snapshot
+
+        // AppKit creates popover content lazily. Keep the snapshot now and
+        // render it from loadView() when the view does not exist yet.
+        guard isViewLoaded else {
+            return
+        }
+
+        applyProfilesSnapshot(
+            snapshot
+        )
+    }
+
+    private func applyProfilesSnapshot(
+        _ snapshot:
+            StatusPopoverProfilesSnapshot
+    ) {
+        isUpdatingProfiles =
+            true
+
+        defer {
+            isUpdatingProfiles =
+                false
+        }
+
+        activeProfilePopUpButton
+            .removeAllItems()
+
+        guard
+            !snapshot
+                .profiles
+                .isEmpty
+        else {
+            let unavailableItem =
+                NSMenuItem(
+                    title:
+                        "Profiles Unavailable",
+                    action:
+                        nil,
+                    keyEquivalent:
+                        ""
+                )
+
+            unavailableItem.isEnabled =
+                false
+
+            activeProfilePopUpButton
+                .menu?
+                .addItem(
+                    unavailableItem
+                )
+
+            activeProfilePopUpButton
+                .isEnabled =
+                    false
+
+            return
+        }
+
+        for profile in snapshot.profiles {
+            let item =
+                NSMenuItem(
+                    title:
+                        profile.name,
+                    action:
+                        nil,
+                    keyEquivalent:
+                        ""
+                )
+
+            item.representedObject =
+                profile
+                    .id
+                    .uuidString
+
+            item.isEnabled =
+                profile
+                    .isActivatable
+
+            item.toolTip =
+                profile.isActivatable
+                    ? "Activate “\(profile.name)” immediately."
+                    : "Save “\(profile.name)” in Home before activating it."
+
+            activeProfilePopUpButton
+                .menu?
+                .addItem(
+                    item
+                )
+        }
+
+        if
+            let activeProfileID =
+                snapshot.activeProfileID,
+            let activeIndex =
+                snapshot
+                    .profiles
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == activeProfileID
+                        }
+                    )
+        {
+            activeProfilePopUpButton
+                .selectItem(
+                    at:
+                        activeIndex
+                )
+        } else {
+            activeProfilePopUpButton
+                .selectItem(
+                    at:
+                        0
+                )
+        }
+
+        let activatableProfileCount =
+            snapshot
+                .profiles
+                .filter(
+                    \.isActivatable
+                )
+                .count
+
+        activeProfilePopUpButton
+            .isEnabled =
+                activatableProfileCount > 1
+
+        activeProfilePopUpButton.toolTip =
+            activatableProfileCount > 1
+                ? "Select the active remapping profile."
+                : "No other saved profile is available."
+    }
+
+    func showProfileSelectionFailure() {
+        profileStatusLabel.stringValue =
+            "The profile could not be activated. The previous profile remains active."
+
+        profileStatusLabel.textColor =
+            .systemRed
+
+        profileStatusLabel.isHidden =
+            false
+    }
+
+    func showProfilesLoadingFailure() {
+        updateProfiles(
+            .unavailable
+        )
+
+        profileStatusLabel.stringValue =
+            "The profiles could not be loaded."
+
+        profileStatusLabel.textColor =
+            .systemRed
+
+        profileStatusLabel.isHidden =
+            false
+    }
+
+    func clearProfileStatus() {
+        profileStatusLabel.stringValue =
+            ""
+
+        profileStatusLabel.isHidden =
+            true
+    }
+
     private func configureInterface() {
         stateLabel.font =
             NSFont.systemFont(
-                ofSize: 13,
-                weight: .semibold
+                ofSize:
+                    13,
+                weight:
+                    .semibold
             )
 
         stateLabel.lineBreakMode =
             .byTruncatingTail
+
+        activeProfileLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    12,
+                weight:
+                    .semibold
+            )
+
+        activeProfilePopUpButton.target =
+            self
+
+        activeProfilePopUpButton.action =
+            #selector(
+                activeProfileChanged
+            )
+
+        activeProfilePopUpButton
+            .setAccessibilityLabel(
+                "Active remapping profile"
+            )
+
+        profileStatusLabel.font =
+            NSFont.systemFont(
+                ofSize:
+                    11,
+                weight:
+                    .regular
+            )
+
+        profileStatusLabel.maximumNumberOfLines =
+            2
+
+        profileStatusLabel.isHidden =
+            true
 
         primaryActionButton.target =
             self
@@ -198,7 +509,9 @@ final class StatusPopoverViewController:
                 title:
                     "Open LocalKeyRemapper",
                 action:
-                    #selector(openMainWindow)
+                    #selector(
+                        openMainWindow
+                    )
             )
 
         let textSizeRow =
@@ -209,7 +522,9 @@ final class StatusPopoverViewController:
                 title:
                     "Quit LocalKeyRemapper",
                 action:
-                    #selector(quitApplication)
+                    #selector(
+                        quitApplication
+                    )
             )
 
         let firstSeparator =
@@ -222,6 +537,9 @@ final class StatusPopoverViewController:
             NSStackView(
                 views: [
                     stateLabel,
+                    activeProfileLabel,
+                    activeProfilePopUpButton,
+                    profileStatusLabel,
                     primaryActionButton,
                     firstSeparator,
                     openMainWindowButton,
@@ -248,6 +566,8 @@ final class StatusPopoverViewController:
         )
 
         for fullWidthView in [
+            activeProfilePopUpButton,
+            profileStatusLabel,
             primaryActionButton,
             firstSeparator,
             openMainWindowButton,
@@ -263,29 +583,46 @@ final class StatusPopoverViewController:
                     equalTo:
                         stack.widthAnchor
                 )
-                .isActive = true
+                .isActive =
+                    true
         }
 
-        primaryActionButton.heightAnchor
+        activeProfilePopUpButton
+            .heightAnchor
             .constraint(
                 equalToConstant:
-                    Layout.buttonHeight
+                    Layout
+                        .profileControlHeight
             )
-            .isActive = true
+            .isActive =
+                true
 
-        openMainWindowButton.heightAnchor
+        primaryActionButton
+            .heightAnchor
             .constraint(
                 equalToConstant:
                     Layout.buttonHeight
             )
-            .isActive = true
+            .isActive =
+                true
 
-        quitButton.heightAnchor
+        openMainWindowButton
+            .heightAnchor
             .constraint(
                 equalToConstant:
                     Layout.buttonHeight
             )
-            .isActive = true
+            .isActive =
+                true
+
+        quitButton
+            .heightAnchor
+            .constraint(
+                equalToConstant:
+                    Layout.buttonHeight
+            )
+            .isActive =
+                true
 
         NSLayoutConstraint.activate(
             [
@@ -349,7 +686,8 @@ final class StatusPopoverViewController:
     private func makeTextSizeRow()
         -> NSView
     {
-        let container = NSView()
+        let container =
+            NSView()
 
         let titleLabel =
             NSTextField(
@@ -471,7 +809,8 @@ final class StatusPopoverViewController:
     private func makeSeparator()
         -> NSBox
     {
-        let separator = NSBox()
+        let separator =
+            NSBox()
 
         separator.boxType =
             .separator
@@ -502,6 +841,31 @@ final class StatusPopoverViewController:
 
         primaryActionButton.isEnabled =
             true
+    }
+
+    @objc
+    private func activeProfileChanged() {
+        guard
+            !isUpdatingProfiles,
+            let representedObject =
+                activeProfilePopUpButton
+                    .selectedItem?
+                    .representedObject
+                    as? String,
+            let profileID =
+                UUID(
+                    uuidString:
+                        representedObject
+                )
+        else {
+            return
+        }
+
+        clearProfileStatus()
+
+        activeProfileSelectionHandler(
+            profileID
+        )
     }
 
     @objc

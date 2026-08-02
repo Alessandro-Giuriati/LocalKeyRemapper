@@ -216,7 +216,7 @@ final class HomeProfilesSectionView:
 
     private let descriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "Create independent remapping configurations, choose their shortcuts, and select which profile will become active after Home Save."
+            "Create independent remapping configurations, choose their shortcuts, and select the active profile immediately."
     )
 
     private let searchField = NSSearchField()
@@ -1537,9 +1537,20 @@ final class HomeProfilesSectionView:
         activeButton.state = configuration.activeProfileID == profile.id
             ? .on
             : .off
-        activeButton.isEnabled = editorSession != nil
+        let canActivateImmediately =
+            editorSession?
+                .canActivateProfileImmediately(
+                    profile.id
+                )
+                == true
+
+        activeButton.isEnabled =
+            canActivateImmediately
+
         activeButton.toolTip =
-            "Set “\(profile.name)” as the active profile after Home Save."
+            canActivateImmediately
+                ? "Activate “\(profile.name)” immediately."
+                : "Save “\(profile.name)” before activating it."
         activeButton.setAccessibilityLabel(
             "Set “\(profile.name)” as active profile"
         )
@@ -1597,7 +1608,6 @@ final class HomeProfilesSectionView:
 
         return cell
     }
-
     private func makeRulesCell(for profile: RemappingProfile) -> NSView {
         let ruleCount = persistedRuleCounts[profile.id]
             ?? profile.rules.count
@@ -2147,7 +2157,7 @@ final class HomeProfilesSectionView:
 
             if let profile = configuration.profile(id: profileID) {
                 onStatusChange?(
-                    "“\(profile.name)” will become active after Home Save.",
+                    "“\(profile.name)” is now the active profile.",
                     false
                 )
             }

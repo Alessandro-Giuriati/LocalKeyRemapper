@@ -39,6 +39,11 @@ final class AppCoordinator: NSObject {
     private var homeConfigurationEditorSession:
         HomeConfigurationEditorSession?
 
+    /// Result waiting for the shared Home session to synchronize its immediate
+    /// active-profile identity before notifications are published.
+    private var pendingImmediateProfileActivationResult:
+        HomeConfigurationSaveTransactionResult?
+
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
@@ -454,6 +459,17 @@ final class AppCoordinator: NSObject {
             .onChange =
                 nil
 
+        homeConfigurationEditorSession?
+            .onActiveProfileChangeRequested =
+                nil
+
+        homeConfigurationEditorSession?
+            .onImmediateActiveProfileChangeCommitted =
+                nil
+
+        pendingImmediateProfileActivationResult =
+            nil
+
         homeConfigurationEditorSession =
             nil
 
@@ -579,6 +595,34 @@ final class AppCoordinator: NSObject {
 
                 self?.remappingController
                     .refreshAccessibilityPermission()
+            },
+            profilesSnapshotProvider: {
+                [weak self] in
+
+                guard
+                    let self
+                else {
+                    throw HomeConfigurationSaveError
+                        .editorSessionUnavailable
+                }
+
+                return try self
+                    .statusPopoverProfilesSnapshot()
+            },
+            activeProfileSelectionHandler: {
+                [weak self] profileID in
+
+                guard
+                    let self
+                else {
+                    throw HomeConfigurationSaveError
+                        .editorSessionUnavailable
+                }
+
+                try self
+                    .activateProfileFromInterface(
+                        profileID
+                    )
             },
             openSettingsHandler: {
                 [weak self] in
@@ -925,7 +969,7 @@ final class AppCoordinator: NSObject {
                 appPreferencesController
                     .preferences
 
-            homeConfigurationEditorSession =
+            let editorSession =
                 HomeConfigurationEditorSession(
                     snapshot:
                         HomeConfigurationSnapshot(
@@ -938,6 +982,36 @@ final class AppCoordinator: NSObject {
                                     .shortcutConfiguration
                         )
                 )
+
+            editorSession
+                .onActiveProfileChangeRequested = {
+                    [weak self] profileID in
+
+                    guard
+                        let self
+                    else {
+                        throw HomeConfigurationSaveError
+                            .editorSessionUnavailable
+                    }
+
+                    self
+                        .pendingImmediateProfileActivationResult =
+                            try self
+                                .activatePersistedProfile(
+                                    profileID
+                                )
+                }
+
+            editorSession
+                .onImmediateActiveProfileChangeCommitted = {
+                    [weak self] in
+
+                    self?
+                        .publishPendingImmediateProfileActivationChanges()
+                }
+
+            homeConfigurationEditorSession =
+                editorSession
         } catch {
             // The application can still launch using its existing controls.
             // A storage failure must not create a partial Home draft.
@@ -1047,6 +1121,227 @@ final class AppCoordinator: NSObject {
 
         return try profilesStore
             .loadConfiguration()
+    }
+
+    /// Uses the shared Home session when available so Home and the menu-bar
+    /// popover always follow the same immediate activation path.
+    private func activateProfileFromInterface(
+        _ profileID:
+            UUID
+    ) throws {
+        if let homeConfigurationEditorSession {
+            try homeConfigurationEditorSession
+                .setActiveProfile(
+                    profileID
+                )
+            return
+        }
+
+        let result =
+            try activatePersistedProfile(
+                profileID
+            )
+
+        publishImmediateProfileActivationChanges(
+            result
+        )
+    }
+
+    /// Activates exactly one persisted profile without saving unrelated Home
+    /// draft edits.
+    ///
+    /// The existing Home transaction supplies validation, shortcut
+    /// registration, persistence rollback, and final runtime-rule replacement.
+    /// Its input is built from persisted state, so pending profile names,
+    /// additions, deletions, launch behavior, and shortcut edits are untouched.
+    private func activatePersistedProfile(
+        _ profileID:
+            UUID
+    ) throws -> HomeConfigurationSaveTransactionResult {
+        let persistedProfilesConfiguration =
+            try profilesStore
+                .loadConfiguration()
+
+        guard
+            persistedProfilesConfiguration
+                .profile(
+                    id:
+                        profileID
+                ) != nil
+        else {
+            throw RemappingProfileRulesAccessError
+                .profileNotFound(
+                    profileID
+                )
+        }
+
+        guard
+            persistedProfilesConfiguration
+                .activeProfileID
+                != profileID
+        else {
+            return HomeConfigurationSaveTransactionResult(
+                committedSnapshot:
+                    HomeConfigurationSnapshot(
+                        profilesConfiguration:
+                            persistedProfilesConfiguration,
+                        launchBehavior:
+                            appPreferencesController
+                                .preferences
+                                .launchBehavior,
+                        shortcutConfiguration:
+                            appPreferencesController
+                                .preferences
+                                .shortcutConfiguration
+                    ),
+                previousProfilesConfiguration:
+                    persistedProfilesConfiguration,
+                previousShortcutConfiguration:
+                    appPreferencesController
+                        .preferences
+                        .shortcutConfiguration
+            )
+        }
+
+        var proposedProfilesConfiguration =
+            persistedProfilesConfiguration
+
+        proposedProfilesConfiguration
+            .activeProfileID =
+                profileID
+
+        let preferences =
+            appPreferencesController
+                .preferences
+
+        return try homeConfigurationSaveTransaction
+            .commit(
+                HomeConfigurationSnapshot(
+                    profilesConfiguration:
+                        proposedProfilesConfiguration,
+                    launchBehavior:
+                        preferences.launchBehavior,
+                    shortcutConfiguration:
+                        preferences
+                            .shortcutConfiguration
+                )
+            )
+    }
+
+    /// Completes the two-stage Home activation after the editor session has
+    /// synchronized its saved baseline and draft.
+    private func publishPendingImmediateProfileActivationChanges() {
+        guard
+            let result =
+                pendingImmediateProfileActivationResult
+        else {
+            return
+        }
+
+        pendingImmediateProfileActivationResult =
+            nil
+
+        publishImmediateProfileActivationChanges(
+            result
+        )
+    }
+
+    /// Publishes changes only after the shared Home session has synchronized
+    /// its active UUID, ensuring Rules and Home validation observe one state.
+    private func publishImmediateProfileActivationChanges(
+        _ result:
+            HomeConfigurationSaveTransactionResult
+    ) {
+        if result.shortcutConfigurationChanged
+            || result.effectiveShortcutConfigurationChanged
+        {
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .globalShortcutConfigurationDidChange,
+                object:
+                    nil
+            )
+        }
+
+        if result.profilesChanged {
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .remappingRulesDidChange,
+                object:
+                    nil
+            )
+        }
+
+        statusBarController?
+            .refreshProfiles()
+    }
+
+    /// Builds the operational popover from persisted profiles that still
+    /// exist in the current Home draft.
+    ///
+    /// Draft-only additions are excluded because they cannot run yet. Profiles
+    /// pending deletion are also hidden so the menu bar never reactivates an
+    /// item the user has already removed from the visible Home draft. Persisted
+    /// names remain authoritative until Home Save succeeds.
+    private func statusPopoverProfilesSnapshot()
+        throws -> StatusPopoverProfilesSnapshot
+    {
+        let persistedConfiguration =
+            try profilesStore
+                .loadConfiguration()
+
+        let visiblePersistedProfileIDs:
+            Set<UUID>
+
+        if let homeConfigurationEditorSession {
+            visiblePersistedProfileIDs =
+                Set(
+                    homeConfigurationEditorSession
+                        .draft
+                        .profiles
+                        .map(
+                            \.id
+                        )
+                )
+        } else {
+            visiblePersistedProfileIDs =
+                Set(
+                    persistedConfiguration
+                        .profiles
+                        .map(
+                            \.id
+                        )
+                )
+        }
+
+        return StatusPopoverProfilesSnapshot(
+            profiles:
+                persistedConfiguration
+                    .profiles
+                    .filter {
+                        visiblePersistedProfileIDs
+                            .contains(
+                                $0.id
+                            )
+                    }
+                    .map {
+                        profile in
+
+                        StatusPopoverProfileItem(
+                            id:
+                                profile.id,
+                            name:
+                                profile.name,
+                            isActivatable:
+                                true
+                        )
+                    },
+            activeProfileID:
+                persistedConfiguration
+                    .activeProfileID
+        )
     }
 
     private func loadAppPreferences() {
