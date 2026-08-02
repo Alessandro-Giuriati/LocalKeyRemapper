@@ -26,6 +26,10 @@ nonisolated enum HomeConfigurationEditorSessionError:
 
     /// The proposed active UUID does not identify a draft profile.
     case invalidActiveProfile(UUID)
+
+    /// The requested profile exists only in the Home draft and must be saved
+    /// before it can become the persisted runtime profile.
+    case profileNotPersisted(UUID)
 }
 
 /// Owns the editable Home draft, saved baseline, and session-only history.
@@ -38,6 +42,19 @@ final class HomeConfigurationEditorSession {
     var onChange:
         (() -> Void)?
 
+    /// Persists and applies a requested active profile before the editor
+    /// session synchronizes its saved baseline and draft.
+    ///
+    /// AppCoordinator installs this handler. Isolated tests and compatibility
+    /// call sites without a handler retain the former draft-only behavior.
+    var onActiveProfileChangeRequested:
+        ((UUID) throws -> Void)?
+
+    /// Runs synchronously after an immediate activation has updated both the
+    /// saved baseline and the current Home draft.
+    var onImmediateActiveProfileChangeCommitted:
+        (() -> Void)?
+
     private let history:
         HomeConfigurationHistory
 
@@ -48,6 +65,11 @@ final class HomeConfigurationEditorSession {
     /// to remove Rules sessions only after deletion has become committed.
     private var knownProfileIDs:
         Set<UUID>
+
+    /// After an immediate runtime activation, Undo and Redo must preserve the
+    /// persisted active profile even when older history predates that save.
+    private var protectsImmediatelyActiveProfileDuringHistory =
+        false
 
     private(set) var savedSnapshot:
         HomeConfigurationSnapshot
@@ -513,10 +535,30 @@ final class HomeConfigurationEditorSession {
         )
     }
 
-    /// Selects the profile proposed for runtime use after successful Home Save.
+    /// Returns whether a profile already belongs to the persisted Home
+    /// baseline and may therefore become active immediately.
+    func canActivateProfileImmediately(
+        _ profileID:
+            UUID
+    ) -> Bool {
+        savedSnapshot
+            .profile(
+                id:
+                    profileID
+            )
+            != nil
+    }
+
+    /// Requests immediate activation of one saved profile.
     ///
-    /// This updates the Home draft only. It does not immediately replace engine
-    /// rules or recreate an event tap.
+    /// In the normal application flow, AppCoordinator first validates,
+    /// persists, registers the effective shortcut, and replaces runtime rules.
+    /// Only after that operation succeeds are the saved baseline and draft
+    /// synchronized. Other unsaved Home edits remain untouched and no Home
+    /// Undo/Redo entry is created.
+    ///
+    /// The fallback path preserves compatibility for isolated tests and legacy
+    /// call sites that construct this session without an activation handler.
     func setActiveProfile(
         _ profileID:
             UUID
@@ -543,13 +585,37 @@ final class HomeConfigurationEditorSession {
             return
         }
 
-        applyNewAction(
-            .setActiveProfile(
-                before:
-                    previousProfileID,
-                after:
-                    profileID
+        guard
+            let onActiveProfileChangeRequested
+        else {
+            applyNewAction(
+                .setActiveProfile(
+                    before:
+                        previousProfileID,
+                    after:
+                        profileID
+                )
             )
+            return
+        }
+
+        guard
+            canActivateProfileImmediately(
+                profileID
+            )
+        else {
+            throw HomeConfigurationEditorSessionError
+                .profileNotPersisted(
+                    profileID
+                )
+        }
+
+        try onActiveProfileChangeRequested(
+            profileID
+        )
+
+        synchronizeImmediatelyActiveProfile(
+            profileID
         )
     }
 
@@ -626,9 +692,12 @@ final class HomeConfigurationEditorSession {
         }
 
         draft =
-            action.applyingUndo(
-                to:
-                    draft
+            preservingImmediatelyActiveProfile(
+                in:
+                    action.applyingUndo(
+                        to:
+                            draft
+                    )
             )
 
         recordKnownDraftProfileIDs()
@@ -645,13 +714,93 @@ final class HomeConfigurationEditorSession {
         }
 
         draft =
-            action.applyingRedo(
-                to:
-                    draft
+            preservingImmediatelyActiveProfile(
+                in:
+                    action.applyingRedo(
+                        to:
+                            draft
+                    )
             )
 
         recordKnownDraftProfileIDs()
         onChange?()
+    }
+
+    private func synchronizeImmediatelyActiveProfile(
+        _ profileID:
+            UUID
+    ) {
+        draft.activeProfileID =
+            profileID
+
+        savedSnapshot.activeProfileID =
+            profileID
+
+        protectsImmediatelyActiveProfileDuringHistory =
+            true
+
+        onChange?()
+        onImmediateActiveProfileChangeCommitted?()
+    }
+
+    private func preservingImmediatelyActiveProfile(
+        in snapshot:
+            HomeConfigurationSnapshot
+    ) -> HomeConfigurationSnapshot {
+        guard
+            protectsImmediatelyActiveProfileDuringHistory
+        else {
+            return snapshot
+        }
+
+        let activeProfileID =
+            savedSnapshot.activeProfileID
+
+        var protectedSnapshot =
+            snapshot
+
+        if
+            protectedSnapshot.profile(
+                id:
+                    activeProfileID
+            ) == nil,
+            let activeProfile =
+                savedSnapshot.profile(
+                    id:
+                        activeProfileID
+                )
+        {
+            let savedIndex =
+                savedSnapshot
+                    .profiles
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == activeProfileID
+                        }
+                    )
+                    ?? protectedSnapshot
+                        .profiles
+                        .count
+
+            protectedSnapshot
+                .profiles
+                .insert(
+                    activeProfile,
+                    at:
+                        min(
+                            savedIndex,
+                            protectedSnapshot
+                                .profiles
+                                .count
+                        )
+                )
+        }
+
+        protectedSnapshot.activeProfileID =
+            activeProfileID
+
+        return protectedSnapshot
     }
 
     private func applyNewAction(
