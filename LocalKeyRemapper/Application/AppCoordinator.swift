@@ -172,6 +172,11 @@ final class AppCoordinator:
     private let ruleEditorSessionRegistry:
         ProfileRuleEditorSessionRegistry
 
+    /// Lightweight sorting and filtering state retained independently from the
+    /// Rules window so the complete AppKit hierarchy can be released on close.
+    private let remappingRulesPresentationModel =
+        RemappingRulesPresentationModel()
+
     private var homeConfigurationEditorSession:
         HomeConfigurationEditorSession?
 
@@ -191,14 +196,6 @@ final class AppCoordinator:
     /// Stable identity currently displayed by the reusable Rules window.
     private var displayedRulesProfileID:
         UUID?
-
-    /// Profile IDs whose session has been created during this app process.
-    ///
-    /// This avoids creating editor sessions merely to inspect Quit state while
-    /// still allowing unsaved Rules from previously displayed profiles to be
-    /// detected after the reusable window is rebound.
-    private var knownRuleEditorSessionProfileIDs:
-        Set<UUID> = []
 
     private var isObservingWorkspaceActivation = false
 
@@ -539,11 +536,6 @@ final class AppCoordinator:
         mainWindowController?
             .endActiveCapture()
 
-        knownRuleEditorSessionProfileIDs
-            .insert(
-                profileID
-            )
-
         let ruleEditorSession =
             ruleEditorSessionRegistry
                 .session(
@@ -571,6 +563,15 @@ final class AppCoordinator:
 
         displayedRulesProfileID =
             profileID
+
+        // The reusable Rules window has detached from the previous profile's
+        // session. Any inactive session without unsaved changes or Undo/Redo
+        // history can now be released and recreated lazily when needed again.
+        ruleEditorSessionRegistry
+            .removeDiscardableSessions(
+                excluding:
+                    profileID
+            )
 
         controller.showWindow(
             nil
@@ -713,20 +714,8 @@ final class AppCoordinator:
     private func unsavedRuleProfileIDs()
         -> [UUID]
     {
-        knownRuleEditorSessionProfileIDs
-            .filter {
-                profileID in
-
-                let session =
-                    ruleEditorSessionRegistry
-                        .session(
-                            for:
-                                profileID
-                        )
-
-                return session.isInitialized
-                    && session.hasUnsavedChanges
-            }
+        ruleEditorSessionRegistry
+            .profileIDsWithUnsavedChanges
             .sorted {
                 first,
                 second in
@@ -1127,9 +1116,6 @@ final class AppCoordinator:
         rulesWindowAppPreferencesController
             .homeShortcutConfigurationProvider =
                 nil
-
-        knownRuleEditorSessionProfileIDs
-            .removeAll()
 
         ruleEditorSessionRegistry
             .removeAllSessions()
@@ -1538,6 +1524,8 @@ final class AppCoordinator:
                     profile.name,
                 ruleEditorSession:
                     ruleEditorSession,
+                presentationModel:
+                    remappingRulesPresentationModel,
                 increaseTextSizeHandler: {
                     [weak self] in
 
@@ -1561,7 +1549,49 @@ final class AppCoordinator:
         remappingRulesWindowController =
             controller
 
+        controller.onClose = {
+            [weak self] closedController in
+
+            self?.handleRulesWindowClosed(
+                closedController
+            )
+        }
+
         return controller
+    }
+
+    /// Releases the complete Rules controller and AppKit view hierarchy after
+    /// the window delegate confirms that the user has closed it. Only
+    /// recoverable editor data and the lightweight presentation model may
+    /// remain in memory.
+    private func handleRulesWindowClosed(
+        _ closedController:
+            RemappingRulesWindowController
+    ) {
+        guard
+            remappingRulesWindowController
+                === closedController
+        else {
+            return
+        }
+
+        remappingRulesWindowController =
+            nil
+
+        displayedRulesProfileID =
+            nil
+
+        rulesWindowAppPreferencesController.profileID =
+            nil
+
+        // The controller performs its window teardown synchronously after this
+        // callback returns. Do not enqueue a closure that captures the closed
+        // controller, because that would extend the lifetime of the complete UI.
+
+        // A clean session with no Undo/Redo state is no longer needed once its
+        // UI has closed. Sessions containing recoverable work remain retained.
+        ruleEditorSessionRegistry
+            .removeDiscardableSessions()
     }
 
     /// Connects Rules-related validation to the latest Home draft.
@@ -1692,11 +1722,6 @@ final class AppCoordinator:
         )
 
         for profileID in committedDeletionIDs {
-            knownRuleEditorSessionProfileIDs
-                .remove(
-                    profileID
-                )
-
             ruleEditorSessionRegistry
                 .removeSession(
                     for:

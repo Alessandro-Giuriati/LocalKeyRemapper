@@ -922,8 +922,15 @@ final class RemappingRulesWindowController:
     private var ruleEditorSession: RemappingRuleEditorSession
 
     /// Owns presentation-only sorting and filtering state.
-    private let presentationModel =
-        RemappingRulesPresentationModel()
+    private let presentationModel:
+        RemappingRulesPresentationModel
+
+    /// Called after the Rules window has completed its normal close workflow.
+    ///
+    /// The coordinator uses this callback to release the complete controller and
+    /// AppKit hierarchy. The closure must not retain the controller.
+    var onClose:
+        ((RemappingRulesWindowController) -> Void)?
 
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
@@ -1083,6 +1090,8 @@ final class RemappingRulesWindowController:
         profileID: UUID,
         profileName: String,
         ruleEditorSession: RemappingRuleEditorSession,
+        presentationModel: RemappingRulesPresentationModel =
+            RemappingRulesPresentationModel(),
         increaseTextSizeHandler: @escaping () -> Void,
         decreaseTextSizeHandler: @escaping () -> Void,
         resetTextSizeHandler: @escaping () -> Void,
@@ -1102,6 +1111,9 @@ final class RemappingRulesWindowController:
 
         self.ruleEditorSession =
             ruleEditorSession
+
+        self.presentationModel =
+            presentationModel
 
         self.increaseTextSizeHandler =
             increaseTextSizeHandler
@@ -1344,6 +1356,83 @@ final class RemappingRulesWindowController:
         exceptionsWindowController = nil
     }
 
+    /// Permanently releases the closed Rules window and its complete AppKit
+    /// hierarchy after the close notification has finished.
+    ///
+    /// The editor session and lightweight presentation model are owned outside
+    /// the window and therefore remain available only when their state is worth
+    /// preserving. No keyboard input is persisted or logged during teardown.
+    func releaseWindowResourcesAfterClosing() {
+        prepareForApplicationTermination()
+        removeAllRuleRows()
+
+        activeHeaderView.onSortRequested =
+            nil
+
+        activeHeaderView.onGlobalToggleRequested =
+            nil
+
+        reverseHeaderView.onSortRequested =
+            nil
+
+        reverseHeaderView.onGlobalToggleRequested =
+            nil
+
+        issuesFilterView.onSortRequested =
+            nil
+
+        issuesFilterView.onValidationFilterToggle =
+            nil
+
+        issuesFilterView.onWarningFilterToggle =
+            nil
+
+        sourceFilterControl.onCaptureRequested =
+            nil
+
+        sourceFilterControl.onClearRequested =
+            nil
+
+        destinationFilterControl.onCaptureRequested =
+            nil
+
+        destinationFilterControl.onClearRequested =
+            nil
+
+        if let rulesWindow =
+            window as? RemappingRulesWindow
+        {
+            rulesWindow.flagsChangedHandler =
+                nil
+
+            rulesWindow.keyDownHandler =
+                nil
+
+            rulesWindow.undoHandler =
+                nil
+
+            rulesWindow.redoHandler =
+                nil
+
+            rulesWindow.canUndoHandler =
+                nil
+
+            rulesWindow.canRedoHandler =
+                nil
+        }
+
+        window?.delegate =
+            nil
+
+        window?.contentView =
+            nil
+
+        // NSWindowController owns this property strongly. Clearing it releases
+        // the closed window and the remaining top-level AppKit objects.
+        window =
+            nil
+    }
+
     func windowDidBecomeKey(
         _ notification: Notification
     ) {
@@ -1553,8 +1642,30 @@ final class RemappingRulesWindowController:
     func windowWillClose(
         _ notification: Notification
     ) {
-        endKeyCapture()
-        exceptionsWindowController = nil
+        prepareForApplicationTermination()
+
+        let closeHandler =
+            onClose
+
+        onClose =
+            nil
+
+        closeHandler?(
+            self
+        )
+
+        // NSWindowController installs its own private will-close observer when
+        // initialized with a window. Let AppKit finish delivering the current
+        // close notification before clearing the owned window. The weak capture
+        // is essential: this queued cleanup must never extend the controller's
+        // lifetime. If AppKit has already released the controller, deinit will
+        // naturally release its remaining window-owned resources.
+        DispatchQueue.main.async {
+            [weak self] in
+
+            self?
+                .releaseWindowResourcesAfterClosing()
+        }
     }
 
     private func configureConfigurationChangeObservation() {

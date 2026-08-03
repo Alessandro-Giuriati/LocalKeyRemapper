@@ -7,14 +7,16 @@
 
 import Foundation
 
-/// Retains one independent Rules editor session for each remapping profile.
+/// Retains independent Rules editor sessions only while they contain state
+/// that must survive profile switching.
 ///
-/// Sessions are identified exclusively by the profile UUID. Closing or
-/// rebinding the reusable Rules window therefore does not destroy a profile's
-/// in-memory Undo/Redo history.
+/// A session is retained when it belongs to the currently displayed profile,
+/// contains unsaved changes, or still owns Undo/Redo history. Clean inactive
+/// sessions with no history can be released and recreated lazily from the
+/// profile configuration when needed again.
 ///
-/// The registry stores editor state only in memory. It does not persist
-/// keyboard input, editing history, or captured key presses.
+/// The registry stores editor state only in memory. It does not persist,
+/// log, or transmit keyboard input, editing history, or captured key presses.
 @MainActor
 final class ProfileRuleEditorSessionRegistry {
 
@@ -34,12 +36,42 @@ final class ProfileRuleEditorSessionRegistry {
             sessionFactory
     }
 
+    /// IDs belonging to initialized sessions that currently contain unsaved
+    /// Rules changes.
+    ///
+    /// Reading this value never creates a new session.
+    var profileIDsWithUnsavedChanges:
+        Set<UUID>
+    {
+        var profileIDs:
+            Set<UUID> = []
+
+        for (
+            profileID,
+            session
+        ) in sessionsByProfileID {
+            guard
+                session.isInitialized,
+                session.hasUnsavedChanges
+            else {
+                continue
+            }
+
+            profileIDs.insert(
+                profileID
+            )
+        }
+
+        return profileIDs
+    }
+
     /// Returns the existing session for a profile or creates it lazily.
     ///
-    /// Repeated requests using the same UUID return the same object, preserving
-    /// that profile's draft, saved baseline, Undo stack, and Redo stack.
+    /// Repeated requests using the same UUID return the same object while that
+    /// session remains retained.
     func session(
-        for profileID: UUID
+        for profileID:
+            UUID
     ) -> RemappingRuleEditorSession {
         if let existingSession =
             sessionsByProfileID[
@@ -60,13 +92,61 @@ final class ProfileRuleEditorSessionRegistry {
         return newSession
     }
 
-    /// Removes the session belonging to one profile.
+    /// Releases inactive sessions that contain no user state worth preserving.
+    ///
+    /// A session is discardable only when:
+    /// - it does not belong to the protected profile;
+    /// - it contains no unsaved Rules changes;
+    /// - it contains no Undo or Redo entries.
+    ///
+    /// The profile's persisted Rules remain available through the profiles
+    /// configuration and will initialize a new session when needed again.
+    @discardableResult
+    func removeDiscardableSessions(
+        excluding protectedProfileID:
+            UUID? = nil
+    ) -> Set<UUID> {
+        var removableProfileIDs:
+            Set<UUID> = []
+
+        for (
+            profileID,
+            session
+        ) in sessionsByProfileID {
+            guard
+                profileID
+                    != protectedProfileID,
+                !session.hasUnsavedChanges,
+                session.historyEntryCount
+                    == 0
+            else {
+                continue
+            }
+
+            removableProfileIDs.insert(
+                profileID
+            )
+        }
+
+        for profileID in
+            removableProfileIDs
+        {
+            sessionsByProfileID
+                .removeValue(
+                    forKey:
+                        profileID
+                )
+        }
+
+        return removableProfileIDs
+    }
+
+    /// Removes the session belonging to one permanently deleted profile.
     ///
     /// This must be called only when profile deletion becomes committed.
-    /// Removing a profile from an unsaved Home draft must not discard its
-    /// Rules history prematurely.
     func removeSession(
-        for profileID: UUID
+        for profileID:
+            UUID
     ) {
         sessionsByProfileID
             .removeValue(
