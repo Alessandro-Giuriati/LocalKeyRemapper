@@ -16,9 +16,145 @@ nonisolated enum HomeConfigurationSaveError:
     case editorSessionUnavailable
 }
 
+/// Describes unsaved or unfinished editing work found before normal Quit.
+///
+/// The value contains no key input and is never persisted or logged. It is
+/// assembled only when macOS asks whether the application may terminate.
+nonisolated struct ApplicationUnsavedChangesSummary:
+    Equatable
+{
+    let hasHomeChanges:
+        Bool
+
+    let unsavedRuleProfileNames:
+        [String]
+
+    let hasOpenExceptionsEditor:
+        Bool
+
+    var hasChanges:
+        Bool
+    {
+        hasHomeChanges
+            || !unsavedRuleProfileNames
+                .isEmpty
+            || hasOpenExceptionsEditor
+    }
+
+    var informativeText:
+        String
+    {
+        var components:
+            [String] = []
+
+        if hasHomeChanges {
+            components.append(
+                "unsaved Home changes"
+            )
+        }
+
+        if unsavedRuleProfileNames.count == 1,
+           let profileName =
+                unsavedRuleProfileNames
+                    .first
+        {
+            components.append(
+                "unsaved remapping rules in “\(profileName)”"
+            )
+        } else if
+            !unsavedRuleProfileNames
+                .isEmpty
+        {
+            components.append(
+                "unsaved remapping rules in \(unsavedRuleProfileNames.count) profiles"
+            )
+        }
+
+        if hasOpenExceptionsEditor {
+            components.append(
+                "an unfinished Custom Exceptions editor"
+            )
+        }
+
+        let workDescription =
+            Self.joinedDescription(
+                components
+            )
+
+        return "LocalKeyRemapper has \(workDescription). Quitting without saving will discard this work and clear the session-only Undo and Redo history."
+    }
+
+    private static func joinedDescription(
+        _ components:
+            [String]
+    ) -> String {
+        switch components.count {
+        case 0:
+            return "no unsaved changes"
+
+        case 1:
+            return components[0]
+
+        case 2:
+            return components[0]
+                + " and "
+                + components[1]
+
+        default:
+            return components
+                .dropLast()
+                .joined(
+                    separator:
+                        ", "
+                )
+                + ", and "
+                + (
+                    components
+                        .last
+                    ?? ""
+                )
+        }
+    }
+}
+
 /// Creates and connects the main application components.
 @MainActor
-final class AppCoordinator: NSObject {
+final class AppCoordinator:
+    NSObject,
+    ApplicationLifecycleCoordinating
+{
+    private struct PendingRuleSave {
+        let profileID:
+            UUID
+
+        let profileName:
+            String
+
+        let rules:
+            [RemapRule]
+
+        let wasPersistedBeforeQuit:
+            Bool
+
+        let session:
+            RemappingRuleEditorSession
+    }
+
+    private struct ApplicationTerminationSaveIssue:
+        Error
+    {
+        enum Destination {
+            case home
+            case rules(UUID)
+        }
+
+        let destination:
+            Destination
+
+        let message:
+            String
+    }
+
     private let permissionService: AccessibilityPermissionService
     private let profilesStore: UserDefaultsRemappingProfilesStore
     private let rulesValidator: RemappingRulesValidator
@@ -55,6 +191,14 @@ final class AppCoordinator: NSObject {
     /// Stable identity currently displayed by the reusable Rules window.
     private var displayedRulesProfileID:
         UUID?
+
+    /// Profile IDs whose session has been created during this app process.
+    ///
+    /// This avoids creating editor sessions merely to inspect Quit state while
+    /// still allowing unsaved Rules from previously displayed profiles to be
+    /// detected after the reusable window is rebound.
+    private var knownRuleEditorSessionProfileIDs:
+        Set<UUID> = []
 
     private var isObservingWorkspaceActivation = false
 
@@ -395,6 +539,11 @@ final class AppCoordinator: NSObject {
         mainWindowController?
             .endActiveCapture()
 
+        knownRuleEditorSessionProfileIDs
+            .insert(
+                profileID
+            )
+
         let ruleEditorSession =
             ruleEditorSessionRegistry
                 .session(
@@ -433,6 +582,492 @@ final class AppCoordinator: NSObject {
     func applicationDidBecomeActive() {
         remappingController
             .refreshAccessibilityPermission()
+    }
+
+    /// Handles every normal macOS termination request in one place.
+    ///
+    /// Both the native application menu and the optional menu-bar popover call
+    /// `NSApplication.terminate(_:)`, so they reach this method through
+    /// `AppDelegate.applicationShouldTerminate(_:)` just like Command-Q and
+    /// Quit from the Dock.
+    func applicationShouldTerminate()
+        -> NSApplication.TerminateReply
+    {
+        mainWindowController?
+            .endActiveCapture()
+
+        remappingRulesWindowController?
+            .endActiveCapture()
+
+        let summary =
+            applicationUnsavedChangesSummary()
+
+        guard
+            summary.hasChanges
+        else {
+            return .terminateNow
+        }
+
+        NSApplication.shared
+            .activate(
+                ignoringOtherApps:
+                    true
+            )
+
+        let alert =
+            NSAlert()
+
+        alert.messageText =
+            "Save changes before quitting?"
+
+        alert.informativeText =
+            summary.informativeText
+
+        alert.alertStyle =
+            .warning
+
+        alert.addButton(
+            withTitle:
+                "Save All"
+        )
+
+        alert.addButton(
+            withTitle:
+                "Quit Without Saving"
+        )
+
+        alert.addButton(
+            withTitle:
+                "Cancel"
+        )
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveAllChangesBeforeTermination()
+                ? .terminateNow
+                : .terminateCancel
+
+        case .alertSecondButtonReturn:
+            return .terminateNow
+
+        default:
+            return .terminateCancel
+        }
+    }
+
+    private func applicationUnsavedChangesSummary()
+        -> ApplicationUnsavedChangesSummary
+    {
+        let hasHomeChanges =
+            mainWindowController?
+                .hasUnsavedChangesForApplicationTermination
+            ?? homeConfigurationEditorSession?
+                .hasUnsavedChanges
+            ?? false
+
+        let unsavedProfileIDs =
+            unsavedRuleProfileIDs()
+
+        let draftConfiguration =
+            homeConfigurationEditorSession?
+                .draft
+                .profilesConfiguration
+
+        let persistedConfiguration =
+            try? profilesStore
+                .loadConfiguration()
+
+        let profileNames =
+            unsavedProfileIDs
+                .map {
+                    profileID in
+
+                    draftConfiguration?
+                        .profile(
+                            id:
+                                profileID
+                        )?
+                        .name
+                    ?? persistedConfiguration?
+                        .profile(
+                            id:
+                                profileID
+                        )?
+                        .name
+                    ?? "Unavailable Profile"
+                }
+                .sorted()
+
+        return ApplicationUnsavedChangesSummary(
+            hasHomeChanges:
+                hasHomeChanges,
+            unsavedRuleProfileNames:
+                profileNames,
+            hasOpenExceptionsEditor:
+                remappingRulesWindowController?
+                    .hasOpenExceptionsEditorForApplicationTermination
+                == true
+        )
+    }
+
+    private func unsavedRuleProfileIDs()
+        -> [UUID]
+    {
+        knownRuleEditorSessionProfileIDs
+            .filter {
+                profileID in
+
+                let session =
+                    ruleEditorSessionRegistry
+                        .session(
+                            for:
+                                profileID
+                        )
+
+                return session.isInitialized
+                    && session.hasUnsavedChanges
+            }
+            .sorted {
+                first,
+                second in
+
+                first.uuidString
+                    < second.uuidString
+            }
+    }
+
+    /// Saves every safe, complete Home and Rules draft before termination.
+    ///
+    /// Existing profiles save Rules first so Home validation sees their newest
+    /// mappings. Draft-only profiles save Home first so their UUID exists in
+    /// storage, then save Rules. All drafts are preflighted before the first
+    /// write. If a later storage operation fails, Quit is cancelled and every
+    /// still-unsaved draft remains open in memory.
+    private func saveAllChangesBeforeTermination()
+        -> Bool
+    {
+        let mainController =
+            getOrCreateMainWindowController()
+
+        if let blockingMessage =
+            mainController
+                .applicationTerminationSaveBlockingMessage
+        {
+            mainController
+                .showApplicationTerminationIssue(
+                    blockingMessage
+                )
+
+            return false
+        }
+
+        if remappingRulesWindowController?
+            .hasOpenExceptionsEditorForApplicationTermination
+            == true
+        {
+            remappingRulesWindowController?
+                .showApplicationTerminationIssue(
+                    "Save Exceptions or choose Cancel in the open Custom Exceptions editor before using Save All."
+                )
+
+            return false
+        }
+
+        do {
+            let draftConfiguration =
+                try currentHomeProfilesConfiguration()
+
+            let persistedConfiguration =
+                try profilesStore
+                    .loadConfiguration()
+
+            let pendingRuleSaves =
+                try preflightPendingRuleSaves(
+                    draftConfiguration:
+                        draftConfiguration,
+                    persistedConfiguration:
+                        persistedConfiguration
+                )
+
+            for pendingSave in
+                pendingRuleSaves
+                    .filter({
+                        $0.wasPersistedBeforeQuit
+                    })
+            {
+                guard
+                    persistRuleChangesBeforeTermination(
+                        pendingSave
+                    )
+                else {
+                    return false
+                }
+            }
+
+            if mainController
+                .hasUnsavedChangesForApplicationTermination,
+               !mainController
+                    .saveChangesForApplicationTermination()
+            {
+                return false
+            }
+
+            for pendingSave in
+                pendingRuleSaves
+                    .filter({
+                        !$0.wasPersistedBeforeQuit
+                    })
+            {
+                guard
+                    persistRuleChangesBeforeTermination(
+                        pendingSave
+                    )
+                else {
+                    return false
+                }
+            }
+
+            return true
+        } catch let issue
+            as ApplicationTerminationSaveIssue
+        {
+            presentApplicationTerminationSaveIssue(
+                issue
+            )
+
+            return false
+        } catch {
+            mainController
+                .showApplicationTerminationIssue(
+                    "Save All could not be completed. No unsaved draft was discarded, and LocalKeyRemapper will remain open."
+                )
+
+            return false
+        }
+    }
+
+    private func preflightPendingRuleSaves(
+        draftConfiguration:
+            RemappingProfilesConfiguration,
+        persistedConfiguration:
+            RemappingProfilesConfiguration
+    ) throws -> [PendingRuleSave] {
+        let persistedProfileIDs =
+            Set(
+                persistedConfiguration
+                    .profiles
+                    .map(
+                        \.id
+                    )
+            )
+
+        let defaultShortcutConfiguration =
+            homeConfigurationEditorSession?
+                .draft
+                .shortcutConfiguration
+            ?? appPreferencesController
+                .preferences
+                .shortcutConfiguration
+
+        return try unsavedRuleProfileIDs()
+            .map {
+                profileID in
+
+                let session =
+                    ruleEditorSessionRegistry
+                        .session(
+                            for:
+                                profileID
+                        )
+
+                guard
+                    let draftProfile =
+                        draftConfiguration
+                            .profile(
+                                id:
+                                    profileID
+                            )
+                else {
+                    let persistedName =
+                        persistedConfiguration
+                            .profile(
+                                id:
+                                    profileID
+                            )?
+                            .name
+                        ?? "this profile"
+
+                    throw ApplicationTerminationSaveIssue(
+                        destination:
+                            .home,
+                        message:
+                            "“\(persistedName)” is pending deletion in Home but also has unsaved Rules. Restore the profile or discard its Rules changes before using Save All."
+                    )
+                }
+
+                guard
+                    let rules =
+                        session
+                            .completeRules
+                else {
+                    throw ApplicationTerminationSaveIssue(
+                        destination:
+                            .rules(
+                                profileID
+                            ),
+                        message:
+                            "Complete every highlighted rule in “\(draftProfile.name)” before using Save All."
+                    )
+                }
+
+                do {
+                    try rulesValidator
+                        .validate(
+                            rules
+                        )
+                } catch {
+                    throw ApplicationTerminationSaveIssue(
+                        destination:
+                            .rules(
+                                profileID
+                            ),
+                        message:
+                            "Correct the highlighted rule validation issue in “\(draftProfile.name)” before using Save All."
+                    )
+                }
+
+                if draftConfiguration
+                    .activeProfileID
+                    == profileID
+                {
+                    let effectiveShortcutConfiguration =
+                        EffectiveRemappingShortcutConfigurationResolver
+                            .resolve(
+                                profile:
+                                    draftProfile,
+                                defaultConfiguration:
+                                    defaultShortcutConfiguration
+                            )
+
+                    do {
+                        try RemappingShortcutRuleConflictPolicy
+                            .validate(
+                                rules:
+                                    rules,
+                                shortcutConfiguration:
+                                    effectiveShortcutConfiguration
+                            )
+                    } catch let conflict
+                        as RemappingShortcutRuleConflict
+                    {
+                        throw ApplicationTerminationSaveIssue(
+                            destination:
+                                .rules(
+                                    profileID
+                                ),
+                            message:
+                                conflict.message
+                        )
+                    }
+                }
+
+                return PendingRuleSave(
+                    profileID:
+                        profileID,
+                    profileName:
+                        draftProfile.name,
+                    rules:
+                        rules,
+                    wasPersistedBeforeQuit:
+                        persistedProfileIDs
+                            .contains(
+                                profileID
+                            ),
+                    session:
+                        session
+                )
+            }
+    }
+
+    private func persistRuleChangesBeforeTermination(
+        _ pendingSave:
+            PendingRuleSave
+    ) -> Bool {
+        do {
+            try remappingController
+                .replaceConfiguredRules(
+                    pendingSave.rules,
+                    for:
+                        pendingSave.profileID
+                )
+
+            pendingSave.session
+                .markCurrentRulesAsSaved(
+                    pendingSave.rules
+                )
+
+            NotificationCenter.default.post(
+                name:
+                    AppConfigurationNotification
+                        .remappingRulesDidChange,
+                object:
+                    nil
+            )
+
+            return true
+        } catch let conflict
+            as RemappingShortcutRuleConflict
+        {
+            showRemappingRulesWindow(
+                for:
+                    pendingSave.profileID
+            )
+
+            remappingRulesWindowController?
+                .showApplicationTerminationIssue(
+                    conflict.message
+                )
+
+            return false
+        } catch {
+            showRemappingRulesWindow(
+                for:
+                    pendingSave.profileID
+            )
+
+            remappingRulesWindowController?
+                .showApplicationTerminationIssue(
+                    "The Rules in “\(pendingSave.profileName)” could not be saved. LocalKeyRemapper will remain open and the draft was preserved."
+                )
+
+            return false
+        }
+    }
+
+    private func presentApplicationTerminationSaveIssue(
+        _ issue:
+            ApplicationTerminationSaveIssue
+    ) {
+        switch issue.destination {
+        case .home:
+            getOrCreateMainWindowController()
+                .showApplicationTerminationIssue(
+                    issue.message
+                )
+
+        case .rules(
+            let profileID
+        ):
+            showRemappingRulesWindow(
+                for:
+                    profileID
+            )
+
+            remappingRulesWindowController?
+                .showApplicationTerminationIssue(
+                    issue.message
+                )
+        }
     }
 
     /// Stops active system components before
@@ -492,6 +1127,9 @@ final class AppCoordinator: NSObject {
         rulesWindowAppPreferencesController
             .homeShortcutConfigurationProvider =
                 nil
+
+        knownRuleEditorSessionProfileIDs
+            .removeAll()
 
         ruleEditorSessionRegistry
             .removeAllSessions()
@@ -1054,6 +1692,11 @@ final class AppCoordinator: NSObject {
         )
 
         for profileID in committedDeletionIDs {
+            knownRuleEditorSessionProfileIDs
+                .remove(
+                    profileID
+                )
+
             ruleEditorSessionRegistry
                 .removeSession(
                     for:
