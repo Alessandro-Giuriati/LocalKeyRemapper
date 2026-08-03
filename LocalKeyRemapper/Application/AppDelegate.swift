@@ -7,13 +7,58 @@
 
 import AppKit
 
+/// The application-lifecycle surface used by `AppDelegate`.
+///
+/// Keeping this boundary small makes the macOS termination hook directly
+/// testable without constructing the remapping backend or installing an event
+/// tap. The production implementation is `AppCoordinator`.
+@MainActor
+protocol ApplicationLifecycleCoordinating:
+    AnyObject
+{
+    func start()
+    func applicationDidBecomeActive()
+    func applicationShouldTerminate()
+        -> NSApplication.TerminateReply
+    func showMainWindow()
+    func stop()
+}
+
 @MainActor
 final class AppDelegate:
     NSObject,
     NSApplicationDelegate
 {
+    private let appCoordinatorFactory:
+        @MainActor () -> any ApplicationLifecycleCoordinating
+
     private var appCoordinator:
-        AppCoordinator?
+        (any ApplicationLifecycleCoordinating)?
+
+    override init() {
+        appCoordinatorFactory = {
+            AppCoordinator()
+        }
+
+        super.init()
+    }
+
+    /// Test-only injection point for lifecycle behavior.
+    ///
+    /// Production startup always uses `init()` and creates `AppCoordinator`.
+    init(
+        appCoordinator:
+            any ApplicationLifecycleCoordinating
+    ) {
+        self.appCoordinator =
+            appCoordinator
+
+        appCoordinatorFactory = {
+            appCoordinator
+        }
+
+        super.init()
+    }
 
     /// Unit tests are injected into the application process.
     ///
@@ -43,7 +88,8 @@ final class AppDelegate:
         }
 
         let appCoordinator =
-            AppCoordinator()
+            self.appCoordinator
+                ?? appCoordinatorFactory()
 
         self.appCoordinator =
             appCoordinator
@@ -73,6 +119,20 @@ final class AppDelegate:
         }
 
         return true
+    }
+
+    /// Central termination gate used by every normal macOS Quit path.
+    ///
+    /// `Command-Q`, the application menu, the optional menu-bar popover, the
+    /// Dock, and system termination requests all reach this delegate method
+    /// when they call `NSApplication.terminate(_:)`.
+    func applicationShouldTerminate(
+        _ sender:
+            NSApplication
+    ) -> NSApplication.TerminateReply {
+        appCoordinator?
+            .applicationShouldTerminate()
+            ?? .terminateNow
     }
 
     func applicationWillTerminate(

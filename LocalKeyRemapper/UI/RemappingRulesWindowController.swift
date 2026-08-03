@@ -9,6 +9,35 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 
+/// Converts unexpected Rules Save failures into concise user-facing guidance.
+///
+/// Validation and shortcut conflicts are handled separately by the Rules
+/// window. This resolver covers persistence and profile-access failures while
+/// preserving a generic fallback for unrelated errors.
+nonisolated enum RemappingRulesSaveErrorMessage {
+    static let unsavedProfile =
+        "This profile hasn’t been saved yet. Click Save in the Home window, then return here and click Save Rules."
+
+    static let generic =
+        "The remapping rules could not be saved."
+
+    static func message(
+        for error: Error
+    ) -> String {
+        guard
+            let accessError =
+                error as? RemappingProfileRulesAccessError
+        else {
+            return generic
+        }
+
+        switch accessError {
+        case .profileNotFound:
+            return unsavedProfile
+        }
+    }
+}
+
 /// A reusable rules window that receives local key events only while the user
 /// explicitly records a source or destination combination.
 ///
@@ -1259,6 +1288,41 @@ final class RemappingRulesWindowController:
     /// or before the application terminates.
     func endActiveCapture() {
         endKeyCapture()
+    }
+
+    /// An open Custom Exceptions sheet owns a separate local draft.
+    ///
+    /// The application-level Save All flow deliberately does not guess whether
+    /// that sheet should be committed or cancelled. It blocks termination until
+    /// the user explicitly chooses Save Exceptions or Cancel.
+    var hasOpenExceptionsEditorForApplicationTermination:
+        Bool
+    {
+        exceptionsWindowController
+            != nil
+    }
+
+    /// Brings the affected Rules editor forward after Save All is blocked or a
+    /// profile-specific persistence operation fails.
+    func showApplicationTerminationIssue(
+        _ message:
+            String
+    ) {
+        showWindow(
+            nil
+        )
+
+        setStatus(
+            message,
+            isError:
+                true
+        )
+
+        exceptionsWindowController?
+            .window?
+            .makeKeyAndOrderFront(
+                nil
+            )
     }
 
     func prepareForApplicationTermination() {
@@ -4498,7 +4562,11 @@ final class RemappingRulesWindowController:
             return false
         } catch {
             setStatus(
-                "The remapping rules could not be saved.",
+                RemappingRulesSaveErrorMessage
+                    .message(
+                        for:
+                            error
+                    ),
                 isError: true
             )
 

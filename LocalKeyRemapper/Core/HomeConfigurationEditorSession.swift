@@ -30,6 +30,13 @@ nonisolated enum HomeConfigurationEditorSessionError:
     /// The requested profile exists only in the Home draft and must be saved
     /// before it can become the persisted runtime profile.
     case profileNotPersisted(UUID)
+
+    /// A destructive profile removal cannot proceed because its own recovery
+    /// action cannot fit inside the bounded in-memory Home history.
+    case undoHistoryCapacityExceeded(
+        required: Int,
+        maximum: Int
+    )
 }
 
 /// Owns the editable Home draft, saved baseline, and session-only history.
@@ -113,6 +120,49 @@ final class HomeConfigurationEditorSession {
         Bool
     {
         history.canRedo
+    }
+
+    /// Profiles that would disappear from the Home draft if Undo ran now.
+    ///
+    /// The operation is preview-only: neither the draft nor the history stacks
+    /// are changed. The Home window uses this information to request explicit
+    /// confirmation before an Undo can begin a destructive profile deletion.
+    var profilesRemovedByNextUndo:
+        [RemappingProfile]
+    {
+        guard
+            let action =
+                history.nextUndoAction
+        else {
+            return []
+        }
+
+        let candidateSnapshot =
+            preservingImmediatelyActiveProfile(
+                in:
+                    action.applyingUndo(
+                        to:
+                            draft
+                    )
+            )
+
+        let remainingProfileIDs =
+            Set(
+                candidateSnapshot
+                    .profiles
+                    .map(
+                        \.id
+                    )
+            )
+
+        return draft
+            .profiles
+            .filter {
+                !remainingProfileIDs
+                    .contains(
+                        $0.id
+                    )
+            }
     }
 
     var historyEntryCount:
@@ -522,16 +572,35 @@ final class HomeConfigurationEditorSession {
                 )
         }
 
-        applyNewAction(
-            .removeProfile(
-                profile:
-                    draft
-                        .profiles[
-                            profileIndex
-                        ],
-                index:
-                    profileIndex
+        let action =
+            HomeConfigurationAction
+                .removeProfile(
+                    profile:
+                        draft
+                            .profiles[
+                                profileIndex
+                            ],
+                    index:
+                        profileIndex
+                )
+
+        guard
+            history.canRetainNewEntry(
+                action
             )
+        else {
+            throw HomeConfigurationEditorSessionError
+                .undoHistoryCapacityExceeded(
+                    required:
+                        action.estimatedPayloadSize,
+                    maximum:
+                        history
+                            .maximumEstimatedPayloadSizeLimit
+                )
+        }
+
+        applyNewAction(
+            action
         )
     }
 
@@ -637,13 +706,61 @@ final class HomeConfigurationEditorSession {
         )
     }
 
+    /// Refreshes recoverable history snapshots before the current draft is
+    /// persisted.
+    ///
+    /// Rules are saved independently from Home and are therefore not copied
+    /// into Home history after every Rules Save. When this Home Save would
+    /// delete a currently persisted profile, the matching historical profile
+    /// snapshots are refreshed with its latest persisted Rules. The operation
+    /// is atomic and remains entirely in RAM.
+    func prepareHistoryForSavingCurrentDraft(
+        using persistedConfiguration:
+            RemappingProfilesConfiguration
+    ) throws {
+        let draftProfileIDs =
+            Set(
+                draft
+                    .profiles
+                    .map(
+                        \.id
+                    )
+            )
+
+        let persistedProfileIDs =
+            Set(
+                persistedConfiguration
+                    .profiles
+                    .map(
+                        \.id
+                    )
+            )
+
+        let profileIDsDeletedBySave =
+            persistedProfileIDs
+                .subtracting(
+                    draftProfileIDs
+                )
+
+        try history
+            .refreshRecoverableProfiles(
+                for:
+                    profileIDsDeletedBySave,
+                using:
+                    persistedConfiguration,
+                from:
+                    draft
+            )
+    }
+
     /// Updates the saved baseline without clearing Undo or Redo.
     ///
     /// Pass the normalized snapshot actually committed by the save transaction
     /// when persistence trims profile names or otherwise canonicalizes data.
     /// The returned IDs identify every profile that existed since the previous
     /// successful save but is absent from the newly committed configuration.
-    /// Those Rules sessions may now be removed permanently.
+    /// Those Rules sessions may now be removed because recoverable profile
+    /// data remains in the bounded, session-only Home history.
     @discardableResult
     func markCurrentDraftAsSaved(
         _ committedSnapshot:

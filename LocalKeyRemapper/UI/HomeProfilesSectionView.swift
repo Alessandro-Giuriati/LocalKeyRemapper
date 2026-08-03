@@ -2283,7 +2283,7 @@ final class HomeProfilesSectionView:
         let alert = NSAlert()
         alert.messageText = "Delete “\(profile.name)”?"
         alert.informativeText =
-            "This will remove the profile and all of its remapping rules and exceptions. You can undo this change until the application is closed."
+            "This will remove the profile and all of its remapping rules and exceptions from the Home draft. You can restore it with Undo during the current application session, even after saving Home. Closing the application clears Undo and Redo history."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete Profile")
         alert.addButton(withTitle: "Cancel")
@@ -2300,9 +2300,27 @@ final class HomeProfilesSectionView:
             }
 
             onStatusChange?(
-                "“\(profile.name)” was removed from the Home draft.",
+                "“\(profile.name)” was removed from the Home draft. Use Undo during this application session to restore it, including after saving Home.",
                 false
             )
+        } catch let error
+            as HomeConfigurationEditorSessionError
+        {
+            reloadPresentation()
+
+            switch error {
+            case .undoHistoryCapacityExceeded:
+                onStatusChange?(
+                    "The profile was not removed because its recovery data cannot fit inside the in-memory Undo and Redo history limit.",
+                    true
+                )
+
+            default:
+                onStatusChange?(
+                    "The profile could not be deleted.",
+                    true
+                )
+            }
         } catch {
             reloadPresentation()
             onStatusChange?(

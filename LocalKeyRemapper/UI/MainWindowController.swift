@@ -421,6 +421,73 @@ final class MainWindowController:
         endShortcutCapture()
     }
 
+    /// Reports every unsaved Home-side change to the application-level Quit
+    /// gate, including an unfinished shortcut editor state.
+    var hasUnsavedChangesForApplicationTermination:
+        Bool
+    {
+        hasUnsavedHomeChanges
+    }
+
+    /// Returns a blocking explanation before Save All writes any Rules.
+    ///
+    /// This keeps the operation data-safe: incomplete shortcut editing or a
+    /// known Home validation failure is resolved before another profile is
+    /// persisted as part of the same Quit request.
+    var applicationTerminationSaveBlockingMessage:
+        String?
+    {
+        guard
+            hasUnsavedChangesForApplicationTermination
+        else {
+            return nil
+        }
+
+        if globalShortcutSettingsView
+            .hasTransientEditorChanges
+        {
+            return "Complete or cancel the unfinished shortcut configuration before using Save All."
+        }
+
+        return globalShortcutSettingsView
+            .currentValidationMessage
+    }
+
+    /// Uses the exact same validation, bounded-history preparation, and
+    /// transactional persistence path as the visible Home Save button.
+    @discardableResult
+    func saveChangesForApplicationTermination()
+        -> Bool
+    {
+        let didSave =
+            saveHomeConfiguration()
+
+        if !didSave {
+            showWindow(
+                nil
+            )
+        }
+
+        return didSave
+    }
+
+    /// Brings Home forward and explains why application termination was
+    /// cancelled without discarding the current draft.
+    func showApplicationTerminationIssue(
+        _ message:
+            String
+    ) {
+        showWindow(
+            nil
+        )
+
+        setStatus(
+            message,
+            isError:
+                true
+        )
+    }
+
     func prepareForApplicationTermination() {
         endShortcutCapture()
 
@@ -2051,13 +2118,117 @@ final class MainWindowController:
         guard
             shortcutCaptureField == nil,
             !globalShortcutSettingsView
-                .hasTransientEditorChanges
+                .hasTransientEditorChanges,
+            let homeConfigurationEditorSession
         else {
             return
         }
 
-        homeConfigurationEditorSession?
+        let removedProfiles =
+            homeConfigurationEditorSession
+                .profilesRemovedByNextUndo
+
+        if !removedProfiles.isEmpty,
+           !confirmUndoRemovingProfiles(
+                removedProfiles
+           )
+        {
+            return
+        }
+
+        homeConfigurationEditorSession
             .undo()
+
+        guard
+            !removedProfiles.isEmpty
+        else {
+            return
+        }
+
+        setDestructiveUndoStatus(
+            for:
+                removedProfiles
+        )
+    }
+
+    private func confirmUndoRemovingProfiles(
+        _ profiles:
+            [RemappingProfile]
+    ) -> Bool {
+        let alert =
+            NSAlert()
+
+        alert.alertStyle =
+            .warning
+
+        if profiles.count == 1,
+           let profile =
+                profiles.first
+        {
+            alert.messageText =
+                "Undo will remove “\(profile.name)”"
+
+            alert.informativeText =
+                "The profile will be removed from the Home draft. You can restore it with Redo during the current application session, even after saving Home. Closing the application clears Undo and Redo history."
+
+            alert.addButton(
+                withTitle:
+                    "Remove Profile"
+            )
+        } else {
+            let profileNames =
+                profiles
+                    .map {
+                        "“\($0.name)”"
+                    }
+                    .joined(
+                        separator:
+                            ", "
+                    )
+
+            alert.messageText =
+                "Undo will remove \(profiles.count) profiles"
+
+            alert.informativeText =
+                "The following profiles will be removed from the Home draft: \(profileNames). You can restore them with Redo during the current application session, even after saving Home. Closing the application clears Undo and Redo history."
+
+            alert.addButton(
+                withTitle:
+                    "Remove Profiles"
+            )
+        }
+
+        alert.addButton(
+            withTitle:
+                "Cancel"
+        )
+
+        return alert.runModal()
+            == .alertFirstButtonReturn
+    }
+
+    private func setDestructiveUndoStatus(
+        for profiles:
+            [RemappingProfile]
+    ) {
+        if profiles.count == 1,
+           let profile =
+                profiles.first
+        {
+            setStatus(
+                "“\(profile.name)” was removed from the Home draft. Use Redo during this application session to restore it, including after saving Home.",
+                isError:
+                    false
+            )
+
+            return
+        }
+
+        setStatus(
+            "\(profiles.count) profiles were removed from the Home draft. Use Redo during this application session to restore them, including after saving Home.",
+            isError:
+                false
+        )
     }
 
     @objc
@@ -2122,6 +2293,17 @@ final class MainWindowController:
         }
 
         do {
+            if let homeConfigurationEditorSession {
+                let persistedConfiguration =
+                    try profilesConfigurationProvider()
+
+                try homeConfigurationEditorSession
+                    .prepareHistoryForSavingCurrentDraft(
+                        using:
+                            persistedConfiguration
+                    )
+            }
+
             try saveHomeConfigurationHandler()
 
             synchronizeHomeDraft(
@@ -2135,6 +2317,38 @@ final class MainWindowController:
             )
 
             return true
+        } catch let historyError
+            as HomeConfigurationHistoryPreparationError
+        {
+            switch historyError {
+            case .payloadLimitExceeded(
+                _,
+                let maximum
+            ):
+                let maximumDescription =
+                    ByteCountFormatter
+                        .string(
+                            fromByteCount:
+                                Int64(
+                                    maximum
+                                ),
+                            countStyle:
+                                .memory
+                        )
+
+                setStatus(
+                    "The Home configuration was not saved because preserving the deleted profile for Undo and Redo would exceed the \(maximumDescription) in-memory history limit. Restore the profile or reduce its rules before saving. No stored configuration was changed.",
+                    isError:
+                        true
+                )
+
+            case .missingRecoveryPath:
+                setStatus(
+                    "The Home configuration was not saved because the deleted profile no longer has a safe Undo or Redo recovery path. No stored configuration was changed.",
+                    isError:
+                        true
+                )
+            }
         } catch HomeConfigurationSaveTransactionError
             .profileRollbackFailed
         {
