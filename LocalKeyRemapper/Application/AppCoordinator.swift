@@ -1074,6 +1074,10 @@ final class AppCoordinator:
             nil
 
         mainWindowController?
+            .onClose =
+                nil
+
+        mainWindowController?
             .prepareForApplicationTermination()
 
         remappingRulesWindowController?
@@ -1426,6 +1430,14 @@ final class AppCoordinator:
         mainWindowController =
             controller
 
+        controller.onClose = {
+            [weak self] closedController in
+
+            self?.handleMainWindowClosed(
+                closedController
+            )
+        }
+
         if let homeConfigurationEditorSession {
             let profileShortcutCoordinator =
                 HomeProfileShortcutSheetCoordinator(
@@ -1459,6 +1471,37 @@ final class AppCoordinator:
         }
 
         return controller
+    }
+
+    /// Releases the complete Home controller and shortcut-sheet presentation
+    /// wiring after the window delegate confirms a normal close.
+    ///
+    /// `homeConfigurationEditorSession` intentionally remains owned by the
+    /// coordinator so the draft and bounded Undo/Redo history survive until the
+    /// application terminates.
+    private func handleMainWindowClosed(
+        _ closedController:
+            MainWindowController
+    ) {
+        guard
+            mainWindowController
+                === closedController
+        else {
+            return
+        }
+
+        homeProfileShortcutSheetCoordinator?
+            .stop()
+
+        homeProfileShortcutSheetCoordinator =
+            nil
+
+        mainWindowController =
+            nil
+
+        // The controller finishes its deferred AppKit teardown without being
+        // retained here. A later Home request creates a fresh hierarchy and
+        // reconnects it to the same editor session.
     }
 
     private func refreshOpenRulesWindowProfileName(

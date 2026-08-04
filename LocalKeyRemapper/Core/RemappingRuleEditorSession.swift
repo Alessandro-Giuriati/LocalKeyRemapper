@@ -9,9 +9,9 @@ import Foundation
 
 /// Owns the editable remapping rules and their session-only history.
 ///
-/// One instance is retained by `AppCoordinator` for the lifetime of the
-/// running application process. Closing or recreating the main window does
-/// not destroy this object, while terminating the process naturally does.
+/// A session remains alive while its profile has state worth preserving, such
+/// as unsaved changes or Undo/Redo history. Clean history-free sessions may be
+/// discarded and recreated from local persistence by the profile registry.
 nonisolated final class RemappingRuleEditorSession {
 
     /// Represents the combined activation state of all editor items.
@@ -46,6 +46,34 @@ nonisolated final class RemappingRuleEditorSession {
         case enabled
     }
 
+    /// Values derived from the complete editor collection.
+    ///
+    /// They are calculated together in one pass and reused until the item
+    /// collection changes. This avoids repeatedly scanning every rule while
+    /// the window refreshes headers, validation, status, and Save state.
+    private struct DerivedState {
+        let activationSelectionState:
+            ActivationSelectionState
+
+        let bidirectionalSelectionState:
+            BidirectionalSelectionState
+
+        let completeRules:
+            [RemapRule]?
+    }
+
+    /// Cached dirty-state result for one exact editor and saved-baseline pair.
+    private struct UnsavedChangesCache {
+        let contentRevision:
+            UInt64
+
+        let savedBaselineRevision:
+            UInt64
+
+        let value:
+            Bool
+    }
+
     var onChange: (() -> Void)?
 
     private let history:
@@ -59,6 +87,28 @@ nonisolated final class RemappingRuleEditorSession {
 
     private(set) var isInitialized =
         false
+
+    /// Changes only when the editable item collection changes.
+    ///
+    /// Presentation code can use this lightweight value as a cache key instead
+    /// of comparing or reprocessing the complete rule collection.
+    private(set) var contentRevision:
+        UInt64 = 0
+
+    private var savedBaselineRevision:
+        UInt64 = 0
+
+    private var normalizedSavedRules:
+        [RemapRule] = []
+
+    private var cachedDerivedState:
+        (
+            revision: UInt64,
+            value: DerivedState
+        )?
+
+    private var cachedUnsavedChanges:
+        UnsavedChangesCache?
 
     init(
         history:
@@ -91,33 +141,8 @@ nonisolated final class RemappingRuleEditorSession {
     var activationSelectionState:
         ActivationSelectionState
     {
-        guard
-            !items.isEmpty
-        else {
-            return .unavailable
-        }
-
-        let enabledCount =
-            items.reduce(
-                into: 0
-            ) {
-                count,
-                item in
-
-                if item.isEnabled {
-                    count += 1
-                }
-            }
-
-        if enabledCount == 0 {
-            return .disabled
-        }
-
-        if enabledCount == items.count {
-            return .enabled
-        }
-
-        return .mixed
+        derivedState
+            .activationSelectionState
     }
 
     /// Returns the combined Reverse state for the complete collection.
@@ -127,68 +152,59 @@ nonisolated final class RemappingRuleEditorSession {
     var bidirectionalSelectionState:
         BidirectionalSelectionState
     {
-        guard
-            !items.isEmpty
-        else {
-            return .unavailable
-        }
-
-        let enabledCount =
-            items.reduce(
-                into: 0
-            ) {
-                count,
-                item in
-
-                if item.isBidirectional {
-                    count += 1
-                }
-            }
-
-        if enabledCount == 0 {
-            return .disabled
-        }
-
-        if enabledCount == items.count {
-            return .enabled
-        }
-
-        return .mixed
+        derivedState
+            .bidirectionalSelectionState
     }
 
     /// Returns every current item as a rule only when no row is incomplete.
     var completeRules:
         [RemapRule]?
     {
-        let rules =
-            items.compactMap {
-                $0.rule
-            }
-
-        guard
-            rules.count
-                == items.count
-        else {
-            return nil
-        }
-
-        return rules
+        derivedState
+            .completeRules
     }
 
     /// Indicates whether the editor differs from the last loaded or saved
     /// persistent rule collection.
+    ///
+    /// Normalization and sorting are performed at most once for each unique
+    /// combination of editor content and saved baseline.
     var hasUnsavedChanges: Bool {
-        guard
-            let completeRules
-        else {
-            return true
+        if let cachedUnsavedChanges,
+           cachedUnsavedChanges.contentRevision
+            == contentRevision,
+           cachedUnsavedChanges.savedBaselineRevision
+            == savedBaselineRevision
+        {
+            return cachedUnsavedChanges.value
         }
 
-        return Self.normalizedRules(
-            completeRules
-        ) != Self.normalizedRules(
-            savedRules
-        )
+        let value:
+            Bool
+
+        if let completeRules =
+            derivedState.completeRules
+        {
+            value =
+                Self.normalizedRules(
+                    completeRules
+                ) != normalizedSavedRules
+        } else {
+            value =
+                true
+        }
+
+        cachedUnsavedChanges =
+            UnsavedChangesCache(
+                contentRevision:
+                    contentRevision,
+                savedBaselineRevision:
+                    savedBaselineRevision,
+                value:
+                    value
+            )
+
+        return value
     }
 
     /// Loads the persistent rules once at the beginning of the app session.
@@ -216,10 +232,18 @@ nonisolated final class RemappingRuleEditorSession {
         savedRules =
             rules
 
+        normalizedSavedRules =
+            Self.normalizedRules(
+                rules
+            )
+
         history.clear()
 
         isInitialized =
             true
+
+        recordContentChange()
+        recordSavedBaselineChange()
 
         onChange?()
     }
@@ -427,6 +451,13 @@ nonisolated final class RemappingRuleEditorSession {
         savedRules =
             rules
 
+        normalizedSavedRules =
+            Self.normalizedRules(
+                rules
+            )
+
+        recordSavedBaselineChange()
+
         onChange?()
     }
 
@@ -443,6 +474,8 @@ nonisolated final class RemappingRuleEditorSession {
                 to:
                     items
             )
+
+        recordContentChange()
 
         onChange?()
     }
@@ -461,7 +494,89 @@ nonisolated final class RemappingRuleEditorSession {
                     items
             )
 
+        recordContentChange()
+
         onChange?()
+    }
+
+    private var derivedState:
+        DerivedState
+    {
+        if let cachedDerivedState,
+           cachedDerivedState.revision
+            == contentRevision
+        {
+            return cachedDerivedState.value
+        }
+
+        var completeRules:
+            [RemapRule] = []
+
+        completeRules.reserveCapacity(
+            items.count
+        )
+
+        var containsIncompleteItem =
+            false
+
+        var enabledCount =
+            0
+
+        var bidirectionalCount =
+            0
+
+        for item in items {
+            if item.isEnabled {
+                enabledCount += 1
+            }
+
+            if item.isBidirectional {
+                bidirectionalCount += 1
+            }
+
+            if let rule =
+                item.rule
+            {
+                completeRules.append(
+                    rule
+                )
+            } else {
+                containsIncompleteItem =
+                    true
+            }
+        }
+
+        let state =
+            DerivedState(
+                activationSelectionState:
+                    Self.activationSelectionState(
+                        itemCount:
+                            items.count,
+                        enabledCount:
+                            enabledCount
+                    ),
+                bidirectionalSelectionState:
+                    Self.bidirectionalSelectionState(
+                        itemCount:
+                            items.count,
+                        enabledCount:
+                            bidirectionalCount
+                    ),
+                completeRules:
+                    containsIncompleteItem
+                        ? nil
+                        : completeRules
+            )
+
+        cachedDerivedState =
+            (
+                revision:
+                    contentRevision,
+                value:
+                    state
+            )
+
+        return state
     }
 
     private func applyNewAction(
@@ -478,7 +593,74 @@ nonisolated final class RemappingRuleEditorSession {
                     items
             )
 
+        recordContentChange()
+
         onChange?()
+    }
+
+    private func recordContentChange() {
+        contentRevision &+=
+            1
+
+        cachedDerivedState =
+            nil
+
+        cachedUnsavedChanges =
+            nil
+    }
+
+    private func recordSavedBaselineChange() {
+        savedBaselineRevision &+=
+            1
+
+        cachedUnsavedChanges =
+            nil
+    }
+
+    private static func activationSelectionState(
+        itemCount:
+            Int,
+        enabledCount:
+            Int
+    ) -> ActivationSelectionState {
+        guard
+            itemCount > 0
+        else {
+            return .unavailable
+        }
+
+        if enabledCount == 0 {
+            return .disabled
+        }
+
+        if enabledCount == itemCount {
+            return .enabled
+        }
+
+        return .mixed
+    }
+
+    private static func bidirectionalSelectionState(
+        itemCount:
+            Int,
+        enabledCount:
+            Int
+    ) -> BidirectionalSelectionState {
+        guard
+            itemCount > 0
+        else {
+            return .unavailable
+        }
+
+        if enabledCount == 0 {
+            return .disabled
+        }
+
+        if enabledCount == itemCount {
+            return .enabled
+        }
+
+        return .mixed
     }
 
     private static func normalizedRules(

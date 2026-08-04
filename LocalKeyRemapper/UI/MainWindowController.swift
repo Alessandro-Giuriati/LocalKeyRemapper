@@ -70,6 +70,22 @@ final class MainWindowController:
     private let decreaseTextSizeHandler: () -> Void
     private let resetTextSizeHandler: () -> Void
 
+    /// Called after the Home window has completed its normal close workflow.
+    ///
+    /// The coordinator uses this callback to release the complete controller,
+    /// its shortcut-sheet coordinator, and the AppKit hierarchy. The closure
+    /// must not retain the controller.
+    var onClose:
+        ((MainWindowController) -> Void)?
+
+    /// Makes close/termination teardown idempotent.
+    ///
+    /// A deferred AppKit cleanup can run after a new Home controller has already
+    /// been created. The old controller must never clear the new controller's
+    /// shared session callback during that deferred pass.
+    private var hasDetachedFromSharedState =
+        false
+
     private let globalShortcutSettingsView: GlobalShortcutSettingsView
     private let profilesSectionView: HomeProfilesSectionView
 
@@ -489,6 +505,15 @@ final class MainWindowController:
     }
 
     func prepareForApplicationTermination() {
+        guard
+            !hasDetachedFromSharedState
+        else {
+            return
+        }
+
+        hasDetachedFromSharedState =
+            true
+
         endShortcutCapture()
 
         homeConfigurationEditorSession?
@@ -496,13 +521,70 @@ final class MainWindowController:
                 nil
 
         NotificationCenter.default.removeObserver(
-            self,
-            name:
-                AppConfigurationNotification
-                    .remappingRulesDidChange,
-            object:
-                nil
+            self
         )
+
+        profilesSectionView.onOpenProfile =
+            nil
+
+        profilesSectionView.onEditShortcut =
+            nil
+
+        profilesSectionView.onStatusChange =
+            nil
+
+        profilesSectionView.onPreferredHeightChange =
+            nil
+
+        globalShortcutSettingsView.onCaptureRequested =
+            nil
+
+        globalShortcutSettingsView.onCaptureCancellationRequested =
+            nil
+
+        globalShortcutSettingsView.onAdditionalValidationRequested =
+            nil
+
+        globalShortcutSettingsView.onAdditionalSuggestionRequested =
+            nil
+
+        globalShortcutSettingsView.onConfigurationChangeRequested =
+            nil
+    }
+
+    /// Permanently releases the closed Home window and its complete AppKit
+    /// hierarchy after the close notification has finished.
+    ///
+    /// AppKit can temporarily retain a closed `NSWindow` even after the
+    /// coordinator has released this controller. The cleanup therefore receives
+    /// the closing window explicitly and clears its heavy content hierarchy even
+    /// when the controller itself has already been deallocated.
+    ///
+    /// The Home editor session is owned by `AppCoordinator`, so its draft and
+    /// bounded Undo/Redo history survive independently from this presentation.
+    /// No keyboard input is persisted or logged during teardown.
+    private static func releaseClosedWindowResources(
+        _ closedWindow:
+            NSWindow?
+    ) {
+        if let mainWindow =
+            closedWindow as? MainWindow
+        {
+            mainWindow.flagsChangedHandler =
+                nil
+
+            mainWindow.keyDownHandler =
+                nil
+        }
+
+        closedWindow?.delegate =
+            nil
+
+        // `NSApplication` may keep the closed window shell alive briefly.
+        // Clearing the content view releases the expensive Home controls,
+        // table views, stack views, constraints, and associated layers.
+        closedWindow?.contentView =
+            nil
     }
 
     func windowDidBecomeKey(
@@ -722,7 +804,46 @@ final class MainWindowController:
     func windowWillClose(
         _ notification: Notification
     ) {
-        endShortcutCapture()
+        prepareForApplicationTermination()
+
+        let closedWindow =
+            notification.object as? NSWindow
+                ?? window
+
+        let closeHandler =
+            onClose
+
+        onClose =
+            nil
+
+        closeHandler?(
+            self
+        )
+
+        // Detach the expensive Home content synchronously. The close callback
+        // has already released the coordinator's ownership, and removing the
+        // content hierarchy is safe while the window is completing its close.
+        // This gives the lifecycle a deterministic resource contract instead
+        // of depending on when the main dispatch queue next drains.
+        Self.releaseClosedWindowResources(
+            closedWindow
+        )
+
+        // Let NSWindowController and AppKit finish delivering the current close
+        // notification before clearing the controller's window property. This
+        // deferred step retains only the lightweight closed window shell for one
+        // main-queue turn; the complete Home hierarchy is already detached.
+        DispatchQueue.main.async {
+            [weak self, closedWindow] in
+
+            if let self,
+               self.window
+                    === closedWindow
+            {
+                self.window =
+                    nil
+            }
+        }
     }
 
     func windowDidResize(
