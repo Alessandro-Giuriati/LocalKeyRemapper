@@ -69,11 +69,17 @@ final class AppCoordinatorWindowReuseTests:
         firstController.close()
     }
 
-    func testClosingAndReopeningRulesWindowPreservesControllerAndPresentationState() {
+    func testClosingAndReopeningRulesWindowReleasesControllerAndPreservesPresentationState() {
         let coordinator =
             AppCoordinator()
 
         defer {
+            reflectedRulesWindowController(
+                from:
+                    coordinator
+            )?
+                .close()
+
             coordinator.stop()
         }
 
@@ -92,7 +98,7 @@ final class AppCoordinatorWindowReuseTests:
                 )
         else {
             XCTFail(
-                "The rules window or its presentation model was not created."
+                "The first Rules controller or presentation model was not created."
             )
             return
         }
@@ -127,9 +133,33 @@ final class AppCoordinatorWindowReuseTests:
 
         firstController.close()
 
-        XCTAssertFalse(
-            firstController.window?.isVisible
-                == true
+        // The coordinator must stop owning the complete Rules controller as
+        // soon as the normal close callback is delivered.
+        XCTAssertNil(
+            reflectedRulesWindowController(
+                from:
+                    coordinator
+            )
+        )
+
+        XCTAssertEqual(
+            visibleRulesWindowCount,
+            0
+        )
+
+        // Keep a temporary test reference alive while the controller performs
+        // its deferred AppKit teardown. The important resource guarantee is
+        // that the owned NSWindow and its complete view hierarchy are released.
+        RunLoop.current.run(
+            until:
+                Date()
+                    .addingTimeInterval(
+                        0.5
+                    )
+        )
+
+        XCTAssertNil(
+            firstController.window
         )
 
         coordinator.showRemappingRulesWindow()
@@ -147,12 +177,14 @@ final class AppCoordinatorWindowReuseTests:
                 )
         else {
             XCTFail(
-                "The rules window was not restored after reopening."
+                "The Rules controller or presentation model was not recreated."
             )
             return
         }
 
-        XCTAssertTrue(
+        // The heavy AppKit window is recreated, while the lightweight
+        // presentation state survives independently.
+        XCTAssertFalse(
             firstController
                 === reopenedController
         )

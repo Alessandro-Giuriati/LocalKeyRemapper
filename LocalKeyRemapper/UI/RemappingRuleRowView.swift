@@ -10,7 +10,7 @@ import CoreGraphics
 
 /// Displays and edits one remapping rule editor item.
 @MainActor
-final class RemappingRuleRowView: NSView {
+final class RemappingRuleRowView: NSView, NSMenuDelegate {
     @MainActor
     private final class BehaviorMenuItemView: NSView {
         private let checkmarkLabel = NSTextField(labelWithString: "")
@@ -281,9 +281,33 @@ final class RemappingRuleRowView: NSView {
 
     var onRuleChanged: ((RemappingRuleEditorItem) -> Void)?
 
-    /// Owns the fixed-width Active column so the native switch stays
-    /// centered and lines up with the matching header control.
-    private let activationContainerView = NSView()
+    private enum LayoutMetrics {
+        static let horizontalInset: CGFloat = 6
+        static let verticalInset: CGFloat = 4
+        static let activeColumnWidth: CGFloat = 88
+        static let sourceLeadingSpacing: CGFloat = 6
+        static let keyArrowSpacing: CGFloat = 10
+        static let arrowWidth: CGFloat = 18
+
+        /// Gives the glyph a wider drawing frame by borrowing only from the
+        /// existing empty spacing on both sides of the logical arrow column.
+        /// Neighboring controls keep exactly the same positions.
+        static let arrowDrawingWidth: CGFloat = 30
+
+        static let destinationBehaviorSpacing: CGFloat = 10
+        static let behaviorWidth: CGFloat = 168
+        static let behaviorExceptionsSpacing: CGFloat = 10
+        static let exceptionsWidth: CGFloat = 116
+        static let compactColumnSpacing: CGFloat = 6
+        static let reverseColumnWidth: CGFloat = 88
+        static let issuesColumnWidth: CGFloat = 72
+        static let removeButtonWidth: CGFloat = 82
+
+        /// The fixed width consumed by every column except Source and
+        /// Destination. The remaining space is split equally between them.
+        static let nonKeyColumnWidth: CGFloat = 708
+    }
+
     private let activationSwitch = NSSwitch()
 
     private let sourceKeyButton = NSButton()
@@ -291,29 +315,30 @@ final class RemappingRuleRowView: NSView {
     private let destinationKeyButton = NSButton()
     private let behaviorPopUpButton = NSPopUpButton()
 
-    private let exactBehaviorMenuView = BehaviorMenuItemView(
-        title: "Exact only"
-    )
-
-    private let preserveBehaviorMenuView = BehaviorMenuItemView(
-        title: "Preserve modifiers"
-    )
+    /// Heavy custom menu previews are created only while the menu is open.
+    /// Reusable table rows therefore retain only the native popup itself.
+    private var exactBehaviorMenuView: BehaviorMenuItemView?
+    private var preserveBehaviorMenuView: BehaviorMenuItemView?
 
     private let exceptionsButton = NSButton()
 
-    /// Owns the fixed-width Reverse column so the native switch stays
-    /// centered and lines up with the matching header control.
-    private let bidirectionalContainerView = NSView()
     private let bidirectionalSwitch = NSSwitch()
 
     private let issuesView = RemappingRuleIssuesView()
     private let removeButton = NSButton()
 
-    private var rowHeightConstraint: NSLayoutConstraint?
     private var isShowingValidationError = false
     private var textScale: CGFloat = 1.0
+    private var hasAppliedTextScale = false
 
-    let editorItemID: UUID
+    private var activationSwitchFittingSize = NSSize.zero
+    private var bidirectionalSwitchFittingSize = NSSize.zero
+    private var behaviorControlHeight: CGFloat = 0
+    private var exceptionsControlHeight: CGFloat = 0
+    private var removeControlHeight: CGFloat = 0
+    private var arrowControlHeight: CGFloat = 0
+
+    private(set) var editorItemID: UUID
 
     private(set) var isEnabled: Bool
     private(set) var sourceCombination: KeyCombination?
@@ -369,7 +394,6 @@ final class RemappingRuleRowView: NSView {
         super.init(frame: .zero)
 
         configureContent()
-        synchronizeBehaviorControl()
         updateControls()
         updateValidationAppearance()
     }
@@ -391,6 +415,70 @@ final class RemappingRuleRowView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateValidationAppearance()
+    }
+
+    override func draw(
+        _ dirtyRect: NSRect
+    ) {
+        super.draw(
+            dirtyRect
+        )
+
+        guard
+            isShowingValidationError
+        else {
+            return
+        }
+
+        let borderInset: CGFloat = 0.75
+        let path =
+            NSBezierPath(
+                roundedRect:
+                    bounds.insetBy(
+                        dx: borderInset,
+                        dy: borderInset
+                    ),
+                xRadius: 8,
+                yRadius: 8
+            )
+
+        NSColor.systemRed
+            .withAlphaComponent(
+                0.08
+            )
+            .setFill()
+
+        path.fill()
+
+        NSColor.systemRed.setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    override func layout() {
+        super.layout()
+        layoutControls()
+    }
+
+    /// Rebinds this existing row hierarchy to another editor item.
+    ///
+    /// `NSTableView` may recycle an off-screen cell for a different visible
+    /// item. Updating the stored value state in place preserves the native
+    /// controls and menu hierarchy instead of rebuilding them during scroll.
+    func configure(
+        with item: RemappingRuleEditorItem
+    ) {
+        releaseBehaviorMenuPreviewViews()
+        resetInteractionHandlersForReuse()
+
+        editorItemID =
+            item.id
+
+        applyEditorItem(
+            item
+        )
+
+        updateControls()
     }
 
     func setCombination(
@@ -477,7 +565,18 @@ final class RemappingRuleRowView: NSView {
     }
 
     func applyTextScale(_ scale: CGFloat) {
+        guard
+            !hasAppliedTextScale
+                || abs(
+                    textScale
+                        - scale
+                ) > 0.0001
+        else {
+            return
+        }
+
         textScale = scale
+        hasAppliedTextScale = true
 
         let controlFont = NSFont.systemFont(
             ofSize: 14 * scale,
@@ -492,8 +591,15 @@ final class RemappingRuleRowView: NSView {
             weight: .regular
         )
 
-        exactBehaviorMenuView.applyTextScale(scale)
-        preserveBehaviorMenuView.applyTextScale(scale)
+        exactBehaviorMenuView?
+            .applyTextScale(
+                scale
+            )
+
+        preserveBehaviorMenuView?
+            .applyTextScale(
+                scale
+            )
 
         exceptionsButton.font = NSFont.systemFont(
             ofSize: 13 * scale,
@@ -505,21 +611,14 @@ final class RemappingRuleRowView: NSView {
             weight: .regular
         )
 
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 20 * scale,
-            weight: .regular
-        )
+        updateArrowPresentation()
 
-        rowHeightConstraint?.constant = 42 * scale
         issuesView.applyTextScale(scale)
+        cacheControlFittingSizes()
         needsLayout = true
     }
 
     private func configureContent() {
-        wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.masksToBounds = true
-
         configureActivationSwitch()
 
         configureKeyButton(
@@ -533,14 +632,8 @@ final class RemappingRuleRowView: NSView {
         )
 
         arrowLabel.alignment = .center
-        arrowLabel.setContentHuggingPriority(
-            .required,
-            for: .horizontal
-        )
-        arrowLabel.setContentCompressionResistancePriority(
-            .required,
-            for: .horizontal
-        )
+        arrowLabel.lineBreakMode = .byClipping
+        arrowLabel.maximumNumberOfLines = 1
 
         configureBehaviorMenu()
 
@@ -563,149 +656,342 @@ final class RemappingRuleRowView: NSView {
         removeButton.action = #selector(requestRemoval)
 
         let views: [NSView] = [
-            activationContainerView,
+            activationSwitch,
             sourceKeyButton,
             arrowLabel,
             destinationKeyButton,
             behaviorPopUpButton,
             exceptionsButton,
-            bidirectionalContainerView,
+            bidirectionalSwitch,
             issuesView,
             removeButton
         ]
 
         for view in views {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = true
+            view.autoresizingMask = []
+
+            addSubview(
+                view
+            )
         }
-
-        let rowHeightConstraint = heightAnchor.constraint(
-            equalToConstant: 42
-        )
-
-        self.rowHeightConstraint = rowHeightConstraint
-
-        NSLayoutConstraint.activate(
-            [
-                activationContainerView.leadingAnchor.constraint(
-                    equalTo: leadingAnchor,
-                    constant: 6
-                ),
-                activationContainerView.centerYAnchor.constraint(
-                    equalTo: centerYAnchor
-                ),
-                activationContainerView.widthAnchor.constraint(
-                    equalToConstant: 88
-                ),
-                activationContainerView.heightAnchor.constraint(
-                    equalTo: sourceKeyButton.heightAnchor
-                ),
-                sourceKeyButton.leadingAnchor.constraint(
-                    equalTo: activationContainerView.trailingAnchor,
-                    constant: 6
-                ),
-                sourceKeyButton.topAnchor.constraint(
-                    equalTo: topAnchor,
-                    constant: 4
-                ),
-                sourceKeyButton.bottomAnchor.constraint(
-                    equalTo: bottomAnchor,
-                    constant: -4
-                ),
-                arrowLabel.leadingAnchor.constraint(
-                    equalTo: sourceKeyButton.trailingAnchor,
-                    constant: 10
-                ),
-                arrowLabel.centerYAnchor.constraint(
-                    equalTo: sourceKeyButton.centerYAnchor
-                ),
-                destinationKeyButton.leadingAnchor.constraint(
-                    equalTo: arrowLabel.trailingAnchor,
-                    constant: 10
-                ),
-                destinationKeyButton.topAnchor.constraint(
-                    equalTo: topAnchor,
-                    constant: 4
-                ),
-                destinationKeyButton.bottomAnchor.constraint(
-                    equalTo: bottomAnchor,
-                    constant: -4
-                ),
-                behaviorPopUpButton.leadingAnchor.constraint(
-                    equalTo: destinationKeyButton.trailingAnchor,
-                    constant: 10
-                ),
-                behaviorPopUpButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
-                ),
-                behaviorPopUpButton.widthAnchor.constraint(
-                    equalToConstant: 168
-                ),
-                exceptionsButton.leadingAnchor.constraint(
-                    equalTo: behaviorPopUpButton.trailingAnchor,
-                    constant: 10
-                ),
-                exceptionsButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
-                ),
-                exceptionsButton.widthAnchor.constraint(
-                    equalToConstant: 116
-                ),
-                bidirectionalContainerView.leadingAnchor.constraint(
-                    equalTo: exceptionsButton.trailingAnchor,
-                    constant: 6
-                ),
-                bidirectionalContainerView.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
-                ),
-                bidirectionalContainerView.widthAnchor.constraint(
-                    equalToConstant: 88
-                ),
-                bidirectionalContainerView.heightAnchor.constraint(
-                    equalTo: destinationKeyButton.heightAnchor
-                ),
-                issuesView.leadingAnchor.constraint(
-                    equalTo: bidirectionalContainerView.trailingAnchor,
-                    constant: 6
-                ),
-                issuesView.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
-                ),
-                issuesView.widthAnchor.constraint(
-                    equalToConstant: 72
-                ),
-                removeButton.leadingAnchor.constraint(
-                    equalTo: issuesView.trailingAnchor,
-                    constant: 6
-                ),
-                removeButton.trailingAnchor.constraint(
-                    equalTo: trailingAnchor,
-                    constant: -6
-                ),
-                removeButton.centerYAnchor.constraint(
-                    equalTo: destinationKeyButton.centerYAnchor
-                ),
-                removeButton.widthAnchor.constraint(
-                    equalToConstant: 82
-                ),
-                sourceKeyButton.widthAnchor.constraint(
-                    equalTo: destinationKeyButton.widthAnchor
-                ),
-                sourceKeyButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
-                ),
-                destinationKeyButton.widthAnchor.constraint(
-                    greaterThanOrEqualToConstant: 120
-                ),
-                rowHeightConstraint
-            ]
-        )
 
         applyTextScale(textScale)
     }
 
+    private func cacheControlFittingSizes() {
+        activationSwitchFittingSize =
+            activationSwitch.fittingSize
+
+        bidirectionalSwitchFittingSize =
+            bidirectionalSwitch.fittingSize
+
+        behaviorControlHeight =
+            behaviorPopUpButton
+                .fittingSize
+                .height
+
+        exceptionsControlHeight =
+            exceptionsButton
+                .fittingSize
+                .height
+
+        removeControlHeight =
+            removeButton
+                .fittingSize
+                .height
+
+        arrowControlHeight =
+            arrowLabel
+                .fittingSize
+                .height
+    }
+
+    private func layoutControls() {
+        let controlHeight =
+            max(
+                0,
+                bounds.height
+                    - 2
+                    * LayoutMetrics
+                        .verticalInset
+            )
+
+        let keyWidth =
+            max(
+                0,
+                floor(
+                    (
+                        bounds.width
+                            - LayoutMetrics
+                                .nonKeyColumnWidth
+                    )
+                    / 2
+                )
+            )
+
+        let destinationWidth =
+            max(
+                0,
+                bounds.width
+                    - LayoutMetrics
+                        .nonKeyColumnWidth
+                    - keyWidth
+            )
+
+        var x =
+            LayoutMetrics
+                .horizontalInset
+
+        let activeColumnFrame =
+            NSRect(
+                x: x,
+                y:
+                    LayoutMetrics
+                        .verticalInset,
+                width:
+                    LayoutMetrics
+                        .activeColumnWidth,
+                height:
+                    controlHeight
+            )
+
+        activationSwitch.frame =
+            centeredFrame(
+                size:
+                    activationSwitchFittingSize,
+                in:
+                    activeColumnFrame
+            )
+
+        x +=
+            LayoutMetrics.activeColumnWidth
+            + LayoutMetrics.sourceLeadingSpacing
+
+        sourceKeyButton.frame =
+            NSRect(
+                x: x,
+                y:
+                    LayoutMetrics
+                        .verticalInset,
+                width:
+                    keyWidth,
+                height:
+                    controlHeight
+            )
+
+        x +=
+            keyWidth
+            + LayoutMetrics.keyArrowSpacing
+
+        let arrowDrawingWidth =
+            LayoutMetrics
+                .arrowDrawingWidth
+
+        arrowLabel.frame =
+            verticallyCenteredFrame(
+                x:
+                    x
+                    + (
+                        LayoutMetrics
+                            .arrowWidth
+                        - arrowDrawingWidth
+                    )
+                    / 2,
+                width:
+                    arrowDrawingWidth,
+                preferredHeight:
+                    arrowControlHeight,
+                availableHeight:
+                    controlHeight
+            )
+
+        x +=
+            LayoutMetrics.arrowWidth
+            + LayoutMetrics.keyArrowSpacing
+
+        destinationKeyButton.frame =
+            NSRect(
+                x: x,
+                y:
+                    LayoutMetrics
+                        .verticalInset,
+                width:
+                    destinationWidth,
+                height:
+                    controlHeight
+            )
+
+        x +=
+            destinationWidth
+            + LayoutMetrics
+                .destinationBehaviorSpacing
+
+        behaviorPopUpButton.frame =
+            verticallyCenteredFrame(
+                x: x,
+                width:
+                    LayoutMetrics
+                        .behaviorWidth,
+                preferredHeight:
+                    behaviorControlHeight,
+                availableHeight:
+                    controlHeight
+            )
+
+        x +=
+            LayoutMetrics.behaviorWidth
+            + LayoutMetrics
+                .behaviorExceptionsSpacing
+
+        exceptionsButton.frame =
+            verticallyCenteredFrame(
+                x: x,
+                width:
+                    LayoutMetrics
+                        .exceptionsWidth,
+                preferredHeight:
+                    exceptionsControlHeight,
+                availableHeight:
+                    controlHeight
+            )
+
+        x +=
+            LayoutMetrics.exceptionsWidth
+            + LayoutMetrics
+                .compactColumnSpacing
+
+        let reverseColumnFrame =
+            NSRect(
+                x: x,
+                y:
+                    LayoutMetrics
+                        .verticalInset,
+                width:
+                    LayoutMetrics
+                        .reverseColumnWidth,
+                height:
+                    controlHeight
+            )
+
+        bidirectionalSwitch.frame =
+            centeredFrame(
+                size:
+                    bidirectionalSwitchFittingSize,
+                in:
+                    reverseColumnFrame
+            )
+
+        x +=
+            LayoutMetrics.reverseColumnWidth
+            + LayoutMetrics
+                .compactColumnSpacing
+
+        issuesView.frame =
+            NSRect(
+                x: x,
+                y:
+                    LayoutMetrics
+                        .verticalInset,
+                width:
+                    LayoutMetrics
+                        .issuesColumnWidth,
+                height:
+                    controlHeight
+            )
+
+        x +=
+            LayoutMetrics.issuesColumnWidth
+            + LayoutMetrics
+                .compactColumnSpacing
+
+        removeButton.frame =
+            verticallyCenteredFrame(
+                x: x,
+                width:
+                    LayoutMetrics
+                        .removeButtonWidth,
+                preferredHeight:
+                    removeControlHeight,
+                availableHeight:
+                    controlHeight
+            )
+    }
+
+    private func verticallyCenteredFrame(
+        x: CGFloat,
+        width: CGFloat,
+        preferredHeight: CGFloat,
+        availableHeight: CGFloat
+    ) -> NSRect {
+        let height =
+            min(
+                max(
+                    0,
+                    preferredHeight
+                ),
+                availableHeight
+            )
+
+        return NSRect(
+            x: x,
+            y:
+                LayoutMetrics
+                    .verticalInset
+                + floor(
+                    (
+                        availableHeight
+                            - height
+                    )
+                    / 2
+                ),
+            width:
+                max(
+                    0,
+                    width
+                ),
+            height:
+                height
+        )
+    }
+
+    private func centeredFrame(
+        size: NSSize,
+        in containerFrame: NSRect
+    ) -> NSRect {
+        let width =
+            min(
+                max(
+                    0,
+                    size.width
+                ),
+                containerFrame.width
+            )
+
+        let height =
+            min(
+                max(
+                    0,
+                    size.height
+                ),
+                containerFrame.height
+            )
+
+        return NSRect(
+            x:
+                containerFrame.midX
+                - width / 2,
+            y:
+                containerFrame.midY
+                - height / 2,
+            width:
+                width,
+            height:
+                height
+        )
+    }
+
     private func configureActivationSwitch() {
-        activationSwitch.translatesAutoresizingMaskIntoConstraints = false
         activationSwitch.controlSize = .small
         activationSwitch.target = self
         activationSwitch.action = #selector(
@@ -719,21 +1005,6 @@ final class RemappingRuleRowView: NSView {
         activationSwitch.setAccessibilityHelp(
             "When disabled, this rule, its Reverse direction, and its exceptions do not participate in remapping."
         )
-
-        activationContainerView.addSubview(
-            activationSwitch
-        )
-
-        NSLayoutConstraint.activate(
-            [
-                activationSwitch.centerXAnchor.constraint(
-                    equalTo: activationContainerView.centerXAnchor
-                ),
-                activationSwitch.centerYAnchor.constraint(
-                    equalTo: activationContainerView.centerYAnchor
-                )
-            ]
-        )
     }
 
     private func configureKeyButton(
@@ -746,7 +1017,6 @@ final class RemappingRuleRowView: NSView {
     }
 
     private func configureBidirectionalSwitch() {
-        bidirectionalSwitch.translatesAutoresizingMaskIntoConstraints = false
         bidirectionalSwitch.controlSize = .small
         bidirectionalSwitch.target = self
         bidirectionalSwitch.action = #selector(
@@ -759,21 +1029,6 @@ final class RemappingRuleRowView: NSView {
         )
         bidirectionalSwitch.setAccessibilityHelp(
             "When enabled, the destination also maps back to the source using the same behavior and mirrored exceptions."
-        )
-
-        bidirectionalContainerView.addSubview(
-            bidirectionalSwitch
-        )
-
-        NSLayoutConstraint.activate(
-            [
-                bidirectionalSwitch.centerXAnchor.constraint(
-                    equalTo: bidirectionalContainerView.centerXAnchor
-                ),
-                bidirectionalSwitch.centerYAnchor.constraint(
-                    equalTo: bidirectionalContainerView.centerYAnchor
-                )
-            ]
         )
     }
 
@@ -797,28 +1052,135 @@ final class RemappingRuleRowView: NSView {
         exactItem.action = #selector(
             behaviorMenuItemSelected(_:)
         )
-        exactItem.view = exactBehaviorMenuView
 
         preserveItem.tag = 1
         preserveItem.target = self
         preserveItem.action = #selector(
             behaviorMenuItemSelected(_:)
         )
-        preserveItem.view = preserveBehaviorMenuView
 
-        exactBehaviorMenuView.onActivate = {
-            [weak self] in
+        behaviorPopUpButton.menu?.delegate =
+            self
+    }
 
-            self?.selectBehavior(.exact)
+    func menuWillOpen(
+        _ menu: NSMenu
+    ) {
+        guard
+            menu === behaviorPopUpButton.menu
+        else {
+            return
         }
 
-        preserveBehaviorMenuView.onActivate = {
-            [weak self] in
-
-            self?.selectBehavior(.preserveModifiers)
-        }
-
+        ensureBehaviorMenuPreviewViews()
         refreshBehaviorMenuPreviews()
+    }
+
+    func menuDidClose(
+        _ menu: NSMenu
+    ) {
+        guard
+            menu === behaviorPopUpButton.menu
+        else {
+            return
+        }
+
+        releaseBehaviorMenuPreviewViews()
+    }
+
+    private func ensureBehaviorMenuPreviewViews() {
+        guard
+            exactBehaviorMenuView == nil,
+            preserveBehaviorMenuView == nil,
+            let exactItem =
+                behaviorPopUpButton.item(
+                    at: 0
+                ),
+            let preserveItem =
+                behaviorPopUpButton.item(
+                    at: 1
+                )
+        else {
+            return
+        }
+
+        let exactView =
+            BehaviorMenuItemView(
+                title:
+                    "Exact only"
+            )
+
+        let preserveView =
+            BehaviorMenuItemView(
+                title:
+                    "Preserve modifiers"
+            )
+
+        exactView.applyTextScale(
+            textScale
+        )
+
+        preserveView.applyTextScale(
+            textScale
+        )
+
+        exactView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .exact
+            )
+        }
+
+        preserveView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .preserveModifiers
+            )
+        }
+
+        exactItem.view =
+            exactView
+
+        preserveItem.view =
+            preserveView
+
+        exactBehaviorMenuView =
+            exactView
+
+        preserveBehaviorMenuView =
+            preserveView
+    }
+
+    private func releaseBehaviorMenuPreviewViews() {
+        behaviorPopUpButton
+            .item(
+                at: 0
+            )?
+            .view =
+            nil
+
+        behaviorPopUpButton
+            .item(
+                at: 1
+            )?
+            .view =
+            nil
+
+        exactBehaviorMenuView?
+            .onActivate =
+            nil
+
+        preserveBehaviorMenuView?
+            .onActivate =
+            nil
+
+        exactBehaviorMenuView =
+            nil
+
+        preserveBehaviorMenuView =
+            nil
     }
 
     private func synchronizeBehaviorControl() {
@@ -830,9 +1192,15 @@ final class RemappingRuleRowView: NSView {
             behaviorPopUpButton.selectItem(at: 1)
         }
 
-        exactBehaviorMenuView.isSelected = matchingMode == .exact
-        preserveBehaviorMenuView.isSelected =
-            matchingMode == .preserveModifiers
+        exactBehaviorMenuView?
+            .isSelected =
+            matchingMode
+                == .exact
+
+        preserveBehaviorMenuView?
+            .isSelected =
+            matchingMode
+                == .preserveModifiers
     }
 
     private func updateControls() {
@@ -849,25 +1217,88 @@ final class RemappingRuleRowView: NSView {
 
         activationSwitch.state = isEnabled ? .on : .off
         bidirectionalSwitch.state = isBidirectional ? .on : .off
-        arrowLabel.stringValue = isBidirectional ? "↔" : "→"
+
+        updateArrowPresentation()
+    }
+
+    /// Keeps both arrow glyphs fully visible while preserving the logical
+    /// 18-point column and every neighboring control position.
+    ///
+    /// The label borrows only from the existing empty spacing on each side.
+    /// Its font is then reduced only when the actual AppKit fitting width still
+    /// exceeds that wider drawing frame.
+    private func updateArrowPresentation() {
+        arrowLabel.stringValue =
+            isBidirectional
+                ? "↔"
+                : "→"
+
+        let preferredPointSize =
+            20
+            * textScale
+
+        // Do not scale this floor upward. At larger application text sizes the
+        // glyph may need to remain smaller than surrounding controls in order
+        // to fit the fixed column without clipping.
+        let minimumPointSize:
+            CGFloat =
+                10
+
+        let availableWidth =
+            max(
+                1,
+                LayoutMetrics
+                    .arrowDrawingWidth
+                    - 2
+            )
+
+        var pointSize =
+            max(
+                minimumPointSize,
+                preferredPointSize
+            )
+
+        var fittingSize =
+            NSSize.zero
+
+        while true {
+            arrowLabel.font =
+                NSFont.systemFont(
+                    ofSize:
+                        pointSize,
+                    weight:
+                        .regular
+                )
+
+            fittingSize =
+                arrowLabel
+                    .fittingSize
+
+            if fittingSize.width
+                <= availableWidth
+                || pointSize
+                    <= minimumPointSize
+            {
+                break
+            }
+
+            pointSize =
+                max(
+                    minimumPointSize,
+                    pointSize
+                        - 0.5
+                )
+        }
+
+        arrowControlHeight =
+            fittingSize.height
+
+        needsLayout =
+            true
     }
 
     private func updateValidationAppearance() {
-        guard let layer else {
-            return
-        }
-
-        if isShowingValidationError {
-            layer.borderWidth = 1.5
-            layer.borderColor = NSColor.systemRed.cgColor
-            layer.backgroundColor = NSColor.systemRed
-                .withAlphaComponent(0.08)
-                .cgColor
-        } else {
-            layer.borderWidth = 0
-            layer.borderColor = NSColor.clear.cgColor
-            layer.backgroundColor = NSColor.clear.cgColor
-        }
+        needsDisplay = true
     }
 
     private func buttonTitle(
@@ -883,15 +1314,48 @@ final class RemappingRuleRowView: NSView {
     }
 
     private func refreshBehaviorMenuPreviews() {
-        exactBehaviorMenuView.setExamples(
-            behaviorPreviewLines(for: .exact)
-        )
+        if let exactBehaviorMenuView {
+            exactBehaviorMenuView.setExamples(
+                behaviorPreviewLines(
+                    for:
+                        .exact
+                )
+            )
+        }
 
-        preserveBehaviorMenuView.setExamples(
-            behaviorPreviewLines(for: .preserveModifiers)
-        )
+        if let preserveBehaviorMenuView {
+            preserveBehaviorMenuView.setExamples(
+                behaviorPreviewLines(
+                    for:
+                        .preserveModifiers
+                )
+            )
+        }
 
         synchronizeBehaviorControl()
+    }
+
+    private func resetInteractionHandlersForReuse() {
+        onSourceKeyRequested =
+            nil
+
+        onDestinationKeyRequested =
+            nil
+
+        onExceptionsRequested =
+            nil
+
+        onRemoveRequested =
+            nil
+
+        onMatchingModeChangeRequested =
+            nil
+
+        onMatchingModeChangeRejected =
+            nil
+
+        onRuleChanged =
+            nil
     }
 
     private func behaviorPreviewLines(
@@ -1164,5 +1628,88 @@ final class RemappingRuleRowView: NSView {
     @objc
     private func requestRemoval() {
         onRemoveRequested?()
+    }
+
+    // MARK: - Test support
+
+    var directConstraintCountForTesting: Int {
+        constraints.count
+    }
+
+    var usesBackingLayerForTesting: Bool {
+        wantsLayer
+            || layer != nil
+    }
+
+    var sourceAndDestinationWidthsForTesting:
+        (CGFloat, CGFloat)
+    {
+        (
+            sourceKeyButton.frame.width,
+            destinationKeyButton.frame.width
+        )
+    }
+
+    var orderedControlFramesForTesting: [NSRect] {
+        [
+            activationSwitch.frame,
+            sourceKeyButton.frame,
+            arrowLabel.frame,
+            destinationKeyButton.frame,
+            behaviorPopUpButton.frame,
+            exceptionsButton.frame,
+            bidirectionalSwitch.frame,
+            issuesView.frame,
+            removeButton.frame
+        ]
+    }
+
+    var behaviorPreviewViewCountForTesting: Int {
+        [
+            exactBehaviorMenuView,
+            preserveBehaviorMenuView
+        ]
+            .compactMap {
+                $0
+            }
+            .count
+    }
+
+    var arrowTitleForTesting: String {
+        arrowLabel.stringValue
+    }
+
+    var arrowFrameForTesting: NSRect {
+        arrowLabel.frame
+    }
+
+    var arrowFittingSizeForTesting: NSSize {
+        arrowLabel.fittingSize
+    }
+
+    func openBehaviorMenuForTesting() {
+        guard
+            let menu =
+                behaviorPopUpButton.menu
+        else {
+            return
+        }
+
+        menuWillOpen(
+            menu
+        )
+    }
+
+    func closeBehaviorMenuForTesting() {
+        guard
+            let menu =
+                behaviorPopUpButton.menu
+        else {
+            return
+        }
+
+        menuDidClose(
+            menu
+        )
     }
 }

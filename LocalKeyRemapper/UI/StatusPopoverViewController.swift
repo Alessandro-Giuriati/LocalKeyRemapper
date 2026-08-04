@@ -185,7 +185,7 @@ final class StatusPopoverViewController:
                 width:
                     Layout.width,
                 height:
-                    318
+                    260
             )
     }
 

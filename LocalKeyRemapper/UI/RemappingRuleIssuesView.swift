@@ -18,17 +18,16 @@ import AppKit
 @MainActor
 final class RemappingRuleIssuesView: NSView {
 
+    private enum LayoutMetrics {
+        static let indicatorSide: CGFloat = 22
+        static let pairedCenterOffset: CGFloat = 13
+    }
+
     private let validationImageView =
         NSImageView()
 
     private let warningImageView =
         NSImageView()
-
-    private var validationCenterXConstraint:
-        NSLayoutConstraint?
-
-    private var warningCenterXConstraint:
-        NSLayoutConstraint?
 
     private var validationMessage:
         String?
@@ -43,6 +42,12 @@ final class RemappingRuleIssuesView: NSView {
 
     private var textScale:
         CGFloat = 1.0
+
+    private var hasAppliedTextScale =
+        false
+
+    private var symbolUpdateCount =
+        0
 
     override init(
         frame frameRect: NSRect
@@ -79,6 +84,11 @@ final class RemappingRuleIssuesView: NSView {
         updatePresentation()
     }
 
+    override func layout() {
+        super.layout()
+        layoutIndicators()
+    }
+
     func setValidationMessage(
         _ message: String?
     ) {
@@ -113,11 +123,27 @@ final class RemappingRuleIssuesView: NSView {
     func applyTextScale(
         _ scale: CGFloat
     ) {
-        textScale =
+        let clampedScale =
             InterfaceTextScalePreference
                 .clamped(
                     scale
                 )
+
+        guard
+            !hasAppliedTextScale
+                || abs(
+                    textScale
+                        - clampedScale
+                ) > 0.0001
+        else {
+            return
+        }
+
+        textScale =
+            clampedScale
+
+        hasAppliedTextScale =
+            true
 
         updateSymbols()
         needsLayout =
@@ -135,74 +161,15 @@ final class RemappingRuleIssuesView: NSView {
                 .scaleProportionallyDown
 
             imageView.translatesAutoresizingMaskIntoConstraints =
-                false
+                true
+
+            imageView.autoresizingMask =
+                []
 
             addSubview(
                 imageView
             )
         }
-
-        let validationCenterXConstraint =
-            validationImageView
-                .centerXAnchor
-                .constraint(
-                    equalTo:
-                        centerXAnchor
-                )
-
-        let warningCenterXConstraint =
-            warningImageView
-                .centerXAnchor
-                .constraint(
-                    equalTo:
-                        centerXAnchor
-                )
-
-        self.validationCenterXConstraint =
-            validationCenterXConstraint
-
-        self.warningCenterXConstraint =
-            warningCenterXConstraint
-
-        NSLayoutConstraint.activate(
-            [
-                validationImageView.centerYAnchor.constraint(
-                    equalTo:
-                        centerYAnchor
-                ),
-
-                validationCenterXConstraint,
-
-                validationImageView.widthAnchor.constraint(
-                    equalToConstant:
-                        22
-                ),
-
-                validationImageView.heightAnchor.constraint(
-                    equalTo:
-                        validationImageView
-                            .widthAnchor
-                ),
-
-                warningImageView.centerYAnchor.constraint(
-                    equalTo:
-                        centerYAnchor
-                ),
-
-                warningCenterXConstraint,
-
-                warningImageView.widthAnchor.constraint(
-                    equalToConstant:
-                        22
-                ),
-
-                warningImageView.heightAnchor.constraint(
-                    equalTo:
-                        warningImageView
-                            .widthAnchor
-                )
-            ]
-        )
 
         validationImageView.setAccessibilityLabel(
             "Validation error"
@@ -214,6 +181,9 @@ final class RemappingRuleIssuesView: NSView {
     }
 
     private func updateSymbols() {
+        symbolUpdateCount +=
+            1
+
         validationImageView.image =
             NSImage(
                 systemSymbolName:
@@ -248,20 +218,11 @@ final class RemappingRuleIssuesView: NSView {
     }
 
     private func updatePresentation() {
-        updateSymbols()
-
         let hasValidationIssue =
             validationMessage != nil
 
         let hasConfigurationWarning =
             configurationWarningMessage != nil
-
-        updateIndicatorPositions(
-            hasValidationIssue:
-                hasValidationIssue,
-            hasConfigurationWarning:
-                hasConfigurationWarning
-        )
 
         validationImageView.contentTintColor =
             .systemRed
@@ -302,29 +263,106 @@ final class RemappingRuleIssuesView: NSView {
             configurationWarningMessage
                 ?? "No configuration warning"
         )
-    }
-
-    private func updateIndicatorPositions(
-        hasValidationIssue: Bool,
-        hasConfigurationWarning: Bool
-    ) {
-        if hasValidationIssue
-            && hasConfigurationWarning
-        {
-            validationCenterXConstraint?.constant =
-                -13
-
-            warningCenterXConstraint?.constant =
-                13
-        } else {
-            validationCenterXConstraint?.constant =
-                0
-
-            warningCenterXConstraint?.constant =
-                0
-        }
 
         needsLayout =
             true
+    }
+
+    private func layoutIndicators() {
+        let side =
+            min(
+                LayoutMetrics
+                    .indicatorSide,
+                min(
+                    bounds.width,
+                    bounds.height
+                )
+            )
+
+        let hasValidationIssue =
+            validationMessage != nil
+
+        let hasConfigurationWarning =
+            configurationWarningMessage != nil
+
+        let validationOffset:
+            CGFloat
+
+        let warningOffset:
+            CGFloat
+
+        if hasValidationIssue
+            && hasConfigurationWarning
+        {
+            validationOffset =
+                -LayoutMetrics
+                    .pairedCenterOffset
+
+            warningOffset =
+                LayoutMetrics
+                    .pairedCenterOffset
+        } else {
+            validationOffset =
+                0
+
+            warningOffset =
+                0
+        }
+
+        validationImageView.frame =
+            indicatorFrame(
+                side:
+                    side,
+                centerOffset:
+                    validationOffset
+            )
+
+        warningImageView.frame =
+            indicatorFrame(
+                side:
+                    side,
+                centerOffset:
+                    warningOffset
+            )
+    }
+
+    private func indicatorFrame(
+        side: CGFloat,
+        centerOffset: CGFloat
+    ) -> NSRect {
+        NSRect(
+            x:
+                bounds.midX
+                + centerOffset
+                - side / 2,
+            y:
+                bounds.midY
+                - side / 2,
+            width:
+                side,
+            height:
+                side
+        )
+    }
+
+    // MARK: - Test support
+
+    var directConstraintCountForTesting: Int {
+        constraints.count
+    }
+
+    var indicatorFramesForTesting:
+        (validation: NSRect, warning: NSRect)
+    {
+        (
+            validation:
+                validationImageView.frame,
+            warning:
+                warningImageView.frame
+        )
+    }
+
+    var symbolUpdateCountForTesting: Int {
+        symbolUpdateCount
     }
 }

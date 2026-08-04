@@ -100,11 +100,73 @@ private final class RemappingRulesWindow: NSWindow {
     }
 }
 
-/// Keeps scrollable rule content anchored to the top-left corner.
+/// Adds the same horizontal padding used by the previous Rules stack while
+/// allowing `NSTableView` to materialize only rows near the visible viewport.
 @MainActor
-private final class RulesFlippedView: NSView {
-    override var isFlipped: Bool {
-        true
+private final class RemappingRuleTableCellView:
+    NSTableCellView
+{
+    let ruleRowView:
+        RemappingRuleRowView
+
+    init(
+        item:
+            RemappingRuleEditorItem
+    ) {
+        ruleRowView =
+            RemappingRuleRowView(
+                item:
+                    item
+            )
+
+        super.init(
+            frame:
+                .zero
+        )
+
+        ruleRowView.translatesAutoresizingMaskIntoConstraints =
+            false
+
+        addSubview(
+            ruleRowView
+        )
+
+        NSLayoutConstraint.activate(
+            [
+                ruleRowView.leadingAnchor.constraint(
+                    equalTo:
+                        leadingAnchor,
+                    constant:
+                        12
+                ),
+
+                ruleRowView.trailingAnchor.constraint(
+                    equalTo:
+                        trailingAnchor,
+                    constant:
+                        -12
+                ),
+
+                ruleRowView.topAnchor.constraint(
+                    equalTo:
+                        topAnchor
+                ),
+
+                ruleRowView.bottomAnchor.constraint(
+                    equalTo:
+                        bottomAnchor
+                )
+            ]
+        )
+    }
+
+    required init?(
+        coder:
+            NSCoder
+    ) {
+        fatalError(
+            "init(coder:) has not been implemented"
+        )
     }
 }
 
@@ -844,7 +906,9 @@ private final class RulesEditorStatusView: NSView {
 @MainActor
 final class RemappingRulesWindowController:
     NSWindowController,
-    NSWindowDelegate
+    NSWindowDelegate,
+    NSTableViewDataSource,
+    NSTableViewDelegate
 {
     private enum EditorValidationIssue {
         case incompleteRule
@@ -922,8 +986,31 @@ final class RemappingRulesWindowController:
     private var ruleEditorSession: RemappingRuleEditorSession
 
     /// Owns presentation-only sorting and filtering state.
-    private let presentationModel =
-        RemappingRulesPresentationModel()
+    private let presentationModel:
+        RemappingRulesPresentationModel
+
+    /// Validation depends on both editable Rules content and the effective
+    /// global shortcut configuration.
+    private var validationSnapshotCache =
+        RevisionBoundValueCache<ValidationSnapshot>()
+
+    /// Configuration warnings depend only on editable Rules content.
+    private var warningAssessmentCache =
+        RevisionBoundValueCache<
+            RemappingConfigurationWarningAssessment
+        >()
+
+    /// Advances whenever effective global shortcuts change, including while
+    /// this window is hidden. It forms the second validation cache key.
+    private var shortcutConfigurationRevision:
+        UInt64 = 0
+
+    /// Called after the Rules window has completed its normal close workflow.
+    ///
+    /// The coordinator uses this callback to release the complete controller and
+    /// AppKit hierarchy. The closure must not retain the controller.
+    var onClose:
+        ((RemappingRulesWindowController) -> Void)?
 
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
@@ -1011,10 +1098,27 @@ final class RemappingRulesWindowController:
 
     private var filterBarView: NSView?
 
+    private enum RulesTable {
+        static let columnIdentifier =
+            NSUserInterfaceItemIdentifier(
+                "remapping.rules.row"
+            )
+    }
+
     private let rulesScrollView = NSScrollView()
-    private let rulesDocumentView = RulesFlippedView()
-    private let rulesStackView = NSStackView()
-    private let rulesFlexibleSpacer = NSView()
+    private let rulesTableView = NSTableView()
+    private let rulesTableColumn =
+        NSTableColumn(
+            identifier:
+                RulesTable.columnIdentifier
+        )
+
+    /// Presentation snapshot currently exposed to the table data source.
+    ///
+    /// The complete editor session remains the source of truth. This array
+    /// contains only the filtered and sorted value items required for display.
+    private var visibleRuleItems:
+        [RemappingRuleEditorItem] = []
 
     private let addRuleButton = NSButton()
     private let undoButton = NSButton()
@@ -1052,12 +1156,11 @@ final class RemappingRulesWindowController:
     private var statusBottomConstraint:
         NSLayoutConstraint?
 
-    private var ruleRows: [RemappingRuleRowView] = []
-
-    private var ruleRowsByItemID:
-        [UUID: RemappingRuleRowView] = [:]
-
-    private var captureRow: RemappingRuleRowView?
+    /// Stable item identity used while a source or destination capture is active.
+    ///
+    /// Capturing by UUID instead of retaining a table cell keeps key capture
+    /// correct even if AppKit releases an off-screen materialized row.
+    private var captureItemID: UUID?
 
     private var captureField:
         RemappingRuleRowView.KeyField?
@@ -1083,6 +1186,8 @@ final class RemappingRulesWindowController:
         profileID: UUID,
         profileName: String,
         ruleEditorSession: RemappingRuleEditorSession,
+        presentationModel: RemappingRulesPresentationModel =
+            RemappingRulesPresentationModel(),
         increaseTextSizeHandler: @escaping () -> Void,
         decreaseTextSizeHandler: @escaping () -> Void,
         resetTextSizeHandler: @escaping () -> Void,
@@ -1102,6 +1207,9 @@ final class RemappingRulesWindowController:
 
         self.ruleEditorSession =
             ruleEditorSession
+
+        self.presentationModel =
+            presentationModel
 
         self.increaseTextSizeHandler =
             increaseTextSizeHandler
@@ -1250,6 +1358,10 @@ final class RemappingRulesWindowController:
                 newSession
         }
 
+        // Different sessions may independently use the same revision number.
+        // Explicit invalidation prevents reusing another profile's assessment.
+        invalidateDerivedAssessmentCaches()
+
         profileID =
             profile.id
 
@@ -1342,6 +1454,93 @@ final class RemappingRulesWindowController:
 
         exceptionsWindowController?.close()
         exceptionsWindowController = nil
+    }
+
+    /// Permanently releases the closed Rules window and its complete AppKit
+    /// hierarchy after the close notification has finished.
+    ///
+    /// The editor session and lightweight presentation model are owned outside
+    /// the window and therefore remain available only when their state is worth
+    /// preserving. No keyboard input is persisted or logged during teardown.
+    func releaseWindowResourcesAfterClosing() {
+        prepareForApplicationTermination()
+        clearVisibleRuleItems()
+        invalidateDerivedAssessmentCaches()
+
+        rulesTableView.dataSource =
+            nil
+
+        rulesTableView.delegate =
+            nil
+
+        rulesScrollView.documentView =
+            nil
+
+        activeHeaderView.onSortRequested =
+            nil
+
+        activeHeaderView.onGlobalToggleRequested =
+            nil
+
+        reverseHeaderView.onSortRequested =
+            nil
+
+        reverseHeaderView.onGlobalToggleRequested =
+            nil
+
+        issuesFilterView.onSortRequested =
+            nil
+
+        issuesFilterView.onValidationFilterToggle =
+            nil
+
+        issuesFilterView.onWarningFilterToggle =
+            nil
+
+        sourceFilterControl.onCaptureRequested =
+            nil
+
+        sourceFilterControl.onClearRequested =
+            nil
+
+        destinationFilterControl.onCaptureRequested =
+            nil
+
+        destinationFilterControl.onClearRequested =
+            nil
+
+        if let rulesWindow =
+            window as? RemappingRulesWindow
+        {
+            rulesWindow.flagsChangedHandler =
+                nil
+
+            rulesWindow.keyDownHandler =
+                nil
+
+            rulesWindow.undoHandler =
+                nil
+
+            rulesWindow.redoHandler =
+                nil
+
+            rulesWindow.canUndoHandler =
+                nil
+
+            rulesWindow.canRedoHandler =
+                nil
+        }
+
+        window?.delegate =
+            nil
+
+        window?.contentView =
+            nil
+
+        // NSWindowController owns this property strongly. Clearing it releases
+        // the closed window and the remaining top-level AppKit objects.
+        window =
+            nil
     }
 
     func windowDidBecomeKey(
@@ -1470,13 +1669,7 @@ final class RemappingRulesWindowController:
             textScale
         )
 
-        rulesStackView.spacing =
-            InterfaceLayoutMetrics.scaled(
-                10,
-                for: textScale,
-                minimum: 7,
-                maximum: 16
-            )
+        updateRulesTableMetrics()
 
         actionsStack.spacing =
             InterfaceLayoutMetrics.scaled(
@@ -1488,11 +1681,9 @@ final class RemappingRulesWindowController:
 
         applyLayoutMetrics()
 
-        for row in ruleRows {
-            row.applyTextScale(
-                textScale
-            )
-        }
+        // Only currently materialized rows are recreated. Off-screen rules stay
+        // as lightweight value items until AppKit needs to display them.
+        rulesTableView.reloadData()
 
         window?.contentView?.needsLayout =
             true
@@ -1553,8 +1744,30 @@ final class RemappingRulesWindowController:
     func windowWillClose(
         _ notification: Notification
     ) {
-        endKeyCapture()
-        exceptionsWindowController = nil
+        prepareForApplicationTermination()
+
+        let closeHandler =
+            onClose
+
+        onClose =
+            nil
+
+        closeHandler?(
+            self
+        )
+
+        // NSWindowController installs its own private will-close observer when
+        // initialized with a window. Let AppKit finish delivering the current
+        // close notification before clearing the owned window. The weak capture
+        // is essential: this queued cleanup must never extend the controller's
+        // lifetime. If AppKit has already released the controller, deinit will
+        // naturally release its remaining window-owned resources.
+        DispatchQueue.main.async {
+            [weak self] in
+
+            self?
+                .releaseWindowResourcesAfterClosing()
+        }
     }
 
     private func configureConfigurationChangeObservation() {
@@ -1576,6 +1789,13 @@ final class RemappingRulesWindowController:
     private func globalShortcutConfigurationDidChange(
         _ notification: Notification
     ) {
+        shortcutConfigurationRevision &+=
+            1
+
+        // Release the old dictionaries and sets immediately. Warning state is
+        // retained because it does not depend on shortcut configuration.
+        validationSnapshotCache.invalidate()
+
         guard
             window?.isVisible == true
         else {
@@ -2227,7 +2447,7 @@ final class RemappingRulesWindowController:
         _ field: FilterField
     ) {
         if captureFilterField == field,
-           captureRow == nil {
+           captureItemID == nil {
             endKeyCapture()
             refreshChangeState()
             return
@@ -2913,46 +3133,88 @@ final class RemappingRulesWindowController:
     }
 
     private func configureRulesScrollView() {
-        rulesStackView.orientation =
-            .vertical
+        rulesTableColumn.title =
+            ""
 
-        rulesStackView.alignment =
-            .leading
+        rulesTableColumn.minWidth =
+            1
 
-        rulesStackView.distribution =
-            .fill
+        rulesTableColumn.width =
+            1100
 
-        rulesStackView.translatesAutoresizingMaskIntoConstraints =
-            false
+        rulesTableColumn.resizingMask =
+            .autoresizingMask
 
-        rulesFlexibleSpacer.translatesAutoresizingMaskIntoConstraints =
-            false
-
-        rulesFlexibleSpacer
-            .setContentHuggingPriority(
-                .defaultLow,
-                for: .vertical
-            )
-
-        rulesFlexibleSpacer
-            .setContentCompressionResistancePriority(
-                .defaultLow,
-                for: .vertical
-            )
-
-        rulesStackView.addArrangedSubview(
-            rulesFlexibleSpacer
+        rulesTableView.addTableColumn(
+            rulesTableColumn
         )
 
-        rulesDocumentView.translatesAutoresizingMaskIntoConstraints =
+        rulesTableView.headerView =
+            nil
+
+        rulesTableView.dataSource =
+            self
+
+        rulesTableView.delegate =
+            self
+
+        rulesTableView.columnAutoresizingStyle =
+            .lastColumnOnlyAutoresizingStyle
+
+        rulesTableView.autoresizingMask =
+            [.width]
+
+        rulesTableView.usesAlternatingRowBackgroundColors =
             false
 
-        rulesDocumentView.addSubview(
-            rulesStackView
-        )
+        rulesTableView.backgroundColor =
+            .clear
+
+        rulesTableView.gridStyleMask =
+            []
+
+        rulesTableView.selectionHighlightStyle =
+            .none
+
+        rulesTableView.allowsEmptySelection =
+            true
+
+        rulesTableView.allowsMultipleSelection =
+            false
+
+        rulesTableView.allowsColumnReordering =
+            false
+
+        rulesTableView.allowsColumnResizing =
+            false
+
+        rulesTableView.focusRingType =
+            .none
+
+        rulesTableView.rowSizeStyle =
+            .custom
+
+        rulesTableView.usesAutomaticRowHeights =
+            false
+
+        rulesTableView.frame =
+            NSRect(
+                x: 0,
+                y: 0,
+                width: 1100,
+                height: 0
+            )
+
+        updateRulesTableMetrics()
 
         rulesScrollView.hasVerticalScroller =
             true
+
+        rulesScrollView.hasHorizontalScroller =
+            false
+
+        rulesScrollView.horizontalScrollElasticity =
+            .none
 
         rulesScrollView.autohidesScrollers =
             true
@@ -2963,8 +3225,19 @@ final class RemappingRulesWindowController:
         rulesScrollView.drawsBackground =
             false
 
+        rulesScrollView.automaticallyAdjustsContentInsets =
+            false
+
+        rulesScrollView.contentInsets =
+            NSEdgeInsets(
+                top: 12,
+                left: 0,
+                bottom: 12,
+                right: 0
+            )
+
         rulesScrollView.documentView =
-            rulesDocumentView
+            rulesTableView
 
         rulesScrollView.translatesAutoresizingMaskIntoConstraints =
             false
@@ -2981,65 +3254,31 @@ final class RemappingRulesWindowController:
                 for: .vertical
             )
 
-        NSLayoutConstraint.activate(
-            [
-                rulesStackView.topAnchor.constraint(
-                    equalTo:
-                        rulesDocumentView.topAnchor,
-                    constant: 12
-                ),
+        rulesScrollView.heightAnchor.constraint(
+            greaterThanOrEqualToConstant:
+                260
+        ).isActive =
+            true
+    }
 
-                rulesStackView.leadingAnchor.constraint(
-                    equalTo:
-                        rulesDocumentView
-                            .leadingAnchor,
-                    constant: 12
-                ),
+    private func updateRulesTableMetrics() {
+        rulesTableView.rowHeight =
+            42 * textScale
 
-                rulesStackView.trailingAnchor.constraint(
-                    equalTo:
-                        rulesDocumentView
-                            .trailingAnchor,
-                    constant: -12
-                ),
-
-                rulesStackView.bottomAnchor.constraint(
-                    equalTo:
-                        rulesDocumentView
-                            .bottomAnchor,
-                    constant: -12
-                ),
-
-                rulesFlexibleSpacer.widthAnchor.constraint(
-                    equalTo:
-                        rulesStackView.widthAnchor
-                ),
-
-                rulesFlexibleSpacer.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant:
-                        0
-                ),
-
-                rulesDocumentView.widthAnchor.constraint(
-                    equalTo:
-                        rulesScrollView
-                            .contentView
-                            .widthAnchor
-                ),
-
-                rulesDocumentView.heightAnchor.constraint(
-                    greaterThanOrEqualTo:
-                        rulesScrollView
-                            .contentView
-                            .heightAnchor
-                ),
-
-                rulesScrollView.heightAnchor.constraint(
-                    greaterThanOrEqualToConstant:
-                        260
-                )
-            ]
-        )
+        rulesTableView.intercellSpacing =
+            NSSize(
+                width: 0,
+                height:
+                    InterfaceLayoutMetrics.scaled(
+                        10,
+                        for:
+                            textScale,
+                        minimum:
+                            7,
+                        maximum:
+                            16
+                    )
+            )
     }
 
     private func configureActionButtons() {
@@ -3284,12 +3523,13 @@ final class RemappingRulesWindowController:
         }
     }
 
-    /// Rebuilds only the visual rows from session-owned state. Persistent
-    /// rules are never loaded here, so closing and reopening this window
-    /// cannot erase Undo or Redo history.
+    /// Refreshes the lightweight filtered/sorted snapshot and asks AppKit to
+    /// materialize only the rows needed for the visible table viewport.
+    ///
+    /// Persistent Rules are never loaded here, so closing and reopening this
+    /// window cannot erase Undo or Redo history.
     private func renderRuleEditor() {
         endKeyCapture()
-        removeAllRuleRows()
         updateSortHeaderButtons()
         updateActiveHeaderView()
         updateReverseHeaderView()
@@ -3299,12 +3539,9 @@ final class RemappingRulesWindowController:
             validationSnapshot()
 
         let warningAssessment =
-            RemappingConfigurationWarningAssessment(
-                items:
-                    ruleEditorSession.items
-            )
+            configurationWarningAssessment()
 
-        let visibleItems =
+        visibleRuleItems =
             presentationModel.visibleItems(
                 from:
                     ruleEditorSession.items,
@@ -3321,80 +3558,138 @@ final class RemappingRulesWindowController:
 
         updateFilterSummary(
             visibleCount:
-                visibleItems.count
+                visibleRuleItems.count
         )
 
-        for item in visibleItems {
-            addRuleRow(
-                item: item
-            )
-        }
+        rulesTableView.reloadData()
 
-        refreshChangeState()
+        refreshChangeState(
+            validationSnapshot:
+                validationSnapshot,
+            warningAssessment:
+                warningAssessment
+        )
 
         window?.contentView?.needsLayout =
             true
     }
 
-    private func addRuleRow(
-        item: RemappingRuleEditorItem
-    ) {
-        let row =
-            RemappingRuleRowView(
-                item: item
+    func numberOfRows(
+        in tableView:
+            NSTableView
+    ) -> Int {
+        visibleRuleItems.count
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row rowIndex: Int
+    ) -> NSView? {
+        guard
+            tableView === rulesTableView,
+            visibleRuleItems.indices.contains(
+                rowIndex
             )
+        else {
+            return nil
+        }
+
+        return makeRuleTableCell(
+            tableView:
+                tableView,
+            item:
+                visibleRuleItems[
+                    rowIndex
+                ]
+        )
+    }
+
+    private func makeRuleTableCell(
+        tableView:
+            NSTableView,
+        item:
+            RemappingRuleEditorItem
+    ) -> RemappingRuleTableCellView {
+        let cellIdentifier =
+            RulesTable.columnIdentifier
+
+        let cell:
+            RemappingRuleTableCellView
+
+        if let reusableCell =
+            tableView.makeView(
+                withIdentifier:
+                    cellIdentifier,
+                owner:
+                    self
+            ) as? RemappingRuleTableCellView
+        {
+            cell =
+                reusableCell
+
+            cell.ruleRowView.configure(
+                with:
+                    item
+            )
+        } else {
+            cell =
+                RemappingRuleTableCellView(
+                    item:
+                        item
+                )
+        }
+
+        cell.identifier =
+            cellIdentifier
+
+        cell.objectValue =
+            item
+
+        let row =
+            cell.ruleRowView
 
         row.applyTextScale(
             textScale
         )
 
         row.onSourceKeyRequested = {
-            [weak self, weak row] in
-
-            guard let row else {
-                return
-            }
+            [weak self] in
 
             self?.beginRuleKeyCapture(
-                in: row,
-                field: .source
+                itemID:
+                    item.id,
+                field:
+                    .source
             )
         }
 
         row.onDestinationKeyRequested = {
-            [weak self, weak row] in
-
-            guard let row else {
-                return
-            }
+            [weak self] in
 
             self?.beginRuleKeyCapture(
-                in: row,
-                field: .destination
+                itemID:
+                    item.id,
+                field:
+                    .destination
             )
         }
 
         row.onExceptionsRequested = {
-            [weak self, weak row] in
-
-            guard let row else {
-                return
-            }
+            [weak self] in
 
             self?.showExceptions(
-                for: row
+                for:
+                    item.id
             )
         }
 
         row.onRemoveRequested = {
-            [weak self, weak row] in
-
-            guard let row else {
-                return
-            }
+            [weak self] in
 
             self?.requestRuleRemoval(
-                row
+                itemID:
+                    item.id
             )
         }
 
@@ -3416,51 +3711,80 @@ final class RemappingRulesWindowController:
                 )
         }
 
-        ruleRows.append(
-            row
+        applyCurrentPresentation(
+            to:
+                row,
+            itemID:
+                item.id
         )
 
-        ruleRowsByItemID[
-            item.id
-        ] = row
-
-        let insertionIndex =
-            max(
-                rulesStackView
-                    .arrangedSubviews
-                    .count - 1,
-                0
+        if captureItemID
+            == item.id,
+           let captureField
+        {
+            row.showCapturePrompt(
+                for:
+                    captureField
             )
+        }
 
-        rulesStackView.insertArrangedSubview(
-            row,
-            at: insertionIndex
+        return cell
+    }
+
+    private func applyCurrentPresentation(
+        to row:
+            RemappingRuleRowView,
+        itemID:
+            UUID
+    ) {
+        let validationSnapshot =
+            validationSnapshot()
+
+        let warningAssessment =
+            configurationWarningAssessment()
+
+        row.setValidationIssueMessage(
+            validationSnapshot
+                .messagesByItemID[
+                    itemID
+                ]
         )
 
-        row.translatesAutoresizingMaskIntoConstraints =
-            false
-
-        row.widthAnchor.constraint(
-            equalTo:
-                rulesStackView.widthAnchor
-        ).isActive = true
+        applyWarningPresentation(
+            to:
+                row,
+            itemID:
+                itemID,
+            assessment:
+                warningAssessment,
+            validationSnapshot:
+                validationSnapshot
+        )
     }
 
     private func showExceptions(
-        for row: RemappingRuleRowView
+        for editorItemID:
+            UUID
     ) {
         endKeyCapture()
 
         guard
             exceptionsWindowController == nil,
             let parentWindow = window,
-            let rule = row.rule
+            let editorItem =
+                ruleEditorSession
+                    .items
+                    .first(
+                        where: {
+                            $0.id
+                                == editorItemID
+                        }
+                    ),
+            let rule =
+                editorItem.rule
         else {
             return
         }
-
-        let editorItemID =
-            row.editorItemID
 
         let controller =
             RemapOverridesWindowController(
@@ -3508,11 +3832,32 @@ final class RemappingRulesWindowController:
                         .endShortcutCapture()
                 },
                 onSave: {
-                    [weak row] overrides in
+                    [weak self] overrides in
 
-                    row?.setOverrides(
+                    guard
+                        let self,
+                        var updatedItem =
+                            self
+                                .ruleEditorSession
+                                .items
+                                .first(
+                                    where: {
+                                        $0.id
+                                            == editorItemID
+                                    }
+                                )
+                    else {
+                        return
+                    }
+
+                    updatedItem.overrides =
                         overrides
-                    )
+
+                    self
+                        .ruleEditorSession
+                        .updateItem(
+                            updatedItem
+                        )
                 },
                 onClose: {
                     [weak self] in
@@ -3610,28 +3955,31 @@ final class RemappingRulesWindowController:
         }
     }
 
-    private func scrollToRuleRow(
-        _ row: RemappingRuleRowView
+    private func scrollToRuleItem(
+        id itemID:
+            UUID
     ) {
-        rulesDocumentView
-            .layoutSubtreeIfNeeded()
+        guard
+            let rowIndex =
+                visibleRuleItems
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == itemID
+                        }
+                    )
+        else {
+            return
+        }
 
-        rulesStackView
-            .layoutSubtreeIfNeeded()
-
-        let visibleRect =
-            row.convert(
-                row.bounds,
-                to: rulesDocumentView
-            )
-
-        rulesDocumentView.scrollToVisible(
-            visibleRect
+        rulesTableView.scrollRowToVisible(
+            rowIndex
         )
     }
 
     private func requestRuleRemoval(
-        _ row: RemappingRuleRowView
+        itemID:
+            UUID
     ) {
         let confirmationRequired =
             appPreferencesController
@@ -3648,27 +3996,25 @@ final class RemappingRulesWindowController:
             return
         }
 
-        if captureRow === row {
+        if captureItemID
+            == itemID
+        {
             endKeyCapture()
         }
 
         ruleEditorSession.removeItem(
-            id: row.editorItemID
+            id:
+                itemID
         )
     }
 
-    private func removeAllRuleRows() {
-        for row in ruleRows {
-            rulesStackView
-                .removeArrangedSubview(
-                    row
-                )
+    private func clearVisibleRuleItems() {
+        visibleRuleItems.removeAll(
+            keepingCapacity:
+                false
+        )
 
-            row.removeFromSuperview()
-        }
-
-        ruleRows.removeAll()
-        ruleRowsByItemID.removeAll()
+        rulesTableView.reloadData()
     }
 
     @objc
@@ -3681,22 +4027,37 @@ final class RemappingRulesWindowController:
             ruleEditorSession
                 .insertEmptyItem()
 
-        if let row =
-            ruleRowsByItemID[itemID]
-        {
-            scrollToRuleRow(
-                row
-            )
-        }
+        scrollToRuleItem(
+            id:
+                itemID
+        )
     }
 
     private func beginRuleKeyCapture(
-        in row: RemappingRuleRowView,
+        itemID:
+            UUID,
         field:
             RemappingRuleRowView.KeyField
     ) {
-        if captureRow === row,
-           captureField == field {
+        guard
+            let item =
+                ruleEditorSession
+                    .items
+                    .first(
+                        where: {
+                            $0.id
+                                == itemID
+                        }
+                    )
+        else {
+            return
+        }
+
+        if captureItemID
+            == itemID,
+           captureField
+            == field
+        {
             endKeyCapture()
             refreshChangeState()
             return
@@ -3704,18 +4065,26 @@ final class RemappingRulesWindowController:
 
         endKeyCapture()
 
-        captureRow = row
-        captureField = field
+        captureItemID =
+            itemID
+
+        captureField =
+            field
 
         beginCaptureSession()
 
-        row.showCapturePrompt(
-            for: field
-        )
+        materializedRuleRow(
+            for:
+                itemID
+        )?
+            .showCapturePrompt(
+                for:
+                    field
+            )
 
         updateRuleEditorHistoryControls()
 
-        if row.matchingMode
+        if item.matchingMode
             == .preserveModifiers
         {
             setStatus(
@@ -3846,19 +4215,40 @@ final class RemappingRulesWindowController:
         }
 
         guard
-            let captureRow,
-            let captureField
+            let captureItemID,
+            let captureField,
+            var updatedItem =
+                ruleEditorSession
+                    .items
+                    .first(
+                        where: {
+                            $0.id
+                                == captureItemID
+                        }
+                    )
         else {
             endKeyCapture()
             return true
         }
 
-        captureRow.setCombination(
-            combination,
-            for: captureField
-        )
+        switch captureField {
+        case .source:
+            updatedItem.setSourceCombination(
+                combination
+            )
+
+        case .destination:
+            updatedItem.setDestinationCombination(
+                combination
+            )
+        }
 
         endKeyCapture()
+
+        ruleEditorSession.updateItem(
+            updatedItem
+        )
+
         refreshChangeState()
 
         return true
@@ -3903,7 +4293,7 @@ final class RemappingRulesWindowController:
     }
 
     private var isCapturingAnyKey: Bool {
-        captureRow != nil
+        captureItemID != nil
             || captureFilterField != nil
     }
 
@@ -3912,10 +4302,15 @@ final class RemappingRulesWindowController:
             return
         }
 
-        captureRow?
-            .restoreButtonTitles()
+        if let captureItemID {
+            materializedRuleRow(
+                for:
+                    captureItemID
+            )?
+                .restoreButtonTitles()
+        }
 
-        captureRow = nil
+        captureItemID = nil
         captureField = nil
         captureFilterField = nil
 
@@ -3997,7 +4392,77 @@ final class RemappingRulesWindowController:
             canRedoRuleEditorChange
     }
 
+    private func invalidateDerivedAssessmentCaches() {
+        validationSnapshotCache.invalidate()
+        warningAssessmentCache.invalidate()
+    }
+
+    private func configurationWarningAssessment()
+        -> RemappingConfigurationWarningAssessment
+    {
+        let contentRevision =
+            ruleEditorSession
+                .contentRevision
+
+        if let cachedAssessment =
+            warningAssessmentCache
+                .cachedValue(
+                    contentRevision:
+                        contentRevision
+                )
+        {
+            return cachedAssessment
+        }
+
+        let assessment =
+            RemappingConfigurationWarningAssessment(
+                items:
+                    ruleEditorSession.items
+            )
+
+        warningAssessmentCache.store(
+            assessment,
+            contentRevision:
+                contentRevision
+        )
+
+        return assessment
+    }
+
     private func validationSnapshot()
+        -> ValidationSnapshot
+    {
+        let contentRevision =
+            ruleEditorSession
+                .contentRevision
+
+        if let cachedSnapshot =
+            validationSnapshotCache
+                .cachedValue(
+                    contentRevision:
+                        contentRevision,
+                    dependencyRevision:
+                        shortcutConfigurationRevision
+                )
+        {
+            return cachedSnapshot
+        }
+
+        let snapshot =
+            makeValidationSnapshot()
+
+        validationSnapshotCache.store(
+            snapshot,
+            contentRevision:
+                contentRevision,
+            dependencyRevision:
+                shortcutConfigurationRevision
+        )
+
+        return snapshot
+    }
+
+    private func makeValidationSnapshot()
         -> ValidationSnapshot
     {
         let items =
@@ -4295,12 +4760,13 @@ final class RemappingRulesWindowController:
     }
 
     private func applyValidationAppearance(
-        _ snapshot: ValidationSnapshot
+        _ snapshot:
+            ValidationSnapshot
     ) {
         for (
             itemID,
             row
-        ) in ruleRowsByItemID {
+        ) in materializedRuleRows() {
             row.setValidationIssueMessage(
                 snapshot.messagesByItemID[
                     itemID
@@ -4322,56 +4788,173 @@ final class RemappingRulesWindowController:
         for (
             itemID,
             row
-        ) in ruleRowsByItemID {
-            var warningMessages:
-                [String] = []
-
-            if assessment.affectsRule(
-                id:
-                    itemID
-            ),
-               let warning =
-                    assessment.warning
-            {
-                warningMessages.append(
-                    warning.message
-                )
-            }
-
-            if let shortcutWarningMessage =
-                validationSnapshot
-                    .shortcutWarningMessagesByItemID[
-                        itemID
-                    ]
-            {
-                warningMessages.append(
-                    shortcutWarningMessage
-                )
-            }
-
-            row.setConfigurationWarningMessage(
-                warningMessages.isEmpty
-                    ? nil
-                    : warningMessages.joined(
-                        separator:
-                            "\n"
-                    )
+        ) in materializedRuleRows() {
+            applyWarningPresentation(
+                to:
+                    row,
+                itemID:
+                    itemID,
+                assessment:
+                    assessment,
+                validationSnapshot:
+                    validationSnapshot
             )
         }
     }
 
-    private func refreshChangeState() {
+    private func applyWarningPresentation(
+        to row:
+            RemappingRuleRowView,
+        itemID:
+            UUID,
+        assessment:
+            RemappingConfigurationWarningAssessment,
+        validationSnapshot:
+            ValidationSnapshot
+    ) {
+        var warningMessages:
+            [String] = []
+
+        if assessment.affectsRule(
+            id:
+                itemID
+        ),
+           let warning =
+                assessment.warning
+        {
+            warningMessages.append(
+                warning.message
+            )
+        }
+
+        if let shortcutWarningMessage =
+            validationSnapshot
+                .shortcutWarningMessagesByItemID[
+                    itemID
+                ]
+        {
+            warningMessages.append(
+                shortcutWarningMessage
+            )
+        }
+
+        row.setConfigurationWarningMessage(
+            warningMessages.isEmpty
+                ? nil
+                : warningMessages.joined(
+                    separator:
+                        "\n"
+                )
+        )
+    }
+
+    private func materializedRuleRow(
+        for itemID:
+            UUID
+    ) -> RemappingRuleRowView? {
+        guard
+            let rowIndex =
+                visibleRuleItems
+                    .firstIndex(
+                        where: {
+                            $0.id
+                                == itemID
+                        }
+                    ),
+            let cell =
+                rulesTableView.view(
+                    atColumn: 0,
+                    row:
+                        rowIndex,
+                    makeIfNecessary:
+                        false
+                ) as? RemappingRuleTableCellView
+        else {
+            return nil
+        }
+
+        return cell.ruleRowView
+    }
+
+    private func materializedRuleRows()
+        -> [(UUID, RemappingRuleRowView)]
+    {
+        let visibleRange =
+            rulesTableView.rows(
+                in:
+                    rulesTableView.visibleRect
+            )
+
+        guard
+            visibleRange.location
+                != NSNotFound,
+            visibleRange.length
+                > 0
+        else {
+            return []
+        }
+
+        let upperBound =
+            min(
+                NSMaxRange(
+                    visibleRange
+                ),
+                visibleRuleItems.count
+            )
+
+        guard
+            visibleRange.location
+                < upperBound
+        else {
+            return []
+        }
+
+        return (
+            visibleRange.location
+                ..< upperBound
+        )
+            .compactMap {
+                rowIndex
+                    -> (UUID, RemappingRuleRowView)? in
+
+                guard
+                    let cell =
+                        rulesTableView.view(
+                            atColumn: 0,
+                            row:
+                                rowIndex,
+                            makeIfNecessary:
+                                false
+                        ) as? RemappingRuleTableCellView
+                else {
+                    return nil
+                }
+
+                return (
+                    visibleRuleItems[
+                        rowIndex
+                    ].id,
+                    cell.ruleRowView
+                )
+            }
+    }
+
+    private func refreshChangeState(
+        validationSnapshot providedValidationSnapshot:
+            ValidationSnapshot? = nil,
+        warningAssessment providedWarningAssessment:
+            RemappingConfigurationWarningAssessment? = nil
+    ) {
         updateActiveHeaderView()
         updateReverseHeaderView()
 
         let validationSnapshot =
-            validationSnapshot()
+            providedValidationSnapshot
+            ?? self.validationSnapshot()
 
         let warningAssessment =
-            RemappingConfigurationWarningAssessment(
-                items:
-                    ruleEditorSession.items
-            )
+            providedWarningAssessment
+            ?? configurationWarningAssessment()
 
         applyValidationAppearance(
             validationSnapshot
@@ -4572,6 +5155,29 @@ final class RemappingRulesWindowController:
 
             return false
         }
+    }
+
+    // MARK: - Test support
+
+    var usesVirtualizedRulesTableForTesting:
+        Bool
+    {
+        rulesScrollView.documentView
+            === rulesTableView
+            && rulesTableView.tableColumns.count
+                == 1
+    }
+
+    var visibleRuleItemCountForTesting:
+        Int
+    {
+        visibleRuleItems.count
+    }
+
+    var materializedRuleRowCountForTesting:
+        Int
+    {
+        materializedRuleRows().count
     }
 
     private func setStatus(
