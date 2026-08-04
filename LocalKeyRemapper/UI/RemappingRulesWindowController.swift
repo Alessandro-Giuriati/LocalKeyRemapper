@@ -3596,6 +3596,8 @@ final class RemappingRulesWindowController:
         }
 
         return makeRuleTableCell(
+            tableView:
+                tableView,
             item:
                 visibleRuleItems[
                     rowIndex
@@ -3604,14 +3606,45 @@ final class RemappingRulesWindowController:
     }
 
     private func makeRuleTableCell(
+        tableView:
+            NSTableView,
         item:
             RemappingRuleEditorItem
     ) -> RemappingRuleTableCellView {
-        let cell =
-            RemappingRuleTableCellView(
-                item:
+        let cellIdentifier =
+            RulesTable.columnIdentifier
+
+        let cell:
+            RemappingRuleTableCellView
+
+        if let reusableCell =
+            tableView.makeView(
+                withIdentifier:
+                    cellIdentifier,
+                owner:
+                    self
+            ) as? RemappingRuleTableCellView
+        {
+            cell =
+                reusableCell
+
+            cell.ruleRowView.configure(
+                with:
                     item
             )
+        } else {
+            cell =
+                RemappingRuleTableCellView(
+                    item:
+                        item
+                )
+        }
+
+        cell.identifier =
+            cellIdentifier
+
+        cell.objectValue =
+            item
 
         let row =
             cell.ruleRowView

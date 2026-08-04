@@ -169,4 +169,141 @@ final class RemappingRuleLightweightLayoutTests:
             frames.warning.midX
         )
     }
+    func testRuleRowCanBeReconfiguredForNativeTableReuseWithoutRebuildingControls() {
+        let originalItem =
+            RemappingRuleEditorItem()
+
+        var replacementItem =
+            RemappingRuleEditorItem()
+
+        replacementItem.setEnabled(
+            false
+        )
+
+        replacementItem.setBidirectional(
+            true
+        )
+
+        let row =
+            RemappingRuleRowView(
+                item:
+                    originalItem
+            )
+
+        let originalControlIdentities =
+            row.subviews.map(
+                ObjectIdentifier.init
+            )
+
+        row.configure(
+            with:
+                replacementItem
+        )
+
+        XCTAssertEqual(
+            row.editorItemID,
+            replacementItem.id
+        )
+
+        XCTAssertFalse(
+            row.isEnabled
+        )
+
+        XCTAssertTrue(
+            row.isBidirectional
+        )
+
+        XCTAssertEqual(
+            row.subviews.map(
+                ObjectIdentifier.init
+            ),
+            originalControlIdentities
+        )
+    }
+
+    func testBehaviorPreviewViewsExistOnlyWhileMenuIsOpen() {
+        let row =
+            RemappingRuleRowView()
+
+        XCTAssertEqual(
+            row.behaviorPreviewViewCountForTesting,
+            0
+        )
+
+        row.openBehaviorMenuForTesting()
+
+        XCTAssertEqual(
+            row.behaviorPreviewViewCountForTesting,
+            2
+        )
+
+        row.closeBehaviorMenuForTesting()
+
+        XCTAssertEqual(
+            row.behaviorPreviewViewCountForTesting,
+            0
+        )
+    }
+
+    func testReconfiguringKeepsBothArrowGlyphsInsideTheExpandedDrawingFrame() {
+        let row =
+            RemappingRuleRowView()
+
+        row.frame =
+            NSRect(
+                x: 0,
+                y: 0,
+                width: 1100,
+                height: 42
+            )
+
+        var bidirectionalItem =
+            RemappingRuleEditorItem()
+
+        bidirectionalItem.setBidirectional(
+            true
+        )
+
+        row.configure(
+            with:
+                bidirectionalItem
+        )
+
+        row.layout()
+
+        XCTAssertEqual(
+            row.arrowTitleForTesting,
+            "↔"
+        )
+
+        XCTAssertLessThanOrEqual(
+            row.arrowFittingSizeForTesting.width,
+            row.arrowFrameForTesting.width
+        )
+
+        var oneWayItem =
+            RemappingRuleEditorItem()
+
+        oneWayItem.setBidirectional(
+            false
+        )
+
+        row.configure(
+            with:
+                oneWayItem
+        )
+
+        row.layout()
+
+        XCTAssertEqual(
+            row.arrowTitleForTesting,
+            "→"
+        )
+
+        XCTAssertLessThanOrEqual(
+            row.arrowFittingSizeForTesting.width,
+            row.arrowFrameForTesting.width
+        )
+    }
+
 }

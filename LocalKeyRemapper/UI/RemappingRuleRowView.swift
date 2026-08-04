@@ -10,7 +10,7 @@ import CoreGraphics
 
 /// Displays and edits one remapping rule editor item.
 @MainActor
-final class RemappingRuleRowView: NSView {
+final class RemappingRuleRowView: NSView, NSMenuDelegate {
     @MainActor
     private final class BehaviorMenuItemView: NSView {
         private let checkmarkLabel = NSTextField(labelWithString: "")
@@ -288,6 +288,12 @@ final class RemappingRuleRowView: NSView {
         static let sourceLeadingSpacing: CGFloat = 6
         static let keyArrowSpacing: CGFloat = 10
         static let arrowWidth: CGFloat = 18
+
+        /// Gives the glyph a wider drawing frame by borrowing only from the
+        /// existing empty spacing on both sides of the logical arrow column.
+        /// Neighboring controls keep exactly the same positions.
+        static let arrowDrawingWidth: CGFloat = 30
+
         static let destinationBehaviorSpacing: CGFloat = 10
         static let behaviorWidth: CGFloat = 168
         static let behaviorExceptionsSpacing: CGFloat = 10
@@ -309,13 +315,10 @@ final class RemappingRuleRowView: NSView {
     private let destinationKeyButton = NSButton()
     private let behaviorPopUpButton = NSPopUpButton()
 
-    private let exactBehaviorMenuView = BehaviorMenuItemView(
-        title: "Exact only"
-    )
-
-    private let preserveBehaviorMenuView = BehaviorMenuItemView(
-        title: "Preserve modifiers"
-    )
+    /// Heavy custom menu previews are created only while the menu is open.
+    /// Reusable table rows therefore retain only the native popup itself.
+    private var exactBehaviorMenuView: BehaviorMenuItemView?
+    private var preserveBehaviorMenuView: BehaviorMenuItemView?
 
     private let exceptionsButton = NSButton()
 
@@ -335,7 +338,7 @@ final class RemappingRuleRowView: NSView {
     private var removeControlHeight: CGFloat = 0
     private var arrowControlHeight: CGFloat = 0
 
-    let editorItemID: UUID
+    private(set) var editorItemID: UUID
 
     private(set) var isEnabled: Bool
     private(set) var sourceCombination: KeyCombination?
@@ -457,6 +460,27 @@ final class RemappingRuleRowView: NSView {
         layoutControls()
     }
 
+    /// Rebinds this existing row hierarchy to another editor item.
+    ///
+    /// `NSTableView` may recycle an off-screen cell for a different visible
+    /// item. Updating the stored value state in place preserves the native
+    /// controls and menu hierarchy instead of rebuilding them during scroll.
+    func configure(
+        with item: RemappingRuleEditorItem
+    ) {
+        releaseBehaviorMenuPreviewViews()
+        resetInteractionHandlersForReuse()
+
+        editorItemID =
+            item.id
+
+        applyEditorItem(
+            item
+        )
+
+        updateControls()
+    }
+
     func setCombination(
         _ combination: KeyCombination,
         for field: KeyField
@@ -567,8 +591,15 @@ final class RemappingRuleRowView: NSView {
             weight: .regular
         )
 
-        exactBehaviorMenuView.applyTextScale(scale)
-        preserveBehaviorMenuView.applyTextScale(scale)
+        exactBehaviorMenuView?
+            .applyTextScale(
+                scale
+            )
+
+        preserveBehaviorMenuView?
+            .applyTextScale(
+                scale
+            )
 
         exceptionsButton.font = NSFont.systemFont(
             ofSize: 13 * scale,
@@ -580,10 +611,7 @@ final class RemappingRuleRowView: NSView {
             weight: .regular
         )
 
-        arrowLabel.font = NSFont.systemFont(
-            ofSize: 20 * scale,
-            weight: .regular
-        )
+        updateArrowPresentation()
 
         issuesView.applyTextScale(scale)
         cacheControlFittingSizes()
@@ -604,6 +632,8 @@ final class RemappingRuleRowView: NSView {
         )
 
         arrowLabel.alignment = .center
+        arrowLabel.lineBreakMode = .byClipping
+        arrowLabel.maximumNumberOfLines = 1
 
         configureBehaviorMenu()
 
@@ -754,12 +784,22 @@ final class RemappingRuleRowView: NSView {
             keyWidth
             + LayoutMetrics.keyArrowSpacing
 
+        let arrowDrawingWidth =
+            LayoutMetrics
+                .arrowDrawingWidth
+
         arrowLabel.frame =
             verticallyCenteredFrame(
-                x: x,
+                x:
+                    x
+                    + (
+                        LayoutMetrics
+                            .arrowWidth
+                        - arrowDrawingWidth
+                    )
+                    / 2,
                 width:
-                    LayoutMetrics
-                        .arrowWidth,
+                    arrowDrawingWidth,
                 preferredHeight:
                     arrowControlHeight,
                 availableHeight:
@@ -1012,27 +1052,135 @@ final class RemappingRuleRowView: NSView {
         exactItem.action = #selector(
             behaviorMenuItemSelected(_:)
         )
-        exactItem.view = exactBehaviorMenuView
 
         preserveItem.tag = 1
         preserveItem.target = self
         preserveItem.action = #selector(
             behaviorMenuItemSelected(_:)
         )
-        preserveItem.view = preserveBehaviorMenuView
 
-        exactBehaviorMenuView.onActivate = {
-            [weak self] in
+        behaviorPopUpButton.menu?.delegate =
+            self
+    }
 
-            self?.selectBehavior(.exact)
+    func menuWillOpen(
+        _ menu: NSMenu
+    ) {
+        guard
+            menu === behaviorPopUpButton.menu
+        else {
+            return
         }
 
-        preserveBehaviorMenuView.onActivate = {
-            [weak self] in
+        ensureBehaviorMenuPreviewViews()
+        refreshBehaviorMenuPreviews()
+    }
 
-            self?.selectBehavior(.preserveModifiers)
+    func menuDidClose(
+        _ menu: NSMenu
+    ) {
+        guard
+            menu === behaviorPopUpButton.menu
+        else {
+            return
         }
 
+        releaseBehaviorMenuPreviewViews()
+    }
+
+    private func ensureBehaviorMenuPreviewViews() {
+        guard
+            exactBehaviorMenuView == nil,
+            preserveBehaviorMenuView == nil,
+            let exactItem =
+                behaviorPopUpButton.item(
+                    at: 0
+                ),
+            let preserveItem =
+                behaviorPopUpButton.item(
+                    at: 1
+                )
+        else {
+            return
+        }
+
+        let exactView =
+            BehaviorMenuItemView(
+                title:
+                    "Exact only"
+            )
+
+        let preserveView =
+            BehaviorMenuItemView(
+                title:
+                    "Preserve modifiers"
+            )
+
+        exactView.applyTextScale(
+            textScale
+        )
+
+        preserveView.applyTextScale(
+            textScale
+        )
+
+        exactView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .exact
+            )
+        }
+
+        preserveView.onActivate = {
+            [weak self] in
+
+            self?.selectBehavior(
+                .preserveModifiers
+            )
+        }
+
+        exactItem.view =
+            exactView
+
+        preserveItem.view =
+            preserveView
+
+        exactBehaviorMenuView =
+            exactView
+
+        preserveBehaviorMenuView =
+            preserveView
+    }
+
+    private func releaseBehaviorMenuPreviewViews() {
+        behaviorPopUpButton
+            .item(
+                at: 0
+            )?
+            .view =
+            nil
+
+        behaviorPopUpButton
+            .item(
+                at: 1
+            )?
+            .view =
+            nil
+
+        exactBehaviorMenuView?
+            .onActivate =
+            nil
+
+        preserveBehaviorMenuView?
+            .onActivate =
+            nil
+
+        exactBehaviorMenuView =
+            nil
+
+        preserveBehaviorMenuView =
+            nil
     }
 
     private func synchronizeBehaviorControl() {
@@ -1044,9 +1192,15 @@ final class RemappingRuleRowView: NSView {
             behaviorPopUpButton.selectItem(at: 1)
         }
 
-        exactBehaviorMenuView.isSelected = matchingMode == .exact
-        preserveBehaviorMenuView.isSelected =
-            matchingMode == .preserveModifiers
+        exactBehaviorMenuView?
+            .isSelected =
+            matchingMode
+                == .exact
+
+        preserveBehaviorMenuView?
+            .isSelected =
+            matchingMode
+                == .preserveModifiers
     }
 
     private func updateControls() {
@@ -1063,7 +1217,84 @@ final class RemappingRuleRowView: NSView {
 
         activationSwitch.state = isEnabled ? .on : .off
         bidirectionalSwitch.state = isBidirectional ? .on : .off
-        arrowLabel.stringValue = isBidirectional ? "↔" : "→"
+
+        updateArrowPresentation()
+    }
+
+    /// Keeps both arrow glyphs fully visible while preserving the logical
+    /// 18-point column and every neighboring control position.
+    ///
+    /// The label borrows only from the existing empty spacing on each side.
+    /// Its font is then reduced only when the actual AppKit fitting width still
+    /// exceeds that wider drawing frame.
+    private func updateArrowPresentation() {
+        arrowLabel.stringValue =
+            isBidirectional
+                ? "↔"
+                : "→"
+
+        let preferredPointSize =
+            20
+            * textScale
+
+        // Do not scale this floor upward. At larger application text sizes the
+        // glyph may need to remain smaller than surrounding controls in order
+        // to fit the fixed column without clipping.
+        let minimumPointSize:
+            CGFloat =
+                10
+
+        let availableWidth =
+            max(
+                1,
+                LayoutMetrics
+                    .arrowDrawingWidth
+                    - 2
+            )
+
+        var pointSize =
+            max(
+                minimumPointSize,
+                preferredPointSize
+            )
+
+        var fittingSize =
+            NSSize.zero
+
+        while true {
+            arrowLabel.font =
+                NSFont.systemFont(
+                    ofSize:
+                        pointSize,
+                    weight:
+                        .regular
+                )
+
+            fittingSize =
+                arrowLabel
+                    .fittingSize
+
+            if fittingSize.width
+                <= availableWidth
+                || pointSize
+                    <= minimumPointSize
+            {
+                break
+            }
+
+            pointSize =
+                max(
+                    minimumPointSize,
+                    pointSize
+                        - 0.5
+                )
+        }
+
+        arrowControlHeight =
+            fittingSize.height
+
+        needsLayout =
+            true
     }
 
     private func updateValidationAppearance() {
@@ -1083,15 +1314,48 @@ final class RemappingRuleRowView: NSView {
     }
 
     private func refreshBehaviorMenuPreviews() {
-        exactBehaviorMenuView.setExamples(
-            behaviorPreviewLines(for: .exact)
-        )
+        if let exactBehaviorMenuView {
+            exactBehaviorMenuView.setExamples(
+                behaviorPreviewLines(
+                    for:
+                        .exact
+                )
+            )
+        }
 
-        preserveBehaviorMenuView.setExamples(
-            behaviorPreviewLines(for: .preserveModifiers)
-        )
+        if let preserveBehaviorMenuView {
+            preserveBehaviorMenuView.setExamples(
+                behaviorPreviewLines(
+                    for:
+                        .preserveModifiers
+                )
+            )
+        }
 
         synchronizeBehaviorControl()
+    }
+
+    private func resetInteractionHandlersForReuse() {
+        onSourceKeyRequested =
+            nil
+
+        onDestinationKeyRequested =
+            nil
+
+        onExceptionsRequested =
+            nil
+
+        onRemoveRequested =
+            nil
+
+        onMatchingModeChangeRequested =
+            nil
+
+        onMatchingModeChangeRejected =
+            nil
+
+        onRuleChanged =
+            nil
     }
 
     private func behaviorPreviewLines(
@@ -1398,5 +1662,54 @@ final class RemappingRuleRowView: NSView {
             issuesView.frame,
             removeButton.frame
         ]
+    }
+
+    var behaviorPreviewViewCountForTesting: Int {
+        [
+            exactBehaviorMenuView,
+            preserveBehaviorMenuView
+        ]
+            .compactMap {
+                $0
+            }
+            .count
+    }
+
+    var arrowTitleForTesting: String {
+        arrowLabel.stringValue
+    }
+
+    var arrowFrameForTesting: NSRect {
+        arrowLabel.frame
+    }
+
+    var arrowFittingSizeForTesting: NSSize {
+        arrowLabel.fittingSize
+    }
+
+    func openBehaviorMenuForTesting() {
+        guard
+            let menu =
+                behaviorPopUpButton.menu
+        else {
+            return
+        }
+
+        menuWillOpen(
+            menu
+        )
+    }
+
+    func closeBehaviorMenuForTesting() {
+        guard
+            let menu =
+                behaviorPopUpButton.menu
+        else {
+            return
+        }
+
+        menuDidClose(
+            menu
+        )
     }
 }
