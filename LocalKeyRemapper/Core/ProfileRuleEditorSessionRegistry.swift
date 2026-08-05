@@ -31,7 +31,7 @@ final class ProfileRuleEditorSessionRegistry {
     /// `RuleEditorHistory` exposes a deterministic payload estimate rather than
     /// claiming exact Swift heap usage. The global limit deliberately uses the
     /// same unit so its behavior remains stable and testable.
-    static let defaultMaximumRetainedEstimatedHistoryPayloadSize =
+    nonisolated static let defaultMaximumRetainedEstimatedHistoryPayloadSize =
         RuleEditorHistory.defaultMaximumEstimatedPayloadSize * 4
 
     private var sessionsByProfileID:
