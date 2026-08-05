@@ -547,6 +547,19 @@ final class StatusBarController:
             )
 
             refreshProfiles()
+        } catch let conflict
+            as ProfileActivationShortcutConflict
+        {
+            refreshProfiles()
+
+            popoverViewController?
+                .showProfileSelectionFailure(
+                    ProfileActivationFailurePresentation
+                        .message(
+                            for:
+                                conflict
+                        )
+                )
         } catch {
             refreshProfiles()
 

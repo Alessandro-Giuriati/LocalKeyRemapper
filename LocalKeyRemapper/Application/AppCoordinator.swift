@@ -1874,11 +1874,12 @@ final class AppCoordinator:
                 .loadConfiguration()
 
         guard
-            persistedProfilesConfiguration
-                .profile(
-                    id:
-                        profileID
-                ) != nil
+            let profile =
+                persistedProfilesConfiguration
+                    .profile(
+                        id:
+                            profileID
+                    )
         else {
             throw RemappingProfileRulesAccessError
                 .profileNotFound(
@@ -1925,18 +1926,29 @@ final class AppCoordinator:
             appPreferencesController
                 .preferences
 
-        return try homeConfigurationSaveTransaction
-            .commit(
-                HomeConfigurationSnapshot(
-                    profilesConfiguration:
-                        proposedProfilesConfiguration,
-                    launchBehavior:
-                        preferences.launchBehavior,
-                    shortcutConfiguration:
-                        preferences
-                            .shortcutConfiguration
+        do {
+            return try homeConfigurationSaveTransaction
+                .commit(
+                    HomeConfigurationSnapshot(
+                        profilesConfiguration:
+                            proposedProfilesConfiguration,
+                        launchBehavior:
+                            preferences.launchBehavior,
+                        shortcutConfiguration:
+                            preferences
+                                .shortcutConfiguration
+                    )
                 )
+        } catch let conflict
+            as RemappingShortcutRuleConflict
+        {
+            throw ProfileActivationShortcutConflict(
+                profile:
+                    profile,
+                conflict:
+                    conflict
             )
+        }
     }
 
     /// Completes the two-stage Home activation after the editor session has

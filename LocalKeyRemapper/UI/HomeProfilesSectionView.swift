@@ -2097,7 +2097,6 @@ final class HomeProfilesSectionView:
 
         onOpenProfile?(profileID)
     }
-
     @objc
     private func editProfileShortcut(_ sender: ProfileIDButton) {
         guard editorSession != nil,
@@ -2146,7 +2145,8 @@ final class HomeProfilesSectionView:
     @objc
     private func activeProfileChanged(_ sender: ProfileIDButton) {
         guard let editorSession,
-              let profileID = sender.profileID
+              let profileID = sender.profileID,
+              let profile = configuration.profile(id: profileID)
         else {
             reloadPresentation()
             return
@@ -2155,12 +2155,24 @@ final class HomeProfilesSectionView:
         do {
             try editorSession.setActiveProfile(profileID)
 
-            if let profile = configuration.profile(id: profileID) {
-                onStatusChange?(
-                    "“\(profile.name)” is now the active profile.",
-                    false
-                )
-            }
+            onStatusChange?(
+                "“\(profile.name)” is now the active profile.",
+                false
+            )
+        } catch let conflict
+            as ProfileActivationShortcutConflict
+        {
+            reloadPresentation()
+            onStatusChange?(
+                ProfileActivationFailurePresentation
+                    .message(
+                        for:
+                            conflict,
+                        displayedProfileName:
+                            profile.name
+                    ),
+                true
+            )
         } catch {
             reloadPresentation()
             onStatusChange?(

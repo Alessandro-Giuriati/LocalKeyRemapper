@@ -55,6 +55,12 @@ final class StatusPopoverViewController:
         static let width:
             CGFloat = 300
 
+        static let baseHeight:
+            CGFloat = 260
+
+        static let expandedFailureHeight:
+            CGFloat = 360
+
         static let horizontalPadding:
             CGFloat = 16
 
@@ -185,7 +191,7 @@ final class StatusPopoverViewController:
                 width:
                     Layout.width,
                 height:
-                    260
+                    Layout.baseHeight
             )
     }
 
@@ -257,7 +263,6 @@ final class StatusPopoverViewController:
 
             primaryActionButton.isEnabled =
                 true
-
         case .failed(
             let failure
         ):
@@ -412,15 +417,27 @@ final class StatusPopoverViewController:
                 : "No other saved profile is available."
     }
 
-    func showProfileSelectionFailure() {
+    func showProfileSelectionFailure(
+        _ message:
+            String =
+                "The profile could not be activated. The previous profile remains active."
+    ) {
         profileStatusLabel.stringValue =
-            "The profile could not be activated. The previous profile remains active."
+            message
 
         profileStatusLabel.textColor =
             .systemRed
 
         profileStatusLabel.isHidden =
             false
+
+        preferredContentSize =
+            NSSize(
+                width:
+                    Layout.width,
+                height:
+                    Layout.expandedFailureHeight
+            )
     }
 
     func showProfilesLoadingFailure() {
@@ -436,6 +453,14 @@ final class StatusPopoverViewController:
 
         profileStatusLabel.isHidden =
             false
+
+        preferredContentSize =
+            NSSize(
+                width:
+                    Layout.width,
+                height:
+                    Layout.expandedFailureHeight
+            )
     }
 
     func clearProfileStatus() {
@@ -444,6 +469,14 @@ final class StatusPopoverViewController:
 
         profileStatusLabel.isHidden =
             true
+
+        preferredContentSize =
+            NSSize(
+                width:
+                    Layout.width,
+                height:
+                    Layout.baseHeight
+            )
     }
 
     private func configureInterface() {
@@ -488,7 +521,7 @@ final class StatusPopoverViewController:
             )
 
         profileStatusLabel.maximumNumberOfLines =
-            2
+            0
 
         profileStatusLabel.isHidden =
             true
