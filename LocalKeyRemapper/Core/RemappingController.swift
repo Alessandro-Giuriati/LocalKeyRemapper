@@ -23,16 +23,27 @@ protocol RemappingControlling: AnyObject {
     /// Represents the current backend state.
     var state: RemappingState { get }
 
-    /// Called whenever the remapping state changes.
+    /// The manual setting restored whenever the foreground app follows it.
+    var isManualRemappingEnabled: Bool { get }
+
+    /// The value edited by the switch in the current app.
+    var isManualControlOn: Bool { get }
+
+    var usesTemporaryManualActivation: Bool { get }
+
+    /// An explicit app rule overrides the manual setting while in the foreground.
+    var foregroundApplicationOverride: Bool? { get }
+
+    /// Called whenever the runtime state or its manual setting changes.
     var onStateChange: ((RemappingState) -> Void)? { get set }
 
-    /// Enables keyboard remapping when possible.
+    /// Turns on the current manual control, subject to the app rule.
     func enable()
 
-    /// Disables keyboard remapping and removes the event tap.
+    /// Turns off the current manual control, subject to the app rule.
     func disable()
 
-    /// Switches between the enabled and disabled states.
+    /// Toggles the manual control for the current foreground context.
     func toggle()
 }
 
@@ -74,7 +85,34 @@ final class RemappingController:
     private let dateProvider:
         () -> Date
 
+    private let foregroundApplicationBundleIdentifierProvider: () -> String?
+    private var foregroundApplicationScope = ForegroundApplicationScope.unrestricted
+    private(set) var isManualRemappingEnabled = false
+    private(set) var foregroundApplicationOverride: Bool?
+    private var foregroundApplicationBundleIdentifier: String?
+    private var isTemporaryManualActivationEnabled = false
     private var isKeyCaptureActive = false
+
+    private var isRemappingRequested: Bool {
+        state == .enabled || state == .pausedForForegroundApplication
+    }
+
+    private var shouldRemap: Bool {
+        (usesTemporaryManualActivation && isTemporaryManualActivationEnabled)
+            || (foregroundApplicationOverride ?? isManualRemappingEnabled)
+    }
+
+    var usesTemporaryManualActivation: Bool {
+        foregroundApplicationScope.permitsTemporaryManualActivation(in: foregroundApplicationBundleIdentifier)
+    }
+
+    var isManualControlOn: Bool {
+        usesTemporaryManualActivation ? isTemporaryManualActivationEnabled : isManualRemappingEnabled
+    }
+
+    private var foregroundScopedState: RemappingState {
+        shouldRemap ? .enabled : .pausedForForegroundApplication
+    }
 
     private(set) var state:
         RemappingState = .disabled
@@ -100,7 +138,8 @@ final class RemappingController:
         dateProvider:
             @escaping () -> Date = {
                 Date()
-            }
+            },
+        foregroundApplicationBundleIdentifierProvider: @escaping () -> String? = { nil }
     ) {
         self.permissionService =
             permissionService
@@ -122,18 +161,72 @@ final class RemappingController:
 
         self.dateProvider =
             dateProvider
+
+        self.foregroundApplicationBundleIdentifierProvider =
+            foregroundApplicationBundleIdentifierProvider
     }
 
     func enable() {
-        guard
-            state != .enabled,
-            state != .enabling
-        else {
-            return
+        refreshForegroundApplicationOverride()
+        let manualSettingChanged = !isManualControlOn
+        if usesTemporaryManualActivation {
+            isTemporaryManualActivationEnabled = true
+        } else {
+            isManualRemappingEnabled = true
         }
+        reconcileRuntime(requestsPermission: true, notifyIfUnchanged: manualSettingChanged)
+    }
 
+    func disable() {
+        refreshForegroundApplicationOverride()
+        let manualSettingChanged = isManualControlOn
+        if usesTemporaryManualActivation {
+            isTemporaryManualActivationEnabled = false
+        } else {
+            isManualRemappingEnabled = false
+        }
+        reconcileRuntime(requestsPermission: false, notifyIfUnchanged: manualSettingChanged)
+    }
+
+    /// Restores the saved baseline without granting a temporary app activation.
+    func restoreManualSettingAtLaunch(_ isEnabled: Bool) {
+        let manualSettingChanged = isManualRemappingEnabled != isEnabled
+        isManualRemappingEnabled = isEnabled
+        isTemporaryManualActivationEnabled = false
+        refreshForegroundApplicationOverride()
+        reconcileRuntime(requestsPermission: isEnabled, notifyIfUnchanged: manualSettingChanged)
+    }
+
+    /// Releases the backend when the application shuts down.
+    func stop() {
+        eventTapManager.stop()
+        isManualRemappingEnabled = false
+        foregroundApplicationScope = .unrestricted
+        foregroundApplicationOverride = nil
+        foregroundApplicationBundleIdentifier = nil
+        isTemporaryManualActivationEnabled = false
+        updateState(.disabled)
+    }
+
+    func toggle() {
+        refreshForegroundApplicationOverride()
+        switch state {
+        case .permissionRequired, .failed:
+            enable()
+        default:
+            if isManualControlOn {
+                disable()
+            } else {
+                enable()
+            }
+        }
+    }
+
+    private func startRuntime(requestsPermission: Bool) {
         guard permissionService.isGranted else {
-            permissionService.requestAccess()
+            if requestsPermission {
+                permissionService.requestAccess()
+            }
 
             updateState(
                 .permissionRequired
@@ -201,6 +294,8 @@ final class RemappingController:
                 activeProfile.rules
             )
 
+        eventTapManager.setForegroundApplicationAllowsRemapping(shouldRemap)
+
         do {
             try eventTapManager
                 .start()
@@ -220,30 +315,74 @@ final class RemappingController:
             eventTapManager.pause()
         }
 
-        updateState(
-            .enabled
-        )
+        updateState(foregroundScopedState)
     }
 
-    func disable() {
-        eventTapManager.stop()
-
-        updateState(
-            .disabled
-        )
-    }
-
-    func toggle() {
-        switch state {
-        case .enabled,
-             .enabling:
-            disable()
-
-        case .disabled,
-             .permissionRequired,
-             .failed:
-            enable()
+    /// Applies a committed scope while preserving the manual setting.
+    func setForegroundApplicationScope(_ scope: ForegroundApplicationScope) {
+        guard foregroundApplicationScope != scope else {
+            return
         }
+
+        foregroundApplicationScope = scope
+        isTemporaryManualActivationEnabled = false
+        refreshForegroundApplicationOverride()
+        reconcileRuntime(requestsPermission: false, notifyIfUnchanged: true)
+    }
+
+    func foregroundApplicationDidActivate(bundleIdentifier: @autoclosure () -> String?) {
+        guard foregroundApplicationScope.observesForegroundApplication else {
+            return
+        }
+
+        guard applyForegroundApplicationContext(bundleIdentifier()) else {
+            return
+        }
+        reconcileRuntime(requestsPermission: false, notifyIfUnchanged: true)
+    }
+
+    private func refreshForegroundApplicationOverride() {
+        let bundleIdentifier = foregroundApplicationScope.observesForegroundApplication
+            ? foregroundApplicationBundleIdentifierProvider()
+            : nil
+        _ = applyForegroundApplicationContext(bundleIdentifier)
+    }
+
+    private func applyForegroundApplicationContext(_ bundleIdentifier: String?) -> Bool {
+        let applicationChanged = foregroundApplicationBundleIdentifier != bundleIdentifier
+        if applicationChanged {
+            isTemporaryManualActivationEnabled = false
+        }
+        foregroundApplicationBundleIdentifier = bundleIdentifier
+        let updatedOverride = foregroundApplicationScope.remappingOverride(in: bundleIdentifier)
+        let overrideChanged = foregroundApplicationOverride != updatedOverride
+        foregroundApplicationOverride = updatedOverride
+        return overrideChanged || (applicationChanged && foregroundApplicationScope.permitsTemporaryManualActivation)
+    }
+
+    private func reconcileRuntime(requestsPermission: Bool, notifyIfUnchanged: Bool) {
+        // Reuse the paused tap between included apps. The event-tap manager
+        // disables delivery after pending remapped releases have completed.
+        let retainsAutomaticRuntime = eventTapManager.isRunning
+            && (!foregroundApplicationScope.includedApplications.isEmpty
+                || foregroundApplicationScope.permitsTemporaryManualActivation)
+        let needsRuntime = isManualRemappingEnabled || shouldRemap || retainsAutomaticRuntime
+
+        guard needsRuntime else {
+            if eventTapManager.isRunning {
+                eventTapManager.stop()
+            }
+            updateState(.disabled, notifyIfUnchanged: notifyIfUnchanged)
+            return
+        }
+
+        eventTapManager.setForegroundApplicationAllowsRemapping(shouldRemap)
+        guard eventTapManager.isRunning else {
+            startRuntime(requestsPermission: requestsPermission)
+            return
+        }
+
+        updateState(foregroundScopedState, notifyIfUnchanged: notifyIfUnchanged)
     }
 
     /// Handles an event tap interruption reported by Core Graphics.
@@ -253,8 +392,7 @@ final class RemappingController:
     /// event tap.
     func handleEventTapInterruption() {
         guard
-            state == .enabled
-                || state == .enabling
+            isRemappingRequested || state == .enabling
         else {
             return
         }
@@ -293,9 +431,7 @@ final class RemappingController:
             eventTapManager.pause()
         }
 
-        updateState(
-            .enabled
-        )
+        updateState(foregroundScopedState)
     }
 
     /// Revalidates Accessibility permission after a relevant application or
@@ -303,6 +439,7 @@ final class RemappingController:
     func refreshAccessibilityPermission() {
         switch state {
         case .enabled,
+             .pausedForForegroundApplication,
              .enabling:
             guard
                 !permissionService
@@ -325,9 +462,7 @@ final class RemappingController:
                 return
             }
 
-            updateState(
-                .disabled
-            )
+            reconcileRuntime(requestsPermission: false, notifyIfUnchanged: false)
 
         case .disabled,
              .failed:
@@ -423,9 +558,7 @@ final class RemappingController:
 
         isKeyCaptureActive = true
 
-        guard
-            state == .enabled
-        else {
+        guard isRemappingRequested else {
             return
         }
 
@@ -442,9 +575,7 @@ final class RemappingController:
 
         isKeyCaptureActive = false
 
-        guard
-            state == .enabled
-        else {
+        guard isRemappingRequested else {
             return
         }
 
@@ -600,10 +731,11 @@ final class RemappingController:
 
     private func updateState(
         _ newState:
-            RemappingState
+            RemappingState,
+        notifyIfUnchanged: Bool = false
     ) {
         guard
-            state != newState
+            state != newState || notifyIfUnchanged
         else {
             return
         }

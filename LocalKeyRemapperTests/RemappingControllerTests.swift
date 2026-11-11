@@ -1482,6 +1482,12 @@ final class ControllerMockEventTapManager:
 
     var startError: Error?
 
+    private(set) var foregroundApplicationAllowsRemapping = true
+
+    func setForegroundApplicationAllowsRemapping(_ allowsRemapping: Bool) {
+        foregroundApplicationAllowsRemapping = allowsRemapping
+    }
+
     private(set) var startCallCount = 0
     private(set) var stopCallCount = 0
     private(set) var pauseCallCount = 0

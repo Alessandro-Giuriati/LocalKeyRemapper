@@ -227,6 +227,19 @@ final class HomeConfigurationEditorSession {
         )
     }
 
+    func setForegroundApplicationScope(_ scope: ForegroundApplicationScope) {
+        guard draft.foregroundApplicationScope != scope else {
+            return
+        }
+
+        applyNewAction(
+            .setForegroundApplicationScope(
+                before: draft.foregroundApplicationScope,
+                after: scope
+            )
+        )
+    }
+
     /// Changes the application-wide default shortcut configuration.
     ///
     /// Profiles whose override is `nil` resolve to this configuration.

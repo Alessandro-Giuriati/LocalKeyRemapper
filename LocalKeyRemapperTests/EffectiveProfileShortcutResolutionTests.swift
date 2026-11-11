@@ -670,6 +670,8 @@ private final class EffectiveShortcutEventTapManager:
             false
     }
 
+    func setForegroundApplicationAllowsRemapping(_ allowsRemapping: Bool) {}
+
     func pause() {
         pauseCallCount +=
             1

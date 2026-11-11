@@ -31,13 +31,16 @@ nonisolated struct HomeConfigurationSnapshot:
     var shortcutConfiguration:
         RemappingShortcutConfiguration
 
+    var foregroundApplicationScope: ForegroundApplicationScope
+
     init(
         profilesConfiguration:
             RemappingProfilesConfiguration,
         launchBehavior:
             RemappingLaunchBehavior,
         shortcutConfiguration:
-            RemappingShortcutConfiguration
+            RemappingShortcutConfiguration,
+        foregroundApplicationScope: ForegroundApplicationScope = .unrestricted
     ) {
         self.profilesConfiguration =
             profilesConfiguration
@@ -47,6 +50,8 @@ nonisolated struct HomeConfigurationSnapshot:
 
         self.shortcutConfiguration =
             shortcutConfiguration
+
+        self.foregroundApplicationScope = foregroundApplicationScope
     }
 
     /// Profiles in their persistent collection order.

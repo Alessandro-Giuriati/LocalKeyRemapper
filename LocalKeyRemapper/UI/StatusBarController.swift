@@ -157,7 +157,13 @@ final class StatusBarController:
         popoverViewController?
             .update(
                 for:
-                    state
+                    state,
+                manualRemappingEnabled:
+                    remappingController.isManualControlOn,
+                applicationOverride:
+                    remappingController.foregroundApplicationOverride,
+                usesTemporaryManualActivation:
+                    remappingController.usesTemporaryManualActivation
             )
     }
 
@@ -236,6 +242,7 @@ final class StatusBarController:
                     .enabledAssetName
 
         case .disabled,
+             .pausedForForegroundApplication,
              .enabling,
              .permissionRequired,
              .failed:
@@ -248,6 +255,12 @@ final class StatusBarController:
             named:
                 assetName
         )
+
+        let description = state == .pausedForForegroundApplication
+            ? "LocalKeyRemapper — Remapping paused for this app"
+            : "LocalKeyRemapper"
+        statusItem.button?.toolTip = description
+        statusItem.button?.setAccessibilityLabel(description)
     }
 
     private func setStatusIcon(

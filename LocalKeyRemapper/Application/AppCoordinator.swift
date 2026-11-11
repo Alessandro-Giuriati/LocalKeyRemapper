@@ -272,6 +272,9 @@ final class AppCoordinator:
                     appPreferencesController
                         .preferences
                         .shortcutConfiguration
+                },
+                foregroundApplicationBundleIdentifierProvider: {
+                    NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 }
             )
 
@@ -354,10 +357,13 @@ final class AppCoordinator:
                 globalShortcutController:
                     globalShortcutController,
                 activeRulesApplyHandler: {
-                    rules in
+                    [weak remappingController] rules in
 
                     remappingEngine.replaceRules(
                         rules
+                    )
+                    remappingController?.setForegroundApplicationScope(
+                        appPreferencesController.preferences.foregroundApplicationScope
                     )
                 }
             )
@@ -414,6 +420,12 @@ final class AppCoordinator:
             false
 
         loadAppPreferences()
+        // A focus change while Home opens can publish a temporary automatic
+        // state. Resolve launch behavior before that callback updates history.
+        let shouldEnableAtLaunch = appPreferencesController.preferences.shouldEnableRemappingAtLaunch
+        remappingController.setForegroundApplicationScope(
+            appPreferencesController.preferences.foregroundApplicationScope
+        )
         initializeHomeConfigurationEditorSession()
         configureRulesWindowShortcutScope()
         configureRemappingStateObservation()
@@ -463,7 +475,7 @@ final class AppCoordinator:
 
         showMainWindow()
         startGlobalShortcuts()
-        enableRemappingAtLaunchIfRequested()
+        applyManualSettingAtLaunch(shouldEnableAtLaunch)
     }
 
     /// Shows the application's main window.
@@ -1125,7 +1137,7 @@ final class AppCoordinator:
             .removeAllSessions()
 
         globalShortcutController.stop()
-        remappingController.disable()
+        remappingController.stop()
 
         remappingController.onStateChange =
             nil
@@ -1150,7 +1162,7 @@ final class AppCoordinator:
         }
     }
 
-    /// Rechecks Accessibility only when macOS activates an application.
+    /// Rechecks Accessibility and applies the saved scope on app activation.
     ///
     /// This is event-driven. It does not use a repeating timer or polling.
     private func startObservingWorkspaceActivation() {
@@ -1206,8 +1218,14 @@ final class AppCoordinator:
         _ notification:
             Notification
     ) {
-        remappingController
-            .refreshAccessibilityPermission()
+        remappingController.foregroundApplicationDidActivate(
+            bundleIdentifier: (
+                notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                    ?? NSWorkspace.shared.frontmostApplication
+            )?.bundleIdentifier
+        )
+
+        remappingController.refreshAccessibilityPermission()
     }
 
     private func makeStatusBarController()
@@ -1690,7 +1708,9 @@ final class AppCoordinator:
                                 preferences.launchBehavior,
                             shortcutConfiguration:
                                 preferences
-                                    .shortcutConfiguration
+                                    .shortcutConfiguration,
+                            foregroundApplicationScope:
+                                preferences.foregroundApplicationScope
                         )
                 )
 
@@ -1904,7 +1924,9 @@ final class AppCoordinator:
                         shortcutConfiguration:
                             appPreferencesController
                                 .preferences
-                                .shortcutConfiguration
+                                .shortcutConfiguration,
+                        foregroundApplicationScope:
+                            appPreferencesController.preferences.foregroundApplicationScope
                     ),
                 previousProfilesConfiguration:
                     persistedProfilesConfiguration,
@@ -1936,7 +1958,9 @@ final class AppCoordinator:
                             preferences.launchBehavior,
                         shortcutConfiguration:
                             preferences
-                                .shortcutConfiguration
+                                .shortcutConfiguration,
+                        foregroundApplicationScope:
+                            preferences.foregroundApplicationScope
                     )
                 )
         } catch let conflict
@@ -2089,16 +2113,8 @@ final class AppCoordinator:
         }
     }
 
-    private func enableRemappingAtLaunchIfRequested() {
-        guard
-            appPreferencesController
-                .preferences
-                .shouldEnableRemappingAtLaunch
-        else {
-            return
-        }
-
-        remappingController.enable()
+    private func applyManualSettingAtLaunch(_ shouldEnable: Bool) {
+        remappingController.restoreManualSettingAtLaunch(shouldEnable)
     }
 
     private func handleRemappingStateChange(
@@ -2122,17 +2138,9 @@ final class AppCoordinator:
                 state
             )
 
-        let isEnabled:
-            Bool
-
         switch state {
-        case .enabled:
-            isEnabled =
-                true
-
-        case .disabled:
-            isEnabled =
-                false
+        case .enabled, .pausedForForegroundApplication, .disabled:
+            break
 
         case .enabling,
              .permissionRequired,
@@ -2143,7 +2151,7 @@ final class AppCoordinator:
         do {
             try appPreferencesController
                 .setLastRemappingEnabled(
-                    isEnabled
+                    remappingController.isManualRemappingEnabled
                 )
         } catch {
             // A preference write failure must not interrupt remapping.

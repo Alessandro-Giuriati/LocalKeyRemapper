@@ -20,6 +20,11 @@ nonisolated enum HomeConfigurationAction:
         after: RemappingLaunchBehavior
     )
 
+    case setForegroundApplicationScope(
+        before: ForegroundApplicationScope,
+        after: ForegroundApplicationScope
+    )
+
     case setShortcutConfiguration(
         before: RemappingShortcutConfiguration,
         after: RemappingShortcutConfiguration
@@ -81,6 +86,11 @@ nonisolated enum HomeConfigurationAction:
         case .setLaunchBehavior:
             return actionOverhead
                 + 2 * MemoryLayout<Int>.size
+
+        case .setForegroundApplicationScope(let before, let after):
+            return actionOverhead
+                + Self.estimatedSize(of: before)
+                + Self.estimatedSize(of: after)
 
         case .setShortcutConfiguration(
             let before,
@@ -188,6 +198,11 @@ nonisolated enum HomeConfigurationAction:
                     currentSnapshot
             )
 
+        case .setForegroundApplicationScope(let before, _):
+            var updatedSnapshot = currentSnapshot
+            updatedSnapshot.foregroundApplicationScope = before
+            return updatedSnapshot
+
         case .setShortcutConfiguration(
             let before,
             _
@@ -292,6 +307,11 @@ nonisolated enum HomeConfigurationAction:
                 in:
                     currentSnapshot
             )
+
+        case .setForegroundApplicationScope(_, let after):
+            var updatedSnapshot = currentSnapshot
+            updatedSnapshot.foregroundApplicationScope = after
+            return updatedSnapshot
 
         case .setShortcutConfiguration(
             _,
@@ -616,6 +636,13 @@ nonisolated enum HomeConfigurationAction:
                 of:
                     snapshot.shortcutConfiguration
             )
+            + estimatedSize(of: snapshot.foregroundApplicationScope)
+    }
+
+    private static func estimatedSize(of scope: ForegroundApplicationScope) -> Int {
+        (scope.includedApplications + scope.excludedApplications).reduce(2) { size, application in
+            size + 32 + application.bundleIdentifier.utf8.count + application.displayName.utf8.count
+        }
     }
 
     private static func estimatedSize(

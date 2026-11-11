@@ -42,6 +42,11 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
                     KeyCode.j
             )
 
+        let scope = ForegroundApplicationScope(
+            mode: .onlySelectedApplications,
+            applications: [.init(bundleIdentifier: "com.example.editor", displayName: "Editor")]
+        )
+
         let draft =
             HomeConfigurationSnapshot(
                 profilesConfiguration:
@@ -58,7 +63,9 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
                 shortcutConfiguration:
                     .toggle(
                         proposedShortcut
-                    )
+                    ),
+                foregroundApplicationScope:
+                    scope
             )
 
         let result =
@@ -66,6 +73,9 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
                 .commit(
                     draft
                 )
+
+        XCTAssertEqual(result.committedSnapshot.foregroundApplicationScope, scope)
+        XCTAssertEqual(context.preferencesController.preferences.foregroundApplicationScope, scope)
 
         XCTAssertEqual(
             context.profilesStore.configuration,
@@ -127,6 +137,42 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
         XCTAssertTrue(
             result.shortcutConfigurationChanged
         )
+    }
+
+    func testConflictingAppListsPreventEveryPersistenceAndRuntimeChange() throws {
+        let context = makeContext()
+        let application = ForegroundApplicationScope.Application(
+            bundleIdentifier: "com.example.editor",
+            displayName: "Editor"
+        )
+        let previousProfiles = context.profilesStore.configuration
+        let previousPreferences = context.preferencesController.preferences
+        let draft = HomeConfigurationSnapshot(
+            profilesConfiguration: previousProfiles,
+            launchBehavior: .alwaysOn,
+            shortcutConfiguration: previousPreferences.shortcutConfiguration,
+            foregroundApplicationScope: .init(
+                includedApplications: [application],
+                excludedApplications: [application]
+            )
+        )
+
+        XCTAssertThrowsError(try context.transaction.commit(draft))
+        XCTAssertEqual(context.profilesStore.saveCallCount, 0)
+        XCTAssertEqual(context.preferencesStore.saveCallCount, 0)
+        XCTAssertEqual(context.profilesStore.configuration, previousProfiles)
+        XCTAssertEqual(context.preferencesController.preferences, previousPreferences)
+        XCTAssertNil(context.appliedRules)
+
+        XCTAssertThrowsError(
+            try context.preferencesController.setHomeConfiguration(
+                launchBehavior: .alwaysOn,
+                shortcutConfiguration: previousPreferences.shortcutConfiguration,
+                foregroundApplicationScope: draft.foregroundApplicationScope
+            )
+        )
+        XCTAssertEqual(context.preferencesStore.saveCallCount, 0)
+        XCTAssertEqual(context.preferencesController.preferences, previousPreferences)
     }
 
     func testPreferenceFailureRollsBackProfilesAndShortcutRegistration()

@@ -149,11 +149,26 @@ final class AppPreferencesController:
         shortcutConfiguration:
             RemappingShortcutConfiguration
     ) throws {
+        try setHomeConfiguration(
+            launchBehavior: launchBehavior,
+            shortcutConfiguration: shortcutConfiguration,
+            foregroundApplicationScope: preferences.foregroundApplicationScope
+        )
+    }
+
+    func setHomeConfiguration(
+        launchBehavior: RemappingLaunchBehavior,
+        shortcutConfiguration: RemappingShortcutConfiguration,
+        foregroundApplicationScope: ForegroundApplicationScope
+    ) throws {
+        try foregroundApplicationScope.validate()
+
         guard
             preferences.launchBehavior
                 != launchBehavior
                 || preferences.shortcutConfiguration
                     != shortcutConfiguration
+                || preferences.foregroundApplicationScope != foregroundApplicationScope
         else {
             return
         }
@@ -166,6 +181,8 @@ final class AppPreferencesController:
 
         updatedPreferences.shortcutConfiguration =
             shortcutConfiguration
+
+        updatedPreferences.foregroundApplicationScope = foregroundApplicationScope
 
         try saveAndApply(
             updatedPreferences

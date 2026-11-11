@@ -111,13 +111,14 @@ final class MainWindowController:
 
     private let remappingSectionDescriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "Enable or disable the active remapping configuration."
+            "The switch and shortcuts control the manual setting. App rules turn remapping on or off automatically."
     )
 
     private let remappingLabel = NSTextField(
-        labelWithString: "Keyboard remapping"
+        labelWithString: "Manual setting"
     )
 
+    private let remappingStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let remappingSwitch = NSSwitch()
     private let remappingControlStack = NSStackView()
 
@@ -134,7 +135,7 @@ final class MainWindowController:
 
     private let launchBehaviorDescriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "Choose how remapping should behave when LocalKeyRemapper starts."
+            "Choose the manual setting at launch. Automatic app rules apply when you use their apps."
     )
 
     private let launchBehaviorControl = NSSegmentedControl(
@@ -149,6 +150,7 @@ final class MainWindowController:
     )
 
     private let launchBehaviorStack = NSStackView()
+    private let foregroundApplicationScopeView = ForegroundApplicationScopeView()
 
     private let interfaceSectionTitleLabel = NSTextField(
         labelWithString: "Interface"
@@ -344,6 +346,7 @@ final class MainWindowController:
         configureHomeSessionObservation()
         configureContent()
         synchronizeHomeDraft()
+        foregroundApplicationScopeView.isHidden = homeConfigurationEditorSession == nil
         synchronizeMenuBarIconVisibility()
         updateRemappingState(
             remappingRuntimeController?.state ?? .disabled
@@ -459,6 +462,10 @@ final class MainWindowController:
             return nil
         }
 
+        if let message = homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
+            return message
+        }
+
         if globalShortcutSettingsView
             .hasTransientEditorChanges
         {
@@ -514,6 +521,7 @@ final class MainWindowController:
         hasDetachedFromSharedState =
             true
 
+        foregroundApplicationScopeView.closeEditor()
         endShortcutCapture()
 
         homeConfigurationEditorSession?
@@ -626,12 +634,18 @@ final class MainWindowController:
         remappingSectionTitleLabel.font = sectionTitleFont
         remappingSectionDescriptionLabel.font = descriptionFont
         remappingLabel.font = controlFont
+        remappingStatusLabel.font = descriptionFont
         accessibilityPermissionLabel.font = descriptionFont
         openAccessibilitySettingsButton.font = controlFont
 
         launchBehaviorTitleLabel.font = sectionTitleFont
         launchBehaviorDescriptionLabel.font = descriptionFont
         launchBehaviorControl.font = controlFont
+        foregroundApplicationScopeView.applyFonts(
+            title: sectionTitleFont,
+            description: descriptionFont,
+            control: controlFont
+        )
 
         profilesSectionView.applyTextScale(
             textScale
@@ -731,6 +745,27 @@ final class MainWindowController:
         let canControlRemapping =
             remappingRuntimeController != nil
 
+        let usesTemporaryActivation = remappingRuntimeController?.usesTemporaryManualActivation == true
+        remappingLabel.stringValue = usesTemporaryActivation ? "Manual activation for this app" : "Manual setting"
+        remappingSwitch.setAccessibilityLabel(remappingLabel.stringValue)
+        let applicationOverride = remappingRuntimeController?.foregroundApplicationOverride
+        switch state {
+        case .enabled:
+            remappingStatusLabel.stringValue = applicationOverride == true
+                ? "Remapping is on automatically for the active app."
+                : "Remapping is on."
+        case .pausedForForegroundApplication, .disabled:
+            remappingStatusLabel.stringValue = applicationOverride == false
+                ? "Remapping is off automatically for the active app."
+                : "Remapping is off."
+        case .enabling:
+            remappingStatusLabel.stringValue = "Preparing remapping…"
+        case .permissionRequired:
+            remappingStatusLabel.stringValue = "Accessibility permission is required."
+        case .failed:
+            remappingStatusLabel.stringValue = "Remapping could not be started."
+        }
+
         switch state {
         case .disabled:
             remappingSwitch.state = .off
@@ -742,8 +777,8 @@ final class MainWindowController:
             remappingSwitch.isEnabled = false
             accessibilityPermissionStack.isHidden = true
 
-        case .enabled:
-            remappingSwitch.state = .on
+        case .enabled, .pausedForForegroundApplication:
+            remappingSwitch.state = remappingRuntimeController?.isManualControlOn == true ? .on : .off
             remappingSwitch.isEnabled = canControlRemapping
             accessibilityPermissionStack.isHidden = true
 
@@ -782,7 +817,7 @@ final class MainWindowController:
         let alert = NSAlert()
         alert.messageText = "Save changes before closing?"
         alert.informativeText =
-            "Profiles, Remapping at Launch, or Global Shortcut settings have been modified."
+            "Home settings have been modified."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Discard Changes")
@@ -873,6 +908,7 @@ final class MainWindowController:
 
         descriptionLabel.textColor = .secondaryLabelColor
         remappingSectionDescriptionLabel.textColor = .secondaryLabelColor
+        remappingStatusLabel.textColor = .secondaryLabelColor
         launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.isHidden =
@@ -880,6 +916,12 @@ final class MainWindowController:
 
         configureRemappingSection()
         configureLaunchBehavior()
+        foregroundApplicationScopeView.onChange = { [weak self] scope in
+            self?.homeConfigurationEditorSession?.setForegroundApplicationScope(scope)
+        }
+        foregroundApplicationScopeView.onSave = { [weak self] in
+            self?.saveHomeConfiguration() ?? false
+        }
         configureMenuBarVisibilityPreference()
         configureTextSizeControls()
         configureHomeActions()
@@ -903,8 +945,10 @@ final class MainWindowController:
                 remappingSectionTitleLabel,
                 remappingSectionDescriptionLabel,
                 remappingControlStack,
+                remappingStatusLabel,
                 accessibilityPermissionStack,
                 launchBehaviorStack,
+                foregroundApplicationScopeView,
                 globalShortcutSettingsView,
                 profilesSectionView,
                 interfaceStack
@@ -918,6 +962,7 @@ final class MainWindowController:
         globalShortcutSettingsView.translatesAutoresizingMaskIntoConstraints =
             false
         launchBehaviorStack.translatesAutoresizingMaskIntoConstraints = false
+        foregroundApplicationScopeView.translatesAutoresizingMaskIntoConstraints = false
         remappingControlStack.translatesAutoresizingMaskIntoConstraints = false
         accessibilityPermissionStack.translatesAutoresizingMaskIntoConstraints =
             false
@@ -1008,6 +1053,7 @@ final class MainWindowController:
                         contentDocumentView.trailingAnchor,
                     constant: -28
                 ),
+                remappingStatusLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
                 remappingControlStack.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
@@ -1017,6 +1063,7 @@ final class MainWindowController:
                 launchBehaviorStack.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
+                foregroundApplicationScopeView.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
                 globalShortcutSettingsView.widthAnchor.constraint(
                     equalTo: mainStack.widthAnchor
                 ),
@@ -1120,6 +1167,8 @@ final class MainWindowController:
             sectionSpacing,
             after: launchBehaviorStack
         )
+
+        mainStack.setCustomSpacing(sectionSpacing, after: foregroundApplicationScopeView)
 
         mainStack.setCustomSpacing(
             sectionSpacing,
@@ -1273,7 +1322,7 @@ final class MainWindowController:
             remappingSwitchChanged
         )
         remappingSwitch.toolTip =
-            "Enable or disable keyboard remapping."
+            "Set manual remapping. Automatic app rules take priority while their app is in front."
         remappingSwitch.setAccessibilityLabel(
             "Keyboard remapping"
         )
@@ -2095,6 +2144,11 @@ final class MainWindowController:
             Bool = false
     ) {
         synchronizeLaunchBehavior()
+        if let homeConfigurationEditorSession {
+            foregroundApplicationScopeView.load(
+                homeConfigurationEditorSession.draft.foregroundApplicationScope
+            )
+        }
 
         let profilesConfiguration =
             homeConfigurationEditorSession?
@@ -2225,8 +2279,13 @@ final class MainWindowController:
                 && globalShortcutSettingsView
                     .currentValidationMessage
                     == nil
+                && homeConfigurationEditorSession?
+                    .draft.foregroundApplicationScope.validationMessage
+                    == nil
                 && !globalShortcutSettingsView
                     .hasTransientEditorChanges
+
+        foregroundApplicationScopeView.setSaveEnabled(homeSaveButton.isEnabled)
 
         homeSaveButton.bezelColor =
             homeSaveButton.isEnabled
@@ -2374,6 +2433,12 @@ final class MainWindowController:
     @discardableResult
     private func saveHomeConfiguration() -> Bool {
         endShortcutCapture()
+
+        if let message = homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
+            setStatus(message, isError: true)
+            updateHomeActionControls()
+            return false
+        }
 
         if let validationMessage =
             globalShortcutSettingsView

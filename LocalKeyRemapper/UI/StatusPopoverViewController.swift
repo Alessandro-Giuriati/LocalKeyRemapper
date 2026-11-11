@@ -221,7 +221,10 @@ final class StatusPopoverViewController:
     /// Updates the visible controls from the real backend state.
     func update(
         for state:
-            RemappingState
+            RemappingState,
+        manualRemappingEnabled: Bool? = nil,
+        applicationOverride: Bool? = nil,
+        usesTemporaryManualActivation: Bool = false
     ) {
         switch state {
         case .disabled:
@@ -254,6 +257,11 @@ final class StatusPopoverViewController:
             primaryActionButton.isEnabled =
                 true
 
+        case .pausedForForegroundApplication:
+            stateLabel.stringValue = "Remapping: Paused for This App"
+            primaryActionButton.title = "Disable Remapping"
+            primaryActionButton.isEnabled = true
+
         case .permissionRequired:
             stateLabel.stringValue =
                 "Accessibility Permission Required"
@@ -269,6 +277,28 @@ final class StatusPopoverViewController:
             updateForFailure(
                 failure
             )
+        }
+
+        if state == .enabled || state == .pausedForForegroundApplication || state == .disabled {
+            if let manualRemappingEnabled {
+                if usesTemporaryManualActivation {
+                    primaryActionButton.title = manualRemappingEnabled
+                        ? "Turn Off for This App"
+                        : "Turn On for This App"
+                } else {
+                    primaryActionButton.title = manualRemappingEnabled
+                        ? "Turn Manual Setting Off"
+                        : "Turn Manual Setting On"
+                }
+            }
+
+            if applicationOverride == true && state == .enabled {
+                stateLabel.stringValue = "Remapping: On Automatically"
+            } else if applicationOverride == false && state != .enabled {
+                stateLabel.stringValue = "Remapping: Off for This App"
+            } else if state == .pausedForForegroundApplication {
+                stateLabel.stringValue = "Remapping: Off"
+            }
         }
     }
 

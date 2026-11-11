@@ -19,6 +19,9 @@ protocol EventTapManaging: AnyObject {
     /// Disables and completely removes the keyboard event tap.
     func stop()
 
+    /// Allows new remaps, or suspends them after any remapped keys are released.
+    func setForegroundApplicationAllowsRemapping(_ allowsRemapping: Bool)
+
     /// Temporarily disables the installed event tap
     /// without removing it from the run loop.
     func pause()

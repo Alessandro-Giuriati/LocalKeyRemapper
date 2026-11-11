@@ -72,6 +72,8 @@ nonisolated struct AppPreferences:
     var shortcutConfiguration:
         RemappingShortcutConfiguration
 
+    var foregroundApplicationScope: ForegroundApplicationScope
+
     /// Temporary compatibility property used by the existing
     /// single-shortcut controller.
     ///
@@ -148,7 +150,8 @@ nonisolated struct AppPreferences:
         shortcutConfiguration:
             RemappingShortcutConfiguration =
                 AppPreferences
-                    .defaultShortcutConfiguration
+                    .defaultShortcutConfiguration,
+        foregroundApplicationScope: ForegroundApplicationScope = .unrestricted
     ) {
         self.launchBehavior =
             launchBehavior
@@ -164,6 +167,8 @@ nonisolated struct AppPreferences:
 
         self.shortcutConfiguration =
             shortcutConfiguration
+
+        self.foregroundApplicationScope = foregroundApplicationScope
     }
 
     /// Compatibility initializer for code and tests that still use
@@ -216,6 +221,7 @@ nonisolated struct AppPreferences:
         case showsMenuBarIcon
         case confirmsRuleRemoval
         case shortcutConfiguration
+        case foregroundApplicationScope
 
         /// Legacy shortcut key used before multiple shortcut modes.
         case toggleShortcut
@@ -276,6 +282,11 @@ nonisolated struct AppPreferences:
                 forKey:
                     .confirmsRuleRemoval
             ) ?? false
+
+        foregroundApplicationScope = try container.decodeIfPresent(
+            ForegroundApplicationScope.self,
+            forKey: .foregroundApplicationScope
+        ) ?? .unrestricted
 
         if container.contains(
             .shortcutConfiguration
@@ -344,6 +355,11 @@ nonisolated struct AppPreferences:
             confirmsRuleRemoval,
             forKey:
                 .confirmsRuleRemoval
+        )
+
+        try container.encode(
+            foregroundApplicationScope,
+            forKey: .foregroundApplicationScope
         )
 
         try container.encode(

@@ -43,6 +43,8 @@ final class EventTapManager:
         CFRunLoopSource?
 
     private var isPaused = false
+    private var foregroundApplicationAllowsRemapping = true
+    private var isDeliveringEvents = false
 
     private var isInterruptionNotificationPending =
         false
@@ -161,7 +163,10 @@ final class EventTapManager:
                 true
         )
 
-        synchronizeModifierState()
+        isDeliveringEvents = foregroundApplicationAllowsRemapping
+        if isDeliveringEvents {
+            synchronizeModifierState()
+        }
 
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
@@ -173,7 +178,7 @@ final class EventTapManager:
             tap:
                 eventTap,
             enable:
-                true
+                isDeliveringEvents
         )
     }
 
@@ -211,6 +216,7 @@ final class EventTapManager:
         eventTap =
             nil
 
+        isDeliveringEvents = false
         isPaused =
             false
 
@@ -225,58 +231,68 @@ final class EventTapManager:
         resetModifierState()
     }
 
-    func pause() {
-        guard
-            let eventTap,
-            isRunning,
-            !isPaused
-        else {
+    func setForegroundApplicationAllowsRemapping(_ allowsRemapping: Bool) {
+        guard foregroundApplicationAllowsRemapping != allowsRemapping else {
             return
         }
 
-        CGEvent.tapEnable(
-            tap:
-                eventTap,
-            enable:
-                false
-        )
+        foregroundApplicationAllowsRemapping = allowsRemapping
 
-        isPaused =
-            true
+        // A tap that was draining releases may still be enabled. Refresh
+        // modifiers because it ignored modifier events while outside scope.
+        if allowsRemapping && isDeliveringEvents {
+            synchronizeModifierState()
+        }
 
-        activeDecisions.removeAll(
-            keepingCapacity:
-                true
-        )
+        updateEventTapDelivery()
+    }
 
-        resetModifierState()
+    func pause() {
+        guard isRunning, !isPaused else {
+            return
+        }
+
+        isPaused = true
+        updateEventTapDelivery()
     }
 
     func resume() {
-        guard
-            let eventTap,
-            isRunning,
-            isPaused
-        else {
+        guard isRunning, isPaused else {
             return
         }
 
-        activeDecisions.removeAll(
-            keepingCapacity:
-                true
+        isPaused = false
+        updateEventTapDelivery()
+    }
+
+    private func updateEventTapDelivery() {
+        guard let eventTap else {
+            return
+        }
+
+        let shouldDeliverEvents = !isPaused && (
+            foregroundApplicationAllowsRemapping || activeDecisions.values.contains {
+                if case .replaceWith = $0 {
+                    return true
+                }
+
+                return false
+            }
         )
 
-        synchronizeModifierState()
+        guard isDeliveringEvents != shouldDeliverEvents else {
+            return
+        }
 
-        CGEvent.tapEnable(
-            tap:
-                eventTap,
-            enable:
-                true
-        )
+        if shouldDeliverEvents {
+            synchronizeModifierState()
+        } else {
+            activeDecisions.removeAll(keepingCapacity: true)
+            resetModifierState()
+        }
 
-        isPaused =
-            false
+        isDeliveringEvents = shouldDeliverEvents
+        CGEvent.tapEnable(tap: eventTap, enable: shouldDeliverEvents)
     }
 
     private static let eventTapCallback:
@@ -311,7 +327,7 @@ final class EventTapManager:
         }
     }
 
-    private func handle(
+    func handle(
         eventType:
             CGEventType,
         event:
@@ -339,10 +355,9 @@ final class EventTapManager:
         }
 
         if eventType == .flagsChanged {
-            updateModifierState(
-                from:
-                    event
-            )
+            if foregroundApplicationAllowsRemapping {
+                updateModifierState(from: event)
+            }
 
             return Unmanaged
                 .passUnretained(
@@ -367,39 +382,15 @@ final class EventTapManager:
                 )
             )
 
-        let sourceCombination =
-            KeyCombinationInputNormalizer
-                .capturedCombination(
-                    deliveredKeyCode:
-                        sourceKeyCode,
-                    eventModifiers:
-                        KeyModifiers(
-                            eventFlags:
-                                event.flags
-                        ),
-                    capturedNonFnModifiers:
-                        nonFnModifierStateTracker
-                            .modifiers,
-                    trackedPhysicalFnIsPressed:
-                        fnModifierStateTracker
-                            .isPressed
-                )
+        guard let decision = decisionForEvent(
+            eventType: eventType,
+            sourceKeyCode: sourceKeyCode,
+            event: event
+        ) else {
+            return nil
+        }
 
-        let decision =
-            decisionForEvent(
-                eventType:
-                    eventType,
-                sourceKeyCode:
-                    sourceKeyCode,
-                sourceCombination:
-                    sourceCombination
-            )
-
-        apply(
-            decision,
-            to:
-                event
-        )
+        apply(decision, to: event)
 
         return Unmanaged
             .passUnretained(
@@ -511,50 +502,46 @@ final class EventTapManager:
     }
 
     private func decisionForEvent(
-        eventType:
-            CGEventType,
-        sourceKeyCode:
-            CGKeyCode,
-        sourceCombination:
-            KeyCombination
-    ) -> RemapDecision {
-        if eventType == .keyDown {
-            if
-                let activeDecision =
-                    activeDecisions[
-                        sourceKeyCode
-                    ]
-            {
-                return activeDecision
+        eventType: CGEventType,
+        sourceKeyCode: CGKeyCode,
+        event: CGEvent
+    ) -> RemapDecision? {
+        if eventType == .keyUp {
+            let decision = activeDecisions.removeValue(forKey: sourceKeyCode) ?? .passThrough
+            if !foregroundApplicationAllowsRemapping {
+                updateEventTapDelivery()
             }
-
-            let decision =
-                remappingEngine.decision(
-                    for:
-                        sourceCombination
-                )
-
-            activeDecisions[
-                sourceKeyCode
-            ] = decision
 
             return decision
         }
 
-        if
-            let activeDecision =
-                activeDecisions.removeValue(
-                    forKey:
-                        sourceKeyCode
-                )
-        {
-            return activeDecision
+        if let decision = activeDecisions[sourceKeyCode] {
+            // Complete the original release, but do not emit more mapped key
+            // presses in the application that paused remapping.
+            if !foregroundApplicationAllowsRemapping, case .replaceWith = decision {
+                return nil
+            }
+
+            return decision
         }
 
-        return remappingEngine.decision(
-            for:
-                sourceCombination
+        // A release or repeat without a tracked press can belong to a key that
+        // went down while the event tap was disabled. Keep that press native.
+        guard foregroundApplicationAllowsRemapping,
+              event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+        else {
+            return .passThrough
+        }
+
+        let sourceCombination = KeyCombinationInputNormalizer.capturedCombination(
+            deliveredKeyCode: sourceKeyCode,
+            eventModifiers: KeyModifiers(eventFlags: event.flags),
+            capturedNonFnModifiers: nonFnModifierStateTracker.modifiers,
+            trackedPhysicalFnIsPressed: fnModifierStateTracker.isPressed
         )
+        let decision = remappingEngine.decision(for: sourceCombination)
+        activeDecisions[sourceKeyCode] = decision
+        return decision
     }
 
     private func apply(

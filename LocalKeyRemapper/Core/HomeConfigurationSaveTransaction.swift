@@ -111,7 +111,7 @@ final class HomeConfigurationSaveTransaction {
         RemappingRulesValidating
 
     private let appPreferencesController:
-        AppPreferencesControlling
+        AppPreferencesController
 
     private let globalShortcutController:
         GlobalShortcutController
@@ -127,7 +127,7 @@ final class HomeConfigurationSaveTransaction {
         rulesValidator:
             RemappingRulesValidating,
         appPreferencesController:
-            AppPreferencesControlling,
+            AppPreferencesController,
         globalShortcutController:
             GlobalShortcutController,
         activeRulesApplyHandler:
@@ -160,6 +160,8 @@ final class HomeConfigurationSaveTransaction {
         _ draft:
             HomeConfigurationSnapshot
     ) throws -> HomeConfigurationSaveTransactionResult {
+        try draft.foregroundApplicationScope.validate()
+
         let previousProfilesConfiguration =
             try profilesStore
                 .loadConfiguration()
@@ -271,7 +273,9 @@ final class HomeConfigurationSaveTransaction {
                                 launchBehavior:
                                     draft.launchBehavior,
                                 shortcutConfiguration:
-                                    draft.shortcutConfiguration
+                                    draft.shortcutConfiguration,
+                                foregroundApplicationScope:
+                                    draft.foregroundApplicationScope
                             )
                     }
                 )
@@ -308,7 +312,9 @@ final class HomeConfigurationSaveTransaction {
                 shortcutConfiguration:
                     appPreferencesController
                         .preferences
-                        .shortcutConfiguration
+                        .shortcutConfiguration,
+                foregroundApplicationScope:
+                    appPreferencesController.preferences.foregroundApplicationScope
             )
 
         return HomeConfigurationSaveTransactionResult(

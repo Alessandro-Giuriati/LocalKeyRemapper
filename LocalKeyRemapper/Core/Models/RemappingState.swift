@@ -31,6 +31,9 @@ nonisolated enum RemappingState: Equatable {
     /// The event tap is installed and remapping is active.
     case enabled
 
+    /// The installed tap is paused until the manual setting or an app rule enables remapping.
+    case pausedForForegroundApplication
+
     /// Accessibility permission must be granted by the user.
     case permissionRequired
 
