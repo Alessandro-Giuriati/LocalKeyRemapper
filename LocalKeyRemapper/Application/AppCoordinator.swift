@@ -188,6 +188,7 @@ final class AppCoordinator:
     private var applicationMenuController: ApplicationMenuController?
     private var statusBarController: StatusBarController?
     private var mainWindowController: MainWindowController?
+    private var helpWindowController: HelpWindowController?
     private var homeProfileShortcutSheetCoordinator:
         HomeProfileShortcutSheetCoordinator?
     private var remappingRulesWindowController:
@@ -485,6 +486,9 @@ final class AppCoordinator:
 
                     self?.resetTextSize()
                 },
+                showHelpHandler: { [weak self] in
+                    self?.showHelpWindow()
+                },
                 showsMenuBarIcon:
                     appPreferencesController
                         .preferences
@@ -530,6 +534,18 @@ final class AppCoordinator:
             .showWindow(
                 nil
             )
+    }
+
+    private func showHelpWindow() {
+        mainWindowController?.endActiveCapture()
+        remappingRulesWindowController?.endActiveCapture()
+
+        if helpWindowController == nil {
+            helpWindowController = HelpWindowController(
+                textScale: InterfaceTextScalePreference.currentScale
+            )
+        }
+        helpWindowController?.showWindow(nil)
     }
 
     /// Shows the Rules window for the currently active profile.
@@ -1154,6 +1170,9 @@ final class AppCoordinator:
 
         mainWindowController =
             nil
+
+        helpWindowController?.close()
+        helpWindowController = nil
 
         remappingRulesWindowController =
             nil
@@ -2318,7 +2337,8 @@ final class AppCoordinator:
 
         guard
             !mainIsVisible,
-            !rulesAreVisible
+            !rulesAreVisible,
+            helpWindowController?.window?.isVisible != true
         else {
             return
         }
@@ -2344,5 +2364,7 @@ final class AppCoordinator:
             .applyTextScale(
                 scale
             )
+
+        helpWindowController?.applyTextScale(scale)
     }
 }

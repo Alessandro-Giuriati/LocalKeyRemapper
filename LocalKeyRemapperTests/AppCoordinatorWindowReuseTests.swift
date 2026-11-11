@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import XCTest
 @testable import LocalKeyRemapper
 
@@ -13,6 +14,87 @@ import XCTest
 final class AppCoordinatorWindowReuseTests:
     XCTestCase
 {
+    func testRulesWindowHandlesUndoAndRedoWithoutAnEditMenu() throws {
+        let coordinator = AppCoordinator()
+        defer { coordinator.stop() }
+        coordinator.showRemappingRulesWindow()
+
+        let controller = try XCTUnwrap(reflectedRulesWindowController(from: coordinator))
+        let session = try XCTUnwrap(reflectedRuleEditorSession(from: controller))
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            session.restoreSavedRules()
+            controller.close()
+        }
+
+        let initialCount = session.items.count
+        _ = session.insertEmptyItem()
+        XCTAssertEqual(session.items.count, initialCount + 1)
+
+        let shortcuts: [(NSEvent.ModifierFlags, String, Int)] = [
+            (.command, "z", initialCount),
+            ([.command, .shift], "Z", initialCount + 1)
+        ]
+        for (modifiers, characters, expectedCount) in shortcuts {
+            let event = try historyShortcut(modifiers, characters, in: window)
+            XCTAssertTrue(window.performKeyEquivalent(with: event))
+            XCTAssertEqual(session.items.count, expectedCount)
+        }
+    }
+
+    func testModifierExceptionsHandlesUndoAndRedoWithoutAnEditMenu() throws {
+        let coordinator = AppCoordinator()
+        defer { coordinator.stop() }
+        let remapping = try XCTUnwrap(reflectedValue(
+            named: "remappingController", from: coordinator, as: RemappingController.self
+        ))
+        let controller = RemapOverridesWindowController(
+            parentWindow: NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 880, height: 520),
+                styleMask: [.titled], backing: .buffered, defer: false
+            ),
+            rule: RemapRule(sourceKeyCode: 9, destinationKeyCode: 13),
+            remappingController: remapping,
+            textScale: 1,
+            onSave: { _ in },
+            onClose: {}
+        )
+        defer { controller.close() }
+        let window = try XCTUnwrap(controller.window as? RemappingEditorWindow)
+        let addButton = try XCTUnwrap(reflectedValue(
+            named: "addButton", from: controller, as: NSButton.self
+        ))
+        let undoButton = try XCTUnwrap(window.undoButton)
+        let redoButton = try XCTUnwrap(window.redoButton)
+
+        addButton.performClick(nil)
+        XCTAssertTrue(undoButton.isEnabled)
+        XCTAssertFalse(redoButton.isEnabled)
+
+        let undo = try historyShortcut(.command, "z", in: window)
+        XCTAssertTrue(window.performKeyEquivalent(with: undo))
+        XCTAssertFalse(undoButton.isEnabled)
+        XCTAssertTrue(redoButton.isEnabled)
+
+        let redo = try historyShortcut([.command, .shift], "Z", in: window)
+        XCTAssertTrue(window.performKeyEquivalent(with: redo))
+        XCTAssertTrue(undoButton.isEnabled)
+        XCTAssertFalse(redoButton.isEnabled)
+    }
+
+    private func historyShortcut(
+        _ modifiers: NSEvent.ModifierFlags,
+        _ characters: String,
+        in window: NSWindow
+    ) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters,
+            isARepeat: false, keyCode: UInt16(kVK_ANSI_Z)
+        ))
+    }
+
     func testRepeatedRulesWindowRequestsReuseOneControllerAndOneWindow() {
         let coordinator =
             AppCoordinator()

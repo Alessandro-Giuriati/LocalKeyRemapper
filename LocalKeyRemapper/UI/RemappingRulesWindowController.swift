@@ -38,68 +38,6 @@ nonisolated enum RemappingRulesSaveErrorMessage {
     }
 }
 
-/// A reusable rules window that receives local key events only while the user
-/// explicitly records a source or destination combination.
-///
-/// This is not a global keyboard monitor. Runtime remapping continues to be
-/// owned by `EventTapManager`, `RemappingEngine`, and `RemappingController`.
-@MainActor
-private final class RemappingRulesWindow: NSWindow {
-    var flagsChangedHandler: ((NSEvent) -> Void)?
-    var keyDownHandler: ((NSEvent) -> Bool)?
-    var undoHandler: (() -> Void)?
-    var redoHandler: (() -> Void)?
-    var canUndoHandler: (() -> Bool)?
-    var canRedoHandler: (() -> Bool)?
-
-    override func sendEvent(
-        _ event: NSEvent
-    ) {
-        if event.type == .flagsChanged {
-            flagsChangedHandler?(event)
-        }
-
-        if event.type == .keyDown,
-           keyDownHandler?(event) == true {
-            return
-        }
-
-        super.sendEvent(event)
-    }
-
-    override func validateUserInterfaceItem(
-        _ item: NSValidatedUserInterfaceItem
-    ) -> Bool {
-        if item.action
-            == #selector(performRuleEditorUndo(_:))
-        {
-            return canUndoHandler?() ?? false
-        }
-
-        if item.action
-            == #selector(performRuleEditorRedo(_:))
-        {
-            return canRedoHandler?() ?? false
-        }
-
-        return super.validateUserInterfaceItem(item)
-    }
-
-    @objc
-    func performRuleEditorUndo(
-        _ sender: Any?
-    ) {
-        undoHandler?()
-    }
-
-    @objc
-    func performRuleEditorRedo(
-        _ sender: Any?
-    ) {
-        redoHandler?()
-    }
-}
-
 /// Adds the same horizontal padding used by the previous Rules stack while
 /// allowing `NSTableView` to materialize only rows near the visible viewport.
 @MainActor
@@ -1227,7 +1165,7 @@ final class RemappingRulesWindowController:
             )
 
         let window =
-            RemappingRulesWindow(
+            RemappingEditorWindow(
                 contentRect:
                     NSRect(
                         x: 0,
@@ -1247,6 +1185,7 @@ final class RemappingRulesWindowController:
 
         window.title =
             profileName
+        window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
 
         window.contentMinSize =
@@ -1272,6 +1211,8 @@ final class RemappingRulesWindowController:
             profileName
 
         window.delegate = self
+        window.undoButton = undoButton
+        window.redoButton = redoButton
 
         window.flagsChangedHandler = {
             [weak self] event in
@@ -1287,32 +1228,6 @@ final class RemappingRulesWindowController:
             self?.handleKeyDown(
                 event
             ) ?? false
-        }
-
-        window.undoHandler = {
-            [weak self] in
-
-            self?.undoRuleEditorChange()
-        }
-
-        window.redoHandler = {
-            [weak self] in
-
-            self?.redoRuleEditorChange()
-        }
-
-        window.canUndoHandler = {
-            [weak self] in
-
-            self?.canUndoRuleEditorChange
-                ?? false
-        }
-
-        window.canRedoHandler = {
-            [weak self] in
-
-            self?.canRedoRuleEditorChange
-                ?? false
         }
 
         bindRuleEditorSessionChangeHandler()
@@ -1510,7 +1425,7 @@ final class RemappingRulesWindowController:
             nil
 
         if let rulesWindow =
-            window as? RemappingRulesWindow
+            window as? RemappingEditorWindow
         {
             rulesWindow.flagsChangedHandler =
                 nil
@@ -1518,17 +1433,8 @@ final class RemappingRulesWindowController:
             rulesWindow.keyDownHandler =
                 nil
 
-            rulesWindow.undoHandler =
-                nil
-
-            rulesWindow.redoHandler =
-                nil
-
-            rulesWindow.canUndoHandler =
-                nil
-
-            rulesWindow.canRedoHandler =
-                nil
+            rulesWindow.undoButton = nil
+            rulesWindow.redoButton = nil
         }
 
         window?.delegate =

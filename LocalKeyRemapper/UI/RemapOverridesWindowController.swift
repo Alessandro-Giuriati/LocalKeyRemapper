@@ -20,63 +20,6 @@ final class RemapOverridesWindowController:
     NSWindowDelegate
 {
     @MainActor
-    private final class CaptureWindow: NSWindow {
-        var flagsChangedHandler: ((NSEvent) -> Void)?
-        var keyDownHandler: ((NSEvent) -> Bool)?
-        var undoHandler: (() -> Void)?
-        var redoHandler: (() -> Void)?
-        var canUndoHandler: (() -> Bool)?
-        var canRedoHandler: (() -> Bool)?
-
-        override func sendEvent(
-            _ event: NSEvent
-        ) {
-            if event.type == .flagsChanged {
-                flagsChangedHandler?(event)
-            }
-
-            if event.type == .keyDown,
-               keyDownHandler?(event) == true {
-                return
-            }
-
-            super.sendEvent(event)
-        }
-
-        override func validateUserInterfaceItem(
-            _ item: NSValidatedUserInterfaceItem
-        ) -> Bool {
-            if item.action
-                == #selector(performRuleEditorUndo(_:))
-            {
-                return canUndoHandler?() ?? false
-            }
-
-            if item.action
-                == #selector(performRuleEditorRedo(_:))
-            {
-                return canRedoHandler?() ?? false
-            }
-
-            return super.validateUserInterfaceItem(item)
-        }
-
-        @objc
-        func performRuleEditorUndo(
-            _ sender: Any?
-        ) {
-            undoHandler?()
-        }
-
-        @objc
-        func performRuleEditorRedo(
-            _ sender: Any?
-        ) {
-            redoHandler?()
-        }
-    }
-
-    @MainActor
     private final class FlippedView: NSView {
         override var isFlipped: Bool {
             true
@@ -297,7 +240,7 @@ final class RemapOverridesWindowController:
         initialOverrides =
             rule.overrides
 
-        let window = CaptureWindow(
+        let window = RemappingEditorWindow(
             contentRect: NSRect(
                 x: 0,
                 y: 0,
@@ -329,6 +272,8 @@ final class RemapOverridesWindowController:
         )
 
         window.delegate = self
+        window.undoButton = undoButton
+        window.redoButton = redoButton
 
         window.flagsChangedHandler = {
             [weak self] event in
@@ -344,32 +289,6 @@ final class RemapOverridesWindowController:
             self?.handleKeyDown(
                 event
             ) ?? false
-        }
-
-        window.undoHandler = {
-            [weak self] in
-
-            self?.undoLocalChange()
-        }
-
-        window.redoHandler = {
-            [weak self] in
-
-            self?.redoLocalChange()
-        }
-
-        window.canUndoHandler = {
-            [weak self] in
-
-            self?.canUndoLocalChange
-                ?? false
-        }
-
-        window.canRedoHandler = {
-            [weak self] in
-
-            self?.canRedoLocalChange
-                ?? false
         }
 
         configureContent()

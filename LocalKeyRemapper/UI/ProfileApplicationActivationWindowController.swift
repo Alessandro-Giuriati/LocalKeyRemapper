@@ -56,6 +56,7 @@ final class ProfileApplicationActivationWindowController: NSWindowController, NS
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
         )
         window.contentMinSize = NSSize(width: 560, height: 510)
+        window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self

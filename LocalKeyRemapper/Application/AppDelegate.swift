@@ -74,6 +74,12 @@ final class AppDelegate:
             ] != nil
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+        // AppKit adds a full-screen menu item automatically at launch.
+        UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
+    }
+
     func applicationDidFinishLaunching(
         _ notification:
             Notification

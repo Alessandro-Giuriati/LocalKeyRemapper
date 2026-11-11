@@ -13,6 +13,39 @@ import XCTest
 final class HomeWindowResourceLifecycleTests:
     XCTestCase
 {
+    func testAccessibilityPermissionNoticeHighlightsTheStatusAndShowsHelp() throws {
+        let coordinator = AppCoordinator()
+        defer { coordinator.stop() }
+        coordinator.showMainWindow()
+
+        let controller = try XCTUnwrap(reflectedMainWindowController(from: coordinator))
+        defer { controller.close() }
+        let status = try XCTUnwrap(reflectedValue(
+            named: "remappingStatusLabel", from: controller, as: NSTextField.self
+        ))
+        let notice = try XCTUnwrap(reflectedValue(
+            named: "accessibilityPermissionStack", from: controller, as: NSStackView.self
+        ))
+        let settingsButton = try XCTUnwrap(reflectedValue(
+            named: "openAccessibilitySettingsButton", from: controller, as: NSButton.self
+        ))
+        let address = try XCTUnwrap(reflectedValue(
+            named: "installationGuideAddressLabel", from: controller, as: NSTextField.self
+        ))
+
+        controller.updateRemappingState(.permissionRequired)
+        XCTAssertFalse(notice.isHidden)
+        XCTAssertEqual(status.textColor, NSColor.systemRed)
+        XCTAssertEqual(settingsButton.bezelColor, NSColor.systemBlue)
+        XCTAssertEqual(settingsButton.controlSize, .large)
+        XCTAssertEqual(address.stringValue, "https://localkeyremapper.github.io/install.html")
+        XCTAssertFalse(address.isEditable)
+
+        controller.updateRemappingState(.disabled)
+        XCTAssertTrue(notice.isHidden)
+        XCTAssertEqual(status.textColor, NSColor.secondaryLabelColor)
+    }
+
     func testClosingAndReopeningHomeReleasesWindowAndPreservesSessionHistory() {
         let coordinator =
             AppCoordinator()

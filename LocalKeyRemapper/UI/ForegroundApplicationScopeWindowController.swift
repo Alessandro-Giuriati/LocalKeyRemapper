@@ -49,6 +49,7 @@ final class ForegroundApplicationScopeWindowController: NSWindowController, NSWi
             defer: false
         )
         window.title = "Remapping by App"
+        window.tabbingMode = .disallowed
         window.contentMinSize = NSSize(width: 680, height: 520)
         window.isReleasedWhenClosed = false
         super.init(window: window)

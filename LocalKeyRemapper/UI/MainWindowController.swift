@@ -122,11 +122,13 @@ final class MainWindowController:
     private let remappingSwitch = NSSwitch()
     private let remappingControlStack = NSStackView()
 
-    private let accessibilityPermissionLabel = NSTextField(
-        labelWithString: "Accessibility Permission Required"
-    )
-
     private let openAccessibilitySettingsButton = NSButton()
+    private let accessibilityHelpLabel = NSTextField(labelWithString: "Need help?")
+    private let installationGuideAddressLabel = NSTextField(
+        labelWithString: HelpWindowController.installationGuideAddress
+    )
+    private let copyInstallationGuideButton = NSButton()
+    private let accessibilityHelpStack = NSStackView()
     private let accessibilityPermissionStack = NSStackView()
 
     private let launchBehaviorTitleLabel = NSTextField(
@@ -320,6 +322,7 @@ final class MainWindowController:
         )
 
         window.title = "LocalKeyRemapper"
+        window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
 
         window.contentMinSize = NSSize(
@@ -642,8 +645,13 @@ final class MainWindowController:
         remappingSectionDescriptionLabel.font = descriptionFont
         remappingLabel.font = controlFont
         remappingStatusLabel.font = descriptionFont
-        accessibilityPermissionLabel.font = descriptionFont
-        openAccessibilitySettingsButton.font = controlFont
+        openAccessibilitySettingsButton.font = NSFont.systemFont(
+            ofSize: 16 * textScale,
+            weight: .semibold
+        )
+        accessibilityHelpLabel.font = descriptionFont
+        installationGuideAddressLabel.font = descriptionFont
+        copyInstallationGuideButton.font = controlFont
 
         launchBehaviorTitleLabel.font = sectionTitleFont
         launchBehaviorDescriptionLabel.font = descriptionFont
@@ -692,6 +700,7 @@ final class MainWindowController:
                 minimum: 6,
                 maximum: 12
             )
+        accessibilityHelpStack.spacing = accessibilityPermissionStack.spacing
 
         menuBarIconVisibilityStack.spacing =
             InterfaceLayoutMetrics.scaled(
@@ -763,6 +772,9 @@ final class MainWindowController:
             ? "Change remapping for this app until you switch apps."
             : "Set manual remapping for apps that use the manual setting."
         let applicationOverride = remappingRuntimeController?.foregroundApplicationOverride
+        remappingStatusLabel.textColor = state == .permissionRequired
+            ? .systemRed
+            : .secondaryLabelColor
         switch state {
         case .enabled:
             if usesTemporaryActivation {
@@ -803,6 +815,9 @@ final class MainWindowController:
         case .permissionRequired:
             remappingSwitch.state = .off
             remappingSwitch.isEnabled = canControlRemapping
+            if accessibilityPermissionStack.isHidden {
+                copyInstallationGuideButton.title = "Copy"
+            }
             accessibilityPermissionStack.isHidden = false
 
         case .failed:
@@ -926,7 +941,6 @@ final class MainWindowController:
 
         descriptionLabel.textColor = .secondaryLabelColor
         remappingSectionDescriptionLabel.textColor = .secondaryLabelColor
-        remappingStatusLabel.textColor = .secondaryLabelColor
         launchBehaviorDescriptionLabel.textColor = .secondaryLabelColor
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.isHidden =
@@ -1386,34 +1400,52 @@ final class MainWindowController:
     }
 
     private func configureAccessibilityPermissionNotice() {
-        accessibilityPermissionLabel.setContentHuggingPriority(
-            .required,
-            for: .horizontal
-        )
-
         openAccessibilitySettingsButton.title =
             "Open Accessibility Settings…"
+        openAccessibilitySettingsButton.setButtonType(.momentaryPushIn)
         openAccessibilitySettingsButton.bezelStyle = .rounded
+        openAccessibilitySettingsButton.bezelColor = .systemBlue
+        openAccessibilitySettingsButton.controlSize = .large
         openAccessibilitySettingsButton.target = self
         openAccessibilitySettingsButton.action = #selector(
             openAccessibilitySettings
         )
 
-        accessibilityPermissionStack.setViews(
-            [
-                accessibilityPermissionLabel,
-                openAccessibilitySettingsButton
-            ],
+        accessibilityHelpLabel.textColor = .secondaryLabelColor
+        copyInstallationGuideButton.title = "Copy"
+        copyInstallationGuideButton.bezelStyle = .rounded
+        copyInstallationGuideButton.setAccessibilityLabel("Copy installation guide address")
+        copyInstallationGuideButton.target = self
+        copyInstallationGuideButton.action = #selector(copyInstallationGuideAddress)
+
+        accessibilityHelpStack.setViews(
+            [accessibilityHelpLabel, installationGuideAddressLabel, copyInstallationGuideButton],
             in: .leading
         )
-        accessibilityPermissionStack.orientation = .horizontal
-        accessibilityPermissionStack.alignment = .centerY
+        accessibilityHelpStack.orientation = .horizontal
+        accessibilityHelpStack.alignment = .centerY
+
+        accessibilityPermissionStack.setViews(
+            [openAccessibilitySettingsButton, accessibilityHelpStack],
+            in: .leading
+        )
+        accessibilityPermissionStack.orientation = .vertical
+        accessibilityPermissionStack.alignment = .leading
         accessibilityPermissionStack.isHidden = true
     }
 
     @objc
     private func openAccessibilitySettings() {
         openAccessibilitySettingsHandler()
+    }
+
+    @objc
+    private func copyInstallationGuideAddress() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if pasteboard.writeObjects([HelpWindowController.installationGuideAddress as NSString]) {
+            copyInstallationGuideButton.title = "Copied"
+        }
     }
 
     private func configureLaunchBehavior() {

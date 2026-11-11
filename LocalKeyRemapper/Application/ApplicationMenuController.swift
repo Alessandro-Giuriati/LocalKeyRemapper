@@ -11,8 +11,7 @@ import AppKit
 ///
 /// Text-size actions are real menu commands, so users can replace their
 /// shortcuts in System Settings > Keyboard > Keyboard Shortcuts > App
-/// Shortcuts. Undo and Redo use the responder chain and are handled by the
-/// active main window.
+/// Shortcuts.
 @MainActor
 final class ApplicationMenuController:
     NSObject
@@ -20,6 +19,7 @@ final class ApplicationMenuController:
     private let increaseTextSizeHandler: () -> Void
     private let decreaseTextSizeHandler: () -> Void
     private let resetTextSizeHandler: () -> Void
+    private let showHelpHandler: () -> Void
     private let menuBarVisibilityChangeHandler: (Bool) throws -> Void
 
     private var showMenuBarIconItem: NSMenuItem?
@@ -28,6 +28,7 @@ final class ApplicationMenuController:
         increaseTextSizeHandler: @escaping () -> Void,
         decreaseTextSizeHandler: @escaping () -> Void,
         resetTextSizeHandler: @escaping () -> Void,
+        showHelpHandler: @escaping () -> Void,
         showsMenuBarIcon: Bool = true,
         menuBarVisibilityChangeHandler:
             @escaping (Bool) throws -> Void = { _ in }
@@ -38,6 +39,7 @@ final class ApplicationMenuController:
             decreaseTextSizeHandler
         self.resetTextSizeHandler =
             resetTextSizeHandler
+        self.showHelpHandler = showHelpHandler
         self.menuBarVisibilityChangeHandler =
             menuBarVisibilityChangeHandler
 
@@ -65,10 +67,11 @@ final class ApplicationMenuController:
             in: mainMenu,
             showsMenuBarIcon: showsMenuBarIcon
         )
-        installEditMenu(in: mainMenu)
         installViewMenu(in: mainMenu)
+        let helpMenu = installHelpMenu(in: mainMenu)
 
         NSApplication.shared.mainMenu = mainMenu
+        NSApplication.shared.helpMenu = helpMenu
     }
 
     private func installApplicationMenu(
@@ -109,44 +112,6 @@ final class ApplicationMenuController:
 
         applicationMenuItem.submenu = applicationMenu
         mainMenu.addItem(applicationMenuItem)
-    }
-
-    private func installEditMenu(
-        in mainMenu: NSMenu
-    ) {
-        let editMenuItem = NSMenuItem()
-        editMenuItem.title = "Edit"
-
-        let editMenu = NSMenu(
-            title: "Edit"
-        )
-
-        let undoItem = NSMenuItem(
-            title: "Undo",
-            action: Selector(("performRuleEditorUndo:")),
-            keyEquivalent: "z"
-        )
-        undoItem.target = nil
-        undoItem.keyEquivalentModifierMask = [
-            .command
-        ]
-
-        let redoItem = NSMenuItem(
-            title: "Redo",
-            action: Selector(("performRuleEditorRedo:")),
-            keyEquivalent: "z"
-        )
-        redoItem.target = nil
-        redoItem.keyEquivalentModifierMask = [
-            .command,
-            .shift
-        ]
-
-        editMenu.addItem(undoItem)
-        editMenu.addItem(redoItem)
-
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
     }
 
     private func installViewMenu(
@@ -195,6 +160,28 @@ final class ApplicationMenuController:
 
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
+    }
+
+    private func installHelpMenu(in mainMenu: NSMenu) -> NSMenu {
+        let helpMenu = NSMenu(title: "Help")
+        let helpItem = NSMenuItem(
+            title: "Help & Contact…",
+            action: #selector(showHelp),
+            keyEquivalent: ""
+        )
+        helpItem.target = self
+        helpMenu.addItem(helpItem)
+
+        let helpMenuItem = NSMenuItem()
+        helpMenuItem.title = helpMenu.title
+        helpMenuItem.submenu = helpMenu
+        mainMenu.addItem(helpMenuItem)
+        return helpMenu
+    }
+
+    @objc
+    private func showHelp() {
+        showHelpHandler()
     }
 
     @objc
