@@ -139,6 +139,27 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
         )
     }
 
+    func testHomeSaveKeepsSavedActiveUUIDWhileApplyingTemporaryProfileRulesAndShortcuts() throws {
+        let context = makeContext()
+        try context.shortcutController.start()
+        var temporaryProfile = context.secondProfile
+        let temporaryShortcut = RemappingShortcutConfiguration.toggle(shortcut(keyCode: KeyCode.j))
+        temporaryProfile.shortcutConfigurationOverride = temporaryShortcut
+        let savedActiveID = context.firstProfile.id
+        let draft = HomeConfigurationSnapshot(
+            profilesConfiguration: .init(profiles: [context.firstProfile, temporaryProfile], activeProfileID: savedActiveID),
+            launchBehavior: .alwaysOff,
+            shortcutConfiguration: context.preferencesController.preferences.shortcutConfiguration
+        )
+
+        let result = try context.transaction.commit(draft, runtimeProfileID: temporaryProfile.id)
+
+        XCTAssertEqual(result.committedSnapshot.activeProfileID, savedActiveID)
+        XCTAssertEqual(context.profilesStore.configuration.activeProfileID, savedActiveID)
+        XCTAssertEqual(context.appliedRules, temporaryProfile.rules)
+        XCTAssertEqual(context.shortcutManager.registeredRegistrations, temporaryShortcut.registrations)
+    }
+
     func testConflictingAppListsPreventEveryPersistenceAndRuntimeChange() throws {
         let context = makeContext()
         let application = ForegroundApplicationScope.Application(
@@ -173,6 +194,46 @@ final class HomeConfigurationUnifiedSaveTransactionTests:
         )
         XCTAssertEqual(context.preferencesStore.saveCallCount, 0)
         XCTAssertEqual(context.preferencesController.preferences, previousPreferences)
+    }
+
+    func testConflictingProfileAppAssignmentsPreventAllWrites() {
+        let context = makeContext()
+        let previous = context.profilesStore.configuration
+        let app = ForegroundApplicationScope.Application(bundleIdentifier: "com.example.editor", displayName: "Editor")
+        var draft = HomeConfigurationSnapshot(
+            profilesConfiguration: previous, launchBehavior: .alwaysOff,
+            shortcutConfiguration: context.preferencesController.preferences.shortcutConfiguration
+        )
+        for index in draft.profiles.indices {
+            draft.profiles[index].applicationActivation = .init(applications: [app], enablesRemapping: true)
+        }
+        XCTAssertThrowsError(try context.transaction.commit(draft))
+        XCTAssertEqual(context.profilesStore.saveCallCount, 0)
+        XCTAssertEqual(context.preferencesStore.saveCallCount, 0)
+        XCTAssertEqual(context.profilesStore.configuration, previous)
+        XCTAssertNil(context.appliedRules)
+    }
+
+    func testProfileAppAssignmentsPersistWithHomeAndRollBackOnPreferenceFailure() throws {
+        let context = makeContext()
+        try context.shortcutController.start()
+        let previous = context.profilesStore.configuration
+        let activation = ProfileApplicationActivation(applications: [
+            .init(bundleIdentifier: "com.example.editor", displayName: "Editor")
+        ], enablesRemapping: true)
+        var draft = HomeConfigurationSnapshot(
+            profilesConfiguration: previous, launchBehavior: .alwaysOn,
+            shortcutConfiguration: context.preferencesController.preferences.shortcutConfiguration
+        )
+        draft.profiles[0].applicationActivation = activation
+        context.preferencesStore.saveError = NSError(domain: "Test", code: 1)
+        XCTAssertThrowsError(try context.transaction.commit(draft))
+        XCTAssertEqual(context.profilesStore.configuration, previous)
+        XCTAssertNil(context.appliedRules)
+        context.preferencesStore.saveError = nil
+        let result = try context.transaction.commit(draft)
+        XCTAssertEqual(result.committedSnapshot.profiles[0].applicationActivation, activation)
+        XCTAssertEqual(context.profilesStore.configuration.profiles[0].applicationActivation, activation)
     }
 
     func testPreferenceFailureRollsBackProfilesAndShortcutRegistration()

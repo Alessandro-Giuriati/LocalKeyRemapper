@@ -17,6 +17,7 @@ final class ForegroundApplicationScopeView: NSStackView {
     private let summaryLabel = NSTextField(wrappingLabelWithString: "")
     private let configureButton = NSButton(title: "Configure Apps…", target: nil, action: nil)
     private var scope: ForegroundApplicationScope?
+    private var activeProfileConflictWarning: String?
     private var editorController: ForegroundApplicationScopeWindowController?
     private var titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
     private var descriptionFont = NSFont.systemFont(ofSize: 13)
@@ -58,7 +59,12 @@ final class ForegroundApplicationScopeView: NSStackView {
         editorController?.applyFonts(title: title, description: description, control: control)
     }
 
-    func load(_ scope: ForegroundApplicationScope) {
+    func load(_ scope: ForegroundApplicationScope, activeProfileConflictWarning: String? = nil) {
+        if self.activeProfileConflictWarning != activeProfileConflictWarning {
+            self.activeProfileConflictWarning = activeProfileConflictWarning
+            editorController?.setActiveProfileConflictWarning(activeProfileConflictWarning)
+        }
+
         guard self.scope != scope else {
             return
         }
@@ -120,6 +126,7 @@ final class ForegroundApplicationScopeView: NSStackView {
                 control: controlFont
             )
             editorController?.setSaveEnabled(canSaveHome)
+            editorController?.setActiveProfileConflictWarning(activeProfileConflictWarning)
         }
 
         editorController?.showWindow(nil)

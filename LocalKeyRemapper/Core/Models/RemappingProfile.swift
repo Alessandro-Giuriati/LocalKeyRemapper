@@ -66,6 +66,9 @@ nonisolated struct RemappingProfile:
     var shortcutMemory:
         RemappingProfileShortcutMemory
 
+    /// Foreground apps that select this profile, independently of its shortcut.
+    var applicationActivation: ProfileApplicationActivation
+
     init(
         id:
             UUID = UUID(),
@@ -80,8 +83,11 @@ nonisolated struct RemappingProfile:
         shortcutConfigurationOverride:
             RemappingShortcutConfiguration? = nil,
         shortcutMemory:
-            RemappingProfileShortcutMemory? = nil
+            RemappingProfileShortcutMemory? = nil,
+        applicationActivation: ProfileApplicationActivation = .disabled
     ) {
+        self.applicationActivation = applicationActivation
+
         self.id =
             id
 
@@ -120,6 +126,7 @@ nonisolated struct RemappingProfile:
         case rules
         case shortcutConfigurationOverride
         case shortcutMemory
+        case applicationActivation
     }
 
     /// Decodes both current profiles and profiles persisted before
@@ -127,6 +134,7 @@ nonisolated struct RemappingProfile:
     ///
     /// Older payloads may omit:
     ///
+    /// - `applicationActivation`, which migrates to no automatic app assignments;
     /// - `shortcutConfigurationOverride`, which migrates to Use Default;
     /// - `shortcutMemory`, which is reconstructed from the existing override.
     init(
@@ -138,6 +146,10 @@ nonisolated struct RemappingProfile:
                 keyedBy:
                     CodingKeys.self
             )
+
+        applicationActivation = try container.decodeIfPresent(
+            ProfileApplicationActivation.self, forKey: .applicationActivation
+        ) ?? .disabled
 
         id =
             try container.decode(
@@ -202,6 +214,8 @@ nonisolated struct RemappingProfile:
                 keyedBy:
                     CodingKeys.self
             )
+
+        try container.encode(applicationActivation, forKey: .applicationActivation)
 
         try container.encode(
             id,

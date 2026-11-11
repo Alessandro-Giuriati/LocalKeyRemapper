@@ -113,6 +113,52 @@ final class ForegroundApplicationScopeWindowTests: XCTestCase {
         XCTAssertEqual(published?.allowsManualActivationForOtherApplications, false)
     }
 
+    func testActiveProfileWarningRefreshesWithSameScopeAndAllowsSave() throws {
+        _ = NSApplication.shared
+        let scope = ForegroundApplicationScope(excludedApplications: [application])
+        let conflictingProfile = RemappingProfile(
+            name: "Editor profile",
+            applicationActivation: .init(applications: [application], enablesRemapping: true)
+        )
+        let otherProfile = RemappingProfile(name: "Other profile")
+        let conflicts = ProfileApplicationConflicts(profiles: [conflictingProfile, otherProfile], scope: scope)
+        let view = ForegroundApplicationScopeView()
+        defer { view.closeEditor() }
+        view.load(scope, activeProfileConflictWarning: conflicts.globalWarning(for: conflictingProfile))
+        view.setSaveEnabled(true)
+        var saved = false
+        view.onSave = {
+            saved = true
+            return true
+        }
+
+        let configureButtons: [NSButton] = descendants(in: view)
+        let configure = try XCTUnwrap(configureButtons.first {
+            $0.identifier?.rawValue == "home.foregroundApplicationScope.configure"
+        })
+        let existingWindows = Set(NSApp.windows.map { ObjectIdentifier($0) })
+        configure.performClick(nil)
+        let window = try XCTUnwrap(NSApp.windows.first {
+            $0.title == "Remapping by App" && !existingWindows.contains(ObjectIdentifier($0))
+        })
+        let content = try XCTUnwrap(window.contentView)
+        let labels: [NSTextField] = descendants(in: content)
+        let warning = try XCTUnwrap(labels.first { $0.identifier?.rawValue == "scope.activeProfileConflict" })
+        XCTAssertFalse(warning.isHidden)
+        XCTAssertTrue(warning.stringValue.contains(conflictingProfile.name))
+        XCTAssertTrue(warning.stringValue.contains(application.displayName))
+
+        let buttons: [NSButton] = descendants(in: content)
+        let save = try XCTUnwrap(buttons.first { $0.title == "Save Home" })
+        XCTAssertTrue(save.isEnabled)
+        save.performClick(nil)
+        XCTAssertTrue(saved)
+
+        view.load(scope, activeProfileConflictWarning: conflicts.globalWarning(for: otherProfile))
+        XCTAssertTrue(warning.isHidden)
+        XCTAssertTrue(save.isEnabled)
+    }
+
     private func descendants<T: NSView>(in root: NSView) -> [T] {
         var result: [T] = []
         if let match = root as? T {

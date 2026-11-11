@@ -157,8 +157,8 @@ final class HomeConfigurationSaveTransaction {
     /// The returned snapshot contains normalized profile names and the actual
     /// application preferences held after the successful transaction.
     func commit(
-        _ draft:
-            HomeConfigurationSnapshot
+        _ draft: HomeConfigurationSnapshot,
+        runtimeProfileID: UUID? = nil
     ) throws -> HomeConfigurationSaveTransactionResult {
         try draft.foregroundApplicationScope.validate()
 
@@ -219,7 +219,7 @@ final class HomeConfigurationSaveTransaction {
                 )
         }
 
-        let proposedEffectiveConfiguration =
+        let savedEffectiveConfiguration =
             EffectiveRemappingShortcutConfigurationResolver
                 .resolve(
                     profile:
@@ -236,8 +236,21 @@ final class HomeConfigurationSaveTransaction {
             defaultShortcutConfiguration:
                 draft.shortcutConfiguration,
             effectiveShortcutConfiguration:
-                proposedEffectiveConfiguration
+                savedEffectiveConfiguration
         )
+
+        // Keep the persisted active UUID while applying the temporary profile's
+        // updated rules and shortcuts for the current app session.
+        let runtimeProfile = runtimeProfileID.flatMap { normalizedProfilesConfiguration.profile(id: $0) }
+            ?? activeProfile
+        let proposedEffectiveConfiguration = EffectiveRemappingShortcutConfigurationResolver.resolve(
+            profile: runtimeProfile, defaultConfiguration: draft.shortcutConfiguration
+        )
+        if runtimeProfile.id != activeProfile.id {
+            try RemappingShortcutRuleConflictPolicy.validate(
+                rules: runtimeProfile.rules, shortcutConfiguration: proposedEffectiveConfiguration
+            )
+        }
 
         let profilesChanged =
             normalizedProfilesConfiguration
@@ -265,6 +278,7 @@ final class HomeConfigurationSaveTransaction {
                         proposedEffectiveConfiguration,
                     previousEffectiveConfiguration:
                         previousEffectiveConfiguration,
+                    effectiveRules: runtimeProfileID == nil ? nil : runtimeProfile.rules,
                     persistingWith: {
                         [appPreferencesController] in
 
@@ -297,9 +311,7 @@ final class HomeConfigurationSaveTransaction {
 
         // This remains the final state-changing operation. It cannot make a
         // partially persisted Home draft active.
-        activeRulesApplyHandler(
-            activeProfile.rules
-        )
+        activeRulesApplyHandler(runtimeProfile.rules)
 
         let committedSnapshot =
             HomeConfigurationSnapshot(

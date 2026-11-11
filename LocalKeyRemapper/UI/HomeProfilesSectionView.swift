@@ -11,6 +11,17 @@ import AppKit
 @MainActor
 private final class ProfileIDButton: NSButton {
     var profileID: UUID?
+    var showsApplicationConflict = false
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard showsApplicationConflict else { return }
+
+        let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 5, yRadius: 5)
+        NSColor.systemRed.setStroke()
+        border.lineWidth = 2
+        border.stroke()
+    }
 }
 
 
@@ -109,6 +120,8 @@ final class HomeProfilesSectionView:
     /// The section supplies only the stable profile UUID. It does not create
     /// the sheet, capture keyboard input, or modify the Home draft directly.
     var onEditShortcut: ((UUID) -> Void)?
+    var onEditApplications: ((UUID) -> Void)?
+    var onActivateProfile: ((UUID) throws -> Void)?
 
     var onStatusChange: ((String, Bool) -> Void)?
     var onPreferredHeightChange: (() -> Void)?
@@ -132,6 +145,7 @@ final class HomeProfilesSectionView:
     }
 
     private enum ActionButtonIdentifier {
+        static let applications = NSUserInterfaceItemIdentifier("home.profiles.action.apps")
         static let open = NSUserInterfaceItemIdentifier(
             "home.profiles.action.open"
         )
@@ -187,6 +201,12 @@ final class HomeProfilesSectionView:
     private var configuration: RemappingProfilesConfiguration
     private var presentationModel = HomeProfilesPresentationModel()
     private var visibleProfiles: [RemappingProfile] = []
+    private var conflictingApplicationProfileIDs: Set<UUID> = []
+    private var temporaryActiveProfileID: UUID?
+
+    private var displayedActiveProfileID: UUID {
+        temporaryActiveProfileID ?? configuration.activeProfileID
+    }
     private var persistedRuleCounts: [UUID: Int] = [:]
     private var selectedProfileID: UUID?
     private var textScale: CGFloat = 1.0
@@ -300,8 +320,14 @@ final class HomeProfilesSectionView:
     }
 
     /// Replaces the displayed Home draft without changing search or sorting.
-    func load(configuration: RemappingProfilesConfiguration) {
+    func load(
+        configuration: RemappingProfilesConfiguration,
+        conflictingApplicationProfileIDs: Set<UUID> = [],
+        temporaryActiveProfileID: UUID? = nil
+    ) {
         self.configuration = configuration
+        self.conflictingApplicationProfileIDs = conflictingApplicationProfileIDs
+        self.temporaryActiveProfileID = temporaryActiveProfileID
 
         if let selectedProfileID,
            configuration.profile(id: selectedProfileID) == nil
@@ -744,7 +770,7 @@ final class HomeProfilesSectionView:
 
         let buttons = cell.subviews.compactMap { $0 as? NSButton }
 
-        return buttons.count == 4
+        return buttons.count == 5
             && buttons.allSatisfy { button in
                 !button.constraints.contains { constraint in
                     constraint.firstItem as? NSButton === button
@@ -797,6 +823,21 @@ final class HomeProfilesSectionView:
 
         return hitView === button
             || hitView.isDescendant(of: button)
+    }
+
+    @discardableResult
+    func performApplicationsActionClickForTesting(at index: Int, stage: HomeProfilesTableLayout.Stage) -> Bool {
+        guard visibleProfiles.indices.contains(index) else { return false }
+        applyTableLayoutForTesting(stage: stage)
+        let cell = makeActionsCell(for: visibleProfiles[index])
+        cell.frame = NSRect(x: 0, y: 0, width: currentTableLayout?.actionsWidth ?? 0, height: tableView.rowHeight)
+        cell.layoutSubtreeIfNeeded()
+        guard let button = descendantButton(in: cell, identifier: ActionButtonIdentifier.applications),
+              button.isEnabled, button.frame.width >= 30, cell.bounds.contains(button.frame) else { return false }
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: cell)
+        guard let hitView = cell.hitTest(point), hitView === button || hitView.isDescendant(of: button) else { return false }
+        button.performClick(nil)
+        return true
     }
 
     var isUsingLiveResizeTableLayoutForTesting: Bool {
@@ -1534,7 +1575,7 @@ final class HomeProfilesSectionView:
             action: #selector(activeProfileChanged)
         )
         activeButton.profileID = profile.id
-        activeButton.state = configuration.activeProfileID == profile.id
+        activeButton.state = displayedActiveProfileID == profile.id
             ? .on
             : .off
         let canActivateImmediately =
@@ -1567,8 +1608,8 @@ final class HomeProfilesSectionView:
 
         let activeLabel = NSTextField(
             labelWithString:
-                configuration.activeProfileID == profile.id
-                    ? "Active"
+                displayedActiveProfileID == profile.id
+                    ? (temporaryActiveProfileID == profile.id ? "Temporary" : "Active")
                     : ""
         )
         activeLabel.font = NSFont.systemFont(
@@ -1765,6 +1806,22 @@ final class HomeProfilesSectionView:
         )
         renameButton.isEnabled = editorSession != nil
 
+        let hasAppConflict = conflictingApplicationProfileIDs.contains(profile.id)
+        let appsLabel = "Configure apps for “\(profile.name)”"
+        let appsHelp = "Choose apps that activate “\(profile.name)” (\(profile.applicationActivation.applications.count) selected)."
+        let appsButton = actionButton(
+            title: "",
+            systemImageName: hasAppConflict ? "exclamationmark.triangle.fill" : "app.badge",
+            identifier: ActionButtonIdentifier.applications,
+            accessibilityLabel: hasAppConflict ? appsLabel + ". App conflicts" : appsLabel,
+            toolTip: hasAppConflict ? appsHelp + " App conflicts found. Open to review." : appsHelp,
+            selector: #selector(editProfileApplications),
+            profileID: profile.id
+        )
+        appsButton.isEnabled = editorSession != nil
+        appsButton.contentTintColor = hasAppConflict ? .systemRed : nil
+        appsButton.showsApplicationConflict = hasAppConflict
+
         let duplicateButton = actionButton(
             title: "",
             systemImageName: "doc.on.doc",
@@ -1792,6 +1849,7 @@ final class HomeProfilesSectionView:
         return [
             openButton,
             renameButton,
+            appsButton,
             duplicateButton,
             deleteButton
         ]
@@ -2024,6 +2082,7 @@ final class HomeProfilesSectionView:
         editorSession != nil
             && configuration.profiles.count > 1
             && configuration.activeProfileID != profile.id
+            && temporaryActiveProfileID != profile.id
     }
 
     private func deleteToolTip(for profile: RemappingProfile) -> String {
@@ -2033,7 +2092,7 @@ final class HomeProfilesSectionView:
         guard configuration.profiles.count > 1 else {
             return "The final remaining profile cannot be deleted."
         }
-        guard configuration.activeProfileID != profile.id else {
+        guard configuration.activeProfileID != profile.id, temporaryActiveProfileID != profile.id else {
             return "Select another active profile before deleting this profile."
         }
 
@@ -2098,6 +2157,13 @@ final class HomeProfilesSectionView:
         onOpenProfile?(profileID)
     }
     @objc
+    private func editProfileApplications(_ sender: ProfileIDButton) {
+        guard editorSession != nil, let profileID = sender.profileID,
+              configuration.profile(id: profileID) != nil else { return }
+        onEditApplications?(profileID)
+    }
+
+    @objc
     private func editProfileShortcut(_ sender: ProfileIDButton) {
         guard editorSession != nil,
               let profileID = sender.profileID,
@@ -2153,10 +2219,17 @@ final class HomeProfilesSectionView:
         }
 
         do {
-            try editorSession.setActiveProfile(profileID)
+            if let onActivateProfile {
+                try onActivateProfile(profileID)
+            } else {
+                try editorSession.setActiveProfile(profileID)
+            }
 
+            let message = temporaryActiveProfileID == profileID
+                ? "“\(profile.name)” is active for this app until you switch apps."
+                : "“\(profile.name)” is now the active profile."
             onStatusChange?(
-                "“\(profile.name)” is now the active profile.",
+                message,
                 false
             )
         } catch let conflict

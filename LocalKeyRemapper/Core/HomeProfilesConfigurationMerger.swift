@@ -71,7 +71,8 @@ nonisolated enum HomeProfilesConfigurationMerger {
                             .shortcutConfigurationOverride,
                     shortcutMemory:
                         draftProfile
-                            .shortcutMemory
+                            .shortcutMemory,
+                    applicationActivation: draftProfile.applicationActivation
                 )
             }
 

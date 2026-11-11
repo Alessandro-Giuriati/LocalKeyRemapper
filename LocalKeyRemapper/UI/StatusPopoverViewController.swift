@@ -36,6 +36,8 @@ nonisolated struct StatusPopoverProfilesSnapshot:
     let activeProfileID:
         UUID?
 
+    var isTemporaryProfileActive = false
+
     static let unavailable =
         StatusPopoverProfilesSnapshot(
             profiles: [],
@@ -292,7 +294,9 @@ final class StatusPopoverViewController:
                 }
             }
 
-            if applicationOverride == true && state == .enabled {
+            if usesTemporaryManualActivation {
+                stateLabel.stringValue = state == .enabled ? "Remapping: On for This App" : "Remapping: Off for This App"
+            } else if applicationOverride == true && state == .enabled {
                 stateLabel.stringValue = "Remapping: On Automatically"
             } else if applicationOverride == false && state != .enabled {
                 stateLabel.stringValue = "Remapping: Off for This App"
@@ -443,7 +447,9 @@ final class StatusPopoverViewController:
 
         activeProfilePopUpButton.toolTip =
             activatableProfileCount > 1
-                ? "Select the active remapping profile."
+                ? (snapshot.isTemporaryProfileActive
+                    ? "This profile is active until you switch apps."
+                    : "Select the active remapping profile.")
                 : "No other saved profile is available."
     }
 

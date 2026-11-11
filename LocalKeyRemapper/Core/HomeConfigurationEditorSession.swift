@@ -240,6 +240,25 @@ final class HomeConfigurationEditorSession {
         )
     }
 
+    /// Edits only app activation metadata; Rules and shortcut history stay independent.
+    func setApplicationActivation(
+        _ activation: ProfileApplicationActivation,
+        for profileID: UUID,
+        timestamp: Date = Date()
+    ) throws {
+        guard let profile = draft.profile(id: profileID) else {
+            throw HomeConfigurationEditorSessionError.profileNotFound(profileID)
+        }
+        guard profile.applicationActivation != activation else { return }
+        applyNewAction(.setProfileApplicationActivation(
+            profileID: profileID,
+            before: profile.applicationActivation,
+            after: activation,
+            beforeUpdatedAt: profile.updatedAt,
+            afterUpdatedAt: timestamp
+        ))
+    }
+
     /// Changes the application-wide default shortcut configuration.
     ///
     /// Profiles whose override is `nil` resolve to this configuration.
@@ -400,7 +419,8 @@ final class HomeConfigurationEditorSession {
     /// The duplicate receives a new UUID and new dates while preserving the
     /// complete rule collection, shortcut override, and remembered custom
     /// shortcuts. It is inserted immediately after its source profile and does
-    /// not become active automatically.
+    /// not become active automatically. App assignments start empty to avoid
+    /// assigning the same app to two profiles.
     @discardableResult
     func duplicateProfile(
         id sourceProfileID:

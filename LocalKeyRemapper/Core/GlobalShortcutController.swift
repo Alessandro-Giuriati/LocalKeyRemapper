@@ -221,6 +221,7 @@ final class GlobalShortcutController {
             RemappingShortcutConfiguration,
         previousEffectiveConfiguration:
             RemappingShortcutConfiguration? = nil,
+        effectiveRules: [RemapRule]? = nil,
         persistingWith persistence:
             () throws -> Void
     ) throws {
@@ -233,9 +234,7 @@ final class GlobalShortcutController {
 
         // Validate the configuration that will actually become active before
         // touching Carbon registrations or reserved combinations.
-        try validate(
-            effectiveConfiguration
-        )
+        try validate(effectiveConfiguration, rules: effectiveRules)
 
         let previousRuntimeConfiguration =
             try resolvePreviousEffectiveConfiguration(
@@ -441,8 +440,8 @@ final class GlobalShortcutController {
     /// Validates both the shortcut structure and its interaction with the
     /// active profile's stored remapping rules.
     private func validate(
-        _ configuration:
-            RemappingShortcutConfiguration
+        _ configuration: RemappingShortcutConfiguration,
+        rules: [RemapRule]? = nil
     ) throws {
         try GlobalShortcutConfigurationPolicy
             .validate(
@@ -460,8 +459,7 @@ final class GlobalShortcutController {
             return
         }
 
-        let configuredRules =
-            try configuredRulesProvider()
+        let configuredRules = try rules ?? configuredRulesProvider()
 
         try RemappingShortcutRuleConflictPolicy
             .validate(

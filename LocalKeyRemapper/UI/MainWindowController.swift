@@ -111,7 +111,7 @@ final class MainWindowController:
 
     private let remappingSectionDescriptionLabel = NSTextField(
         wrappingLabelWithString:
-            "The switch and shortcuts control the manual setting. App rules turn remapping on or off automatically."
+            "The switch and shortcuts adjust the manual setting or temporarily control remapping for an app with an assigned profile."
     )
 
     private let remappingLabel = NSTextField(
@@ -151,6 +151,10 @@ final class MainWindowController:
 
     private let launchBehaviorStack = NSStackView()
     private let foregroundApplicationScopeView = ForegroundApplicationScopeView()
+    private var profileApplicationEditor: ProfileApplicationActivationWindowController?
+    private var temporaryActiveProfileID: UUID?
+    var onActivateProfile: ((UUID) throws -> Void)?
+    private var lastProfileApplicationValidationMessage: String?
 
     private let interfaceSectionTitleLabel = NSTextField(
         labelWithString: "Interface"
@@ -302,7 +306,7 @@ final class MainWindowController:
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 760,
+                width: 820,
                 height: 760
             ),
             styleMask: [
@@ -319,7 +323,7 @@ final class MainWindowController:
         window.isReleasedWhenClosed = false
 
         window.contentMinSize = NSSize(
-            width: 760,
+            width: 820,
             height: 420
         )
 
@@ -462,7 +466,8 @@ final class MainWindowController:
             return nil
         }
 
-        if let message = homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
+        if let message = profileApplicationValidationMessage
+            ?? homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
             return message
         }
 
@@ -522,6 +527,7 @@ final class MainWindowController:
             true
 
         foregroundApplicationScopeView.closeEditor()
+        closeProfileApplicationEditor()
         endShortcutCapture()
 
         homeConfigurationEditorSession?
@@ -537,6 +543,7 @@ final class MainWindowController:
 
         profilesSectionView.onEditShortcut =
             nil
+        profilesSectionView.onEditApplications = nil
 
         profilesSectionView.onStatusChange =
             nil
@@ -647,6 +654,10 @@ final class MainWindowController:
             control: controlFont
         )
 
+        profileApplicationEditor?.applyFonts(
+            title: sectionTitleFont, description: descriptionFont, control: controlFont
+        )
+
         profilesSectionView.applyTextScale(
             textScale
         )
@@ -746,17 +757,24 @@ final class MainWindowController:
             remappingRuntimeController != nil
 
         let usesTemporaryActivation = remappingRuntimeController?.usesTemporaryManualActivation == true
-        remappingLabel.stringValue = usesTemporaryActivation ? "Manual activation for this app" : "Manual setting"
+        remappingLabel.stringValue = usesTemporaryActivation ? "Remapping for this app" : "Manual setting"
         remappingSwitch.setAccessibilityLabel(remappingLabel.stringValue)
+        remappingSwitch.toolTip = usesTemporaryActivation
+            ? "Change remapping for this app until you switch apps."
+            : "Set manual remapping for apps that use the manual setting."
         let applicationOverride = remappingRuntimeController?.foregroundApplicationOverride
         switch state {
         case .enabled:
-            remappingStatusLabel.stringValue = applicationOverride == true
-                ? "Remapping is on automatically for the active app."
-                : "Remapping is on."
+            if usesTemporaryActivation {
+                remappingStatusLabel.stringValue = "Remapping is on for the active app."
+            } else {
+                remappingStatusLabel.stringValue = applicationOverride == true
+                    ? "Remapping is on automatically for the active app."
+                    : "Remapping is on."
+            }
         case .pausedForForegroundApplication, .disabled:
-            remappingStatusLabel.stringValue = applicationOverride == false
-                ? "Remapping is off automatically for the active app."
+            remappingStatusLabel.stringValue = usesTemporaryActivation || applicationOverride == false
+                ? "Remapping is off for the active app."
                 : "Remapping is off."
         case .enabling:
             remappingStatusLabel.stringValue = "Preparing remapping…"
@@ -1701,6 +1719,19 @@ final class MainWindowController:
     }
 
     private func configureProfilesSectionCallbacks() {
+        profilesSectionView.onActivateProfile = { [weak self] profileID in
+            guard let self else { throw HomeConfigurationSaveError.editorSessionUnavailable }
+            self.endShortcutCapture()
+            if let onActivateProfile = self.onActivateProfile {
+                try onActivateProfile(profileID)
+            } else {
+                try self.homeConfigurationEditorSession?.setActiveProfile(profileID)
+            }
+        }
+        profilesSectionView.onEditApplications = { [weak self] profileID in
+            self?.openProfileApplicationEditor(for: profileID)
+        }
+
         profilesSectionView.onOpenProfile = {
             [weak self] profileID in
 
@@ -1730,6 +1761,63 @@ final class MainWindowController:
 
             self?.requestWindowResizeToFitContent()
         }
+    }
+
+    private var profileApplicationValidationMessage: String? {
+        guard let session = homeConfigurationEditorSession else { return nil }
+        return ProfileApplicationActivation.validationMessage(for: session.draft.profiles)
+    }
+
+    private func openProfileApplicationEditor(for profileID: UUID) {
+        guard let session = homeConfigurationEditorSession,
+              let profile = session.draft.profile(id: profileID) else { return }
+        endShortcutCapture()
+        if profileApplicationEditor?.profileID != profileID {
+            closeProfileApplicationEditor()
+            profileApplicationEditor = ProfileApplicationActivationWindowController(
+                profile: profile,
+                changeHandler: { [weak self] activation in
+                    guard let session = self?.homeConfigurationEditorSession else {
+                        throw HomeConfigurationSaveError.editorSessionUnavailable
+                    }
+                    try session.setApplicationActivation(activation, for: profileID)
+                },
+                saveHandler: { [weak self] in self?.saveHomeConfiguration() ?? false },
+                closeHandler: { [weak self] in self?.profileApplicationEditor = nil }
+            )
+        }
+        profileApplicationEditor?.load(
+            profile: profile,
+            validationMessage: ProfileApplicationActivation.validationMessage(for: session.draft.profiles, involving: profileID),
+            conflicts: ProfileApplicationConflicts(
+                profiles: session.draft.profiles,
+                scope: session.draft.foregroundApplicationScope
+            )
+        )
+        profileApplicationEditor?.applyFonts(
+            title: NSFont.systemFont(ofSize: 14 * textScale, weight: .semibold),
+            description: NSFont.systemFont(ofSize: 13 * textScale),
+            control: NSFont.systemFont(ofSize: 14 * textScale)
+        )
+        profileApplicationEditor?.setSaveEnabled(homeSaveButton.isEnabled)
+        profileApplicationEditor?.showWindow(nil)
+        profileApplicationEditor?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func closeProfileApplicationEditor() {
+        let editor = profileApplicationEditor
+        profileApplicationEditor = nil
+        editor?.close()
+    }
+
+    func updateTemporaryActiveProfileID(_ profileID: UUID?) {
+        guard temporaryActiveProfileID != profileID else { return }
+        temporaryActiveProfileID = profileID
+        synchronizeHomeDraft()
+    }
+
+    func showAutomaticProfileActivationIssue(_ message: String) {
+        setStatus(message, isError: true)
     }
 
     private func configureShortcutSettingsCallbacks() {
@@ -1836,8 +1924,7 @@ final class MainWindowController:
     }
 
     /// Returns a blocking message when the proposed shortcut configuration
-    /// conflicts with an exact mapping in the profile proposed as active by
-    /// the current Home draft.
+    /// conflicts with an exact mapping in the saved or temporary active profile.
     ///
     /// Inactive profiles are intentionally ignored. Their rules do not run and
     /// may overlap application shortcuts until that profile is proposed for
@@ -1858,26 +1945,24 @@ final class MainWindowController:
             let profilesConfiguration =
                 try profilesConfigurationForShortcutValidation()
 
-            guard
-                let activeProfile =
-                    profilesConfiguration
-                        .activeProfile
-            else {
+            guard let savedActiveProfile = profilesConfiguration.activeProfile else {
                 return "The active remapping profile could not be loaded for shortcut validation."
             }
-
-            guard
-                !RemappingShortcutRuleConflictPolicy
-                    .conflicts(
-                        rules:
-                            activeProfile.rules,
-                        shortcutConfiguration:
-                            configuration
-                    )
-                    .isEmpty
-            else {
-                return nil
+            var activeProfiles = [savedActiveProfile]
+            if let temporaryActiveProfileID,
+               temporaryActiveProfileID != savedActiveProfile.id,
+               let temporaryProfile = profilesConfiguration.profile(id: temporaryActiveProfileID) {
+                activeProfiles.append(temporaryProfile)
             }
+            guard let activeProfile = activeProfiles.first(where: { profile in
+                let effective = profile.id == savedActiveProfile.id ? configuration
+                    : EffectiveRemappingShortcutConfigurationResolver.resolve(
+                        profile: profile, defaultConfiguration: configuration
+                    )
+                return !RemappingShortcutRuleConflictPolicy.conflicts(
+                    rules: profile.rules, shortcutConfiguration: effective
+                ).isEmpty
+            }) else { return nil }
 
             return "The proposed shortcut conflicts with an exact mapping in “\(activeProfile.name)”. Change the mapping, remove the matching exception, or choose a different shortcut before saving."
         } catch {
@@ -2144,27 +2229,51 @@ final class MainWindowController:
             Bool = false
     ) {
         synchronizeLaunchBehavior()
-        if let homeConfigurationEditorSession {
+        let draft = homeConfigurationEditorSession?.draft
+        let conflicts = ProfileApplicationConflicts(
+            profiles: draft?.profiles ?? [],
+            scope: draft?.foregroundApplicationScope ?? .unrestricted
+        )
+        if let draft {
+            let activeProfileID = temporaryActiveProfileID ?? draft.activeProfileID
+            let activeProfile = draft.profile(id: activeProfileID)
             foregroundApplicationScopeView.load(
-                homeConfigurationEditorSession.draft.foregroundApplicationScope
+                draft.foregroundApplicationScope,
+                activeProfileConflictWarning: activeProfile.flatMap { conflicts.globalWarning(for: $0) }
             )
         }
 
         let profilesConfiguration =
-            homeConfigurationEditorSession?
-                .draft
-                .profilesConfiguration
+            draft?.profilesConfiguration
                 ?? (try? profilesConfigurationProvider())
 
         if let profilesConfiguration {
+            if let editor = profileApplicationEditor {
+                if let profile = profilesConfiguration.profile(id: editor.profileID) {
+                    editor.load(
+                        profile: profile,
+                        validationMessage: ProfileApplicationActivation.validationMessage(
+                            for: profilesConfiguration.profiles, involving: profile.id
+                        ),
+                        conflicts: conflicts
+                    )
+                } else {
+                    closeProfileApplicationEditor()
+                }
+            }
+
             synchronizeDisplayedProfileNames(
                 with:
                     profilesConfiguration
             )
 
+            let conflictingProfileIDs = profilesConfiguration.profiles
+                .filter { conflicts.affects($0.applicationActivation) }
+                .map(\.id)
             profilesSectionView.load(
-                configuration:
-                    profilesConfiguration
+                configuration: profilesConfiguration,
+                conflictingApplicationProfileIDs: Set(conflictingProfileIDs),
+                temporaryActiveProfileID: temporaryActiveProfileID
             )
         }
 
@@ -2190,6 +2299,13 @@ final class MainWindowController:
                 .refreshValidationState()
         }
 
+        let message = profileApplicationValidationMessage
+        if let message {
+            setStatus(message, isError: true)
+        } else if let previous = lastProfileApplicationValidationMessage, statusLabel.stringValue == previous {
+            setStatus("App assignments are ready to save with Home.", isError: false)
+        }
+        lastProfileApplicationValidationMessage = message
         updateHomeActionControls()
         requestWindowResizeToFitContent()
     }
@@ -2285,7 +2401,9 @@ final class MainWindowController:
                 && !globalShortcutSettingsView
                     .hasTransientEditorChanges
 
+        homeSaveButton.isEnabled = homeSaveButton.isEnabled && profileApplicationValidationMessage == nil
         foregroundApplicationScopeView.setSaveEnabled(homeSaveButton.isEnabled)
+        profileApplicationEditor?.setSaveEnabled(homeSaveButton.isEnabled)
 
         homeSaveButton.bezelColor =
             homeSaveButton.isEnabled
@@ -2434,7 +2552,8 @@ final class MainWindowController:
     private func saveHomeConfiguration() -> Bool {
         endShortcutCapture()
 
-        if let message = homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
+        if let message = profileApplicationValidationMessage
+            ?? homeConfigurationEditorSession?.draft.foregroundApplicationScope.validationMessage {
             setStatus(message, isError: true)
             updateHomeActionControls()
             return false
@@ -2577,6 +2696,7 @@ final class MainWindowController:
     ) {
         statusLabel.stringValue =
             message
+        statusLabel.toolTip = message.isEmpty ? nil : message
 
         statusLabel.textColor =
             isError

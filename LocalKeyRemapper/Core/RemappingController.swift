@@ -86,28 +86,55 @@ final class RemappingController:
         () -> Date
 
     private let foregroundApplicationBundleIdentifierProvider: () -> String?
+    private let interfaceBundleIdentifier: String?
     private var foregroundApplicationScope = ForegroundApplicationScope.unrestricted
     private(set) var isManualRemappingEnabled = false
     private(set) var foregroundApplicationOverride: Bool?
     private var foregroundApplicationBundleIdentifier: String?
-    private var isTemporaryManualActivationEnabled = false
+    private var profileApplicationRemappingOverride: Bool?
+    private var hasAssignedForegroundProfile = false
+    private var temporaryManualRemappingOverride: Bool?
+    private(set) var temporaryActiveProfileID: UUID?
     private var isKeyCaptureActive = false
 
     private var isRemappingRequested: Bool {
         state == .enabled || state == .pausedForForegroundApplication
     }
 
+    private var isGloballyExcluded: Bool {
+        foregroundApplicationScope.excludedApplications.contains {
+            $0.bundleIdentifier == foregroundApplicationBundleIdentifier
+        }
+    }
+
+    private var canTemporarilyEnableRemapping: Bool {
+        !isGloballyExcluded && profileApplicationRemappingOverride != false
+            && (foregroundApplicationOverride != false
+                || foregroundApplicationScope.permitsTemporaryManualActivation(in: foregroundApplicationBundleIdentifier))
+    }
+
     private var shouldRemap: Bool {
-        (usesTemporaryManualActivation && isTemporaryManualActivationEnabled)
-            || (foregroundApplicationOverride ?? isManualRemappingEnabled)
+        if usesTemporaryManualActivation, let temporaryManualRemappingOverride {
+            return temporaryManualRemappingOverride && canTemporarilyEnableRemapping
+        }
+        return foregroundApplicationOverride ?? isManualRemappingEnabled
     }
 
     var usesTemporaryManualActivation: Bool {
-        foregroundApplicationScope.permitsTemporaryManualActivation(in: foregroundApplicationBundleIdentifier)
+        hasAssignedForegroundProfile || (profileApplicationRemappingOverride == nil
+            && foregroundApplicationScope.permitsTemporaryManualActivation(in: foregroundApplicationBundleIdentifier))
     }
 
     var isManualControlOn: Bool {
-        usesTemporaryManualActivation ? isTemporaryManualActivationEnabled : isManualRemappingEnabled
+        usesTemporaryManualActivation ? shouldRemap : isManualRemappingEnabled
+    }
+
+    func effectiveActiveProfileID(in configuration: RemappingProfilesConfiguration) -> UUID {
+        temporaryActiveProfileID ?? configuration.activeProfileID
+    }
+
+    func setTemporaryActiveProfileID(_ profileID: UUID?) {
+        temporaryActiveProfileID = profileID
     }
 
     private var foregroundScopedState: RemappingState {
@@ -139,6 +166,7 @@ final class RemappingController:
             @escaping () -> Date = {
                 Date()
             },
+        interfaceBundleIdentifier: String? = nil,
         foregroundApplicationBundleIdentifierProvider: @escaping () -> String? = { nil }
     ) {
         self.permissionService =
@@ -162,6 +190,7 @@ final class RemappingController:
         self.dateProvider =
             dateProvider
 
+        self.interfaceBundleIdentifier = interfaceBundleIdentifier
         self.foregroundApplicationBundleIdentifierProvider =
             foregroundApplicationBundleIdentifierProvider
     }
@@ -170,7 +199,9 @@ final class RemappingController:
         refreshForegroundApplicationOverride()
         let manualSettingChanged = !isManualControlOn
         if usesTemporaryManualActivation {
-            isTemporaryManualActivationEnabled = true
+            if canTemporarilyEnableRemapping {
+                temporaryManualRemappingOverride = true
+            }
         } else {
             isManualRemappingEnabled = true
         }
@@ -181,7 +212,7 @@ final class RemappingController:
         refreshForegroundApplicationOverride()
         let manualSettingChanged = isManualControlOn
         if usesTemporaryManualActivation {
-            isTemporaryManualActivationEnabled = false
+            temporaryManualRemappingOverride = false
         } else {
             isManualRemappingEnabled = false
         }
@@ -192,7 +223,7 @@ final class RemappingController:
     func restoreManualSettingAtLaunch(_ isEnabled: Bool) {
         let manualSettingChanged = isManualRemappingEnabled != isEnabled
         isManualRemappingEnabled = isEnabled
-        isTemporaryManualActivationEnabled = false
+        temporaryManualRemappingOverride = nil
         refreshForegroundApplicationOverride()
         reconcileRuntime(requestsPermission: isEnabled, notifyIfUnchanged: manualSettingChanged)
     }
@@ -203,8 +234,11 @@ final class RemappingController:
         isManualRemappingEnabled = false
         foregroundApplicationScope = .unrestricted
         foregroundApplicationOverride = nil
+        profileApplicationRemappingOverride = nil
         foregroundApplicationBundleIdentifier = nil
-        isTemporaryManualActivationEnabled = false
+        hasAssignedForegroundProfile = false
+        temporaryManualRemappingOverride = nil
+        temporaryActiveProfileID = nil
         updateState(.disabled)
     }
 
@@ -250,7 +284,7 @@ final class RemappingController:
             activeProfile =
                 try profile(
                     id:
-                        configuration.activeProfileID,
+                        effectiveActiveProfileID(in: configuration),
                     in:
                         configuration
                 )
@@ -325,13 +359,35 @@ final class RemappingController:
         }
 
         foregroundApplicationScope = scope
-        isTemporaryManualActivationEnabled = false
+        if !hasAssignedForegroundProfile {
+            temporaryManualRemappingOverride = nil
+        }
         refreshForegroundApplicationOverride()
         reconcileRuntime(requestsPermission: false, notifyIfUnchanged: true)
     }
 
+    /// Called after the target profile's activation transaction succeeds.
+    /// A false override fails closed when activation failed; excluded apps
+    /// always take priority over a profile's automatic enable option.
+    func setProfileApplicationRemappingOverride(
+        _ value: Bool?, bundleIdentifier: String?, hasAssignedProfile: Bool = false
+    ) {
+        guard value != nil || profileApplicationRemappingOverride != nil
+            || hasAssignedProfile || hasAssignedForegroundProfile
+            || foregroundApplicationScope.observesForegroundApplication else { return }
+        _ = applyForegroundApplicationContext(bundleIdentifier)
+        if hasAssignedForegroundProfile != hasAssignedProfile {
+            temporaryManualRemappingOverride = nil
+        }
+        hasAssignedForegroundProfile = hasAssignedProfile
+        profileApplicationRemappingOverride = value
+        _ = applyForegroundApplicationContext(bundleIdentifier)
+        reconcileRuntime(requestsPermission: false, notifyIfUnchanged: true)
+    }
+
     func foregroundApplicationDidActivate(bundleIdentifier: @autoclosure () -> String?) {
-        guard foregroundApplicationScope.observesForegroundApplication else {
+        guard foregroundApplicationScope.observesForegroundApplication
+            || profileApplicationRemappingOverride != nil || hasAssignedForegroundProfile else {
             return
         }
 
@@ -342,19 +398,33 @@ final class RemappingController:
     }
 
     private func refreshForegroundApplicationOverride() {
-        let bundleIdentifier = foregroundApplicationScope.observesForegroundApplication
+        // Workspace notifications own the app session. The app's own windows
+        // can edit that session without replacing its foreground context.
+        if hasAssignedForegroundProfile {
+            _ = applyForegroundApplicationContext(foregroundApplicationBundleIdentifier)
+            return
+        }
+        let bundleIdentifier = (foregroundApplicationScope.observesForegroundApplication
+            || profileApplicationRemappingOverride != nil)
             ? foregroundApplicationBundleIdentifierProvider()
             : nil
         _ = applyForegroundApplicationContext(bundleIdentifier)
     }
 
-    private func applyForegroundApplicationContext(_ bundleIdentifier: String?) -> Bool {
+    private func applyForegroundApplicationContext(_ reportedBundleIdentifier: String?) -> Bool {
+        // Manual controls may query the workspace while Home is in front.
+        // Keep them bound to the same external app as workspace notifications.
+        let showingInterface = interfaceBundleIdentifier != nil && reportedBundleIdentifier == interfaceBundleIdentifier
+        let bundleIdentifier = showingInterface ? foregroundApplicationBundleIdentifier : reportedBundleIdentifier
         let applicationChanged = foregroundApplicationBundleIdentifier != bundleIdentifier
         if applicationChanged {
-            isTemporaryManualActivationEnabled = false
+            temporaryManualRemappingOverride = nil
+            profileApplicationRemappingOverride = nil
+            hasAssignedForegroundProfile = false
         }
         foregroundApplicationBundleIdentifier = bundleIdentifier
-        let updatedOverride = foregroundApplicationScope.remappingOverride(in: bundleIdentifier)
+        let updatedOverride: Bool? = isGloballyExcluded ? false
+            : (profileApplicationRemappingOverride ?? foregroundApplicationScope.remappingOverride(in: bundleIdentifier))
         let overrideChanged = foregroundApplicationOverride != updatedOverride
         foregroundApplicationOverride = updatedOverride
         return overrideChanged || (applicationChanged && foregroundApplicationScope.permitsTemporaryManualActivation)
@@ -365,7 +435,8 @@ final class RemappingController:
         // disables delivery after pending remapped releases have completed.
         let retainsAutomaticRuntime = eventTapManager.isRunning
             && (!foregroundApplicationScope.includedApplications.isEmpty
-                || foregroundApplicationScope.permitsTemporaryManualActivation)
+                || foregroundApplicationScope.permitsTemporaryManualActivation
+                || hasAssignedForegroundProfile)
         let needsRuntime = isManualRemappingEnabled || shouldRemap || retainsAutomaticRuntime
 
         guard needsRuntime else {
@@ -481,7 +552,7 @@ final class RemappingController:
         let activeProfile =
             try profile(
                 id:
-                    configuration.activeProfileID,
+                    effectiveActiveProfileID(in: configuration),
                 in:
                     configuration
             )
@@ -520,7 +591,7 @@ final class RemappingController:
         try replaceConfiguredRules(
             rules,
             for:
-                configuration.activeProfileID,
+                effectiveActiveProfileID(in: configuration),
             in:
                 configuration
         )
@@ -637,14 +708,12 @@ final class RemappingController:
                     profileIndex
                 ]
 
-        let isActiveProfile =
-            configuration.activeProfileID
-                == profileID
+        let isActiveProfile = effectiveActiveProfileID(in: configuration) == profileID
 
         let effectiveShortcutConfiguration:
             RemappingShortcutConfiguration?
 
-        if isActiveProfile {
+        if isActiveProfile || configuration.activeProfileID == profileID {
             effectiveShortcutConfiguration =
                 EffectiveRemappingShortcutConfigurationResolver
                     .resolve(

@@ -203,6 +203,43 @@ final class AppCoordinator:
     /// user-requested disabled state.
     private var isStopping = false
 
+    private var automaticProfileActivationIssue: String?
+    private var isActivatingProfileForApplication = false
+    private lazy var profileApplicationActivationController: ProfileApplicationActivationController = .init(
+        interfaceBundleIdentifier: Bundle.main.bundleIdentifier,
+        restoreTemporaryProfile: { [weak self] in
+            try self?.applyTemporaryProfile(nil)
+        },
+        activateProfile: { [weak self] profileID in
+            guard let self, !self.isStopping else {
+                throw HomeConfigurationSaveError.editorSessionUnavailable
+            }
+            self.isActivatingProfileForApplication = true
+            defer { self.isActivatingProfileForApplication = false }
+            try self.activateProfileFromInterface(profileID)
+            self.automaticProfileActivationIssue = nil
+        },
+        applyRemappingOverride: { [weak self] bundleIdentifier, value, hasAssignment in
+            guard let self else { return }
+            self.remappingController.setProfileApplicationRemappingOverride(
+                value,
+                bundleIdentifier: bundleIdentifier,
+                hasAssignedProfile: hasAssignment
+            )
+        },
+        reportFailure: { [weak self] _, error in
+            let reason: String
+            if let conflict = error as? ProfileActivationShortcutConflict {
+                reason = ProfileActivationFailurePresentation.message(for: conflict)
+            } else {
+                reason = "The automatic profile could not be activated. Check its saved rules and shortcut settings in Home."
+            }
+            let message = reason + " Remapping stays off for this app until you switch apps and try again."
+            self?.automaticProfileActivationIssue = message
+            self?.mainWindowController?.showAutomaticProfileActivationIssue(message)
+        }
+    )
+
     override init() {
         let permissionService =
             AccessibilityPermissionService()
@@ -273,6 +310,7 @@ final class AppCoordinator:
                         .preferences
                         .shortcutConfiguration
                 },
+                interfaceBundleIdentifier: Bundle.main.bundleIdentifier,
                 foregroundApplicationBundleIdentifierProvider: {
                     NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 }
@@ -296,19 +334,15 @@ final class AppCoordinator:
                     appPreferencesController,
                 remappingEngine:
                     remappingEngine,
-                configuredRulesProvider: {
+                configuredRulesProvider: { [weak remappingController] in
                     let configuration =
                         try profilesStore
                             .loadConfiguration()
 
-                    guard
-                        let activeProfile =
-                            configuration.activeProfile
-                    else {
-                        throw RemappingProfilesConfigurationValidationError
-                            .missingActiveProfile(
-                                configuration.activeProfileID
-                            )
+                    let activeProfileID = remappingController?.effectiveActiveProfileID(in: configuration)
+                        ?? configuration.activeProfileID
+                    guard let activeProfile = configuration.profile(id: activeProfileID) else {
+                        throw RemappingProfilesConfigurationValidationError.missingActiveProfile(activeProfileID)
                     }
 
                     return activeProfile.rules
@@ -429,6 +463,9 @@ final class AppCoordinator:
         initializeHomeConfigurationEditorSession()
         configureRulesWindowShortcutScope()
         configureRemappingStateObservation()
+        if let configuration = homeConfigurationEditorSession?.savedSnapshot.profilesConfiguration {
+            profileApplicationActivationController.load(configuration)
+        }
         startObservingWorkspaceActivation()
 
         applicationMenuController =
@@ -476,6 +513,9 @@ final class AppCoordinator:
         showMainWindow()
         startGlobalShortcuts()
         applyManualSettingAtLaunch(shouldEnableAtLaunch)
+        applyForegroundProfileContext(
+            bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        )
     }
 
     /// Shows the application's main window.
@@ -500,7 +540,7 @@ final class AppCoordinator:
 
             showRemappingRulesWindow(
                 for:
-                    profilesConfiguration.activeProfileID,
+                    remappingController.effectiveActiveProfileID(in: profilesConfiguration),
                 in:
                     profilesConfiguration
             )
@@ -937,9 +977,8 @@ final class AppCoordinator:
                     )
                 }
 
-                if draftConfiguration
-                    .activeProfileID
-                    == profileID
+                if draftConfiguration.activeProfileID == profileID
+                    || remappingController.temporaryActiveProfileID == profileID
                 {
                     let effectiveShortcutConfiguration =
                         EffectiveRemappingShortcutConfigurationResolver
@@ -1218,7 +1257,8 @@ final class AppCoordinator:
         _ notification:
             Notification
     ) {
-        remappingController.foregroundApplicationDidActivate(
+        guard !isStopping else { return }
+        applyForegroundProfileContext(
             bundleIdentifier: (
                 notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
                     ?? NSWorkspace.shared.frontmostApplication
@@ -1226,6 +1266,13 @@ final class AppCoordinator:
         )
 
         remappingController.refreshAccessibilityPermission()
+    }
+
+    private func applyForegroundProfileContext(bundleIdentifier: String?) {
+        profileApplicationActivationController.foregroundApplicationDidActivate(
+            bundleIdentifier: bundleIdentifier,
+            hasTemporaryProfile: remappingController.temporaryActiveProfileID != nil
+        )
     }
 
     private func makeStatusBarController()
@@ -1447,6 +1494,15 @@ final class AppCoordinator:
 
         mainWindowController =
             controller
+        controller.onActivateProfile = { [weak self] profileID in
+            guard let self else { throw HomeConfigurationSaveError.editorSessionUnavailable }
+            try self.activateProfileFromInterface(profileID)
+        }
+        controller.updateTemporaryActiveProfileID(remappingController.temporaryActiveProfileID)
+
+        if let automaticProfileActivationIssue {
+            controller.showAutomaticProfileActivationIssue(automaticProfileActivationIssue)
+        }
 
         controller.onClose = {
             [weak self] closedController in
@@ -1666,10 +1722,11 @@ final class AppCoordinator:
             .homeProfilesConfigurationProvider = {
                 [weak self] in
 
-                self?
-                    .homeConfigurationEditorSession?
-                    .draft
-                    .profilesConfiguration
+                guard let self, var configuration = self.homeConfigurationEditorSession?.draft.profilesConfiguration else {
+                    return nil
+                }
+                configuration.activeProfileID = self.remappingController.effectiveActiveProfileID(in: configuration)
+                return configuration
             }
 
         rulesWindowAppPreferencesController
@@ -1767,18 +1824,26 @@ final class AppCoordinator:
                 .editorSessionUnavailable
         }
 
-        let result =
-            try homeConfigurationSaveTransaction
-                .commit(
-                    homeConfigurationEditorSession
-                        .draft
-                )
+        let temporaryProfileID = remappingController.temporaryActiveProfileID
+        let result = try homeConfigurationSaveTransaction.commit(
+            homeConfigurationEditorSession.draft,
+            runtimeProfileID: temporaryProfileID
+        )
+        if let temporaryProfileID, result.committedSnapshot.profile(id: temporaryProfileID) == nil {
+            remappingController.setTemporaryActiveProfileID(nil)
+            mainWindowController?.updateTemporaryActiveProfileID(nil)
+        }
 
         let committedDeletionIDs =
             homeConfigurationEditorSession
                 .markCurrentDraftAsSaved(
                     result.committedSnapshot
                 )
+
+        profileApplicationActivationController.load(result.committedSnapshot.profilesConfiguration)
+        applyForegroundProfileContext(
+            bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        )
 
         closeRulesWindowIfDisplayingDeletedProfile(
             committedDeletionIDs
@@ -1792,7 +1857,7 @@ final class AppCoordinator:
                 )
         }
 
-        if result.shortcutConfigurationChanged
+        if temporaryProfileID != nil || result.shortcutConfigurationChanged
             || result.effectiveShortcutConfigurationChanged
         {
             NotificationCenter.default.post(
@@ -1860,6 +1925,21 @@ final class AppCoordinator:
         _ profileID:
             UUID
     ) throws {
+        if !isActivatingProfileForApplication,
+           profileApplicationActivationController.foregroundApplicationHasAssignment {
+            if let session = homeConfigurationEditorSession,
+               session.draft.profile(id: profileID) == nil || !session.canActivateProfileImmediately(profileID) {
+                throw HomeConfigurationEditorSessionError.profileNotPersisted(profileID)
+            }
+            try applyTemporaryProfile(profileID)
+            profileApplicationActivationController.applyForegroundRemappingPolicy()
+            automaticProfileActivationIssue = nil
+            return
+        }
+
+        if remappingController.temporaryActiveProfileID != nil {
+            try applyTemporaryProfile(nil)
+        }
         if let homeConfigurationEditorSession {
             try homeConfigurationEditorSession
                 .setActiveProfile(
@@ -1876,6 +1956,38 @@ final class AppCoordinator:
         publishImmediateProfileActivationChanges(
             result
         )
+    }
+
+    /// Switches the live Rules and shortcuts without changing the saved active UUID.
+    private func applyTemporaryProfile(_ requestedProfileID: UUID?) throws {
+        let configuration = try profilesStore.loadConfiguration()
+        let temporaryProfileID = requestedProfileID == configuration.activeProfileID ? nil : requestedProfileID
+        guard temporaryProfileID != remappingController.temporaryActiveProfileID else { return }
+        let targetID = temporaryProfileID ?? configuration.activeProfileID
+        guard let profile = configuration.profile(id: targetID) else {
+            throw RemappingProfileRulesAccessError.profileNotFound(targetID)
+        }
+        let defaultShortcuts = appPreferencesController.preferences.shortcutConfiguration
+        let effectiveShortcuts = EffectiveRemappingShortcutConfigurationResolver.resolve(
+            profile: profile, defaultConfiguration: defaultShortcuts
+        )
+        try rulesValidator.validate(profile.rules)
+        do {
+            try globalShortcutController.applyConfiguration(
+                defaultConfiguration: defaultShortcuts,
+                effectiveConfiguration: effectiveShortcuts,
+                effectiveRules: profile.rules,
+                persistingWith: {}
+            )
+        } catch let conflict as RemappingShortcutRuleConflict {
+            throw ProfileActivationShortcutConflict(profile: profile, conflict: conflict)
+        }
+        remappingController.setTemporaryActiveProfileID(temporaryProfileID)
+        remappingEngine.replaceRules(profile.rules)
+        mainWindowController?.updateTemporaryActiveProfileID(temporaryProfileID)
+        statusBarController?.refreshProfiles()
+        NotificationCenter.default.post(name: AppConfigurationNotification.globalShortcutConfigurationDidChange, object: nil)
+        NotificationCenter.default.post(name: AppConfigurationNotification.remappingRulesDidChange, object: nil)
     }
 
     /// Activates exactly one persisted profile without saving unrelated Home
@@ -1999,6 +2111,13 @@ final class AppCoordinator:
         _ result:
             HomeConfigurationSaveTransactionResult
     ) {
+        if !isActivatingProfileForApplication {
+            remappingController.setProfileApplicationRemappingOverride(
+                nil, bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            )
+            automaticProfileActivationIssue = nil
+        }
+
         if result.shortcutConfigurationChanged
             || result.effectiveShortcutConfigurationChanged
         {
@@ -2085,9 +2204,8 @@ final class AppCoordinator:
                                 true
                         )
                     },
-            activeProfileID:
-                persistedConfiguration
-                    .activeProfileID
+            activeProfileID: remappingController.effectiveActiveProfileID(in: persistedConfiguration),
+            isTemporaryProfileActive: remappingController.temporaryActiveProfileID != nil
         )
     }
 

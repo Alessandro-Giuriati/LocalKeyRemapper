@@ -113,6 +113,8 @@ nonisolated struct RemappingProfilesConfigurationValidator:
                 .noProfiles
         }
 
+        try ProfileApplicationActivation.validate(configuration.profiles)
+
         try validateProfileIDs(
             configuration.profiles
         )

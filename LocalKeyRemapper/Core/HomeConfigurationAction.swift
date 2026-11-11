@@ -25,6 +25,14 @@ nonisolated enum HomeConfigurationAction:
         after: ForegroundApplicationScope
     )
 
+    case setProfileApplicationActivation(
+        profileID: UUID,
+        before: ProfileApplicationActivation,
+        after: ProfileApplicationActivation,
+        beforeUpdatedAt: Date,
+        afterUpdatedAt: Date
+    )
+
     case setShortcutConfiguration(
         before: RemappingShortcutConfiguration,
         after: RemappingShortcutConfiguration
@@ -91,6 +99,11 @@ nonisolated enum HomeConfigurationAction:
             return actionOverhead
                 + Self.estimatedSize(of: before)
                 + Self.estimatedSize(of: after)
+
+        case .setProfileApplicationActivation(_, let before, let after, _, _):
+            return actionOverhead + MemoryLayout<UUID>.size
+                + 2 * MemoryLayout<Date>.size
+                + Self.estimatedSize(of: before) + Self.estimatedSize(of: after)
 
         case .setShortcutConfiguration(
             let before,
@@ -203,6 +216,9 @@ nonisolated enum HomeConfigurationAction:
             updatedSnapshot.foregroundApplicationScope = before
             return updatedSnapshot
 
+        case .setProfileApplicationActivation(let profileID, let before, _, let date, _):
+            return Self.settingApplicationActivation(before, for: profileID, updatedAt: date, in: currentSnapshot)
+
         case .setShortcutConfiguration(
             let before,
             _
@@ -313,6 +329,9 @@ nonisolated enum HomeConfigurationAction:
             updatedSnapshot.foregroundApplicationScope = after
             return updatedSnapshot
 
+        case .setProfileApplicationActivation(let profileID, _, let after, _, let date):
+            return Self.settingApplicationActivation(after, for: profileID, updatedAt: date, in: currentSnapshot)
+
         case .setShortcutConfiguration(
             _,
             let after
@@ -400,6 +419,25 @@ nonisolated enum HomeConfigurationAction:
             let after
         ):
             return after
+        }
+    }
+
+    private static func settingApplicationActivation(
+        _ activation: ProfileApplicationActivation,
+        for profileID: UUID,
+        updatedAt: Date,
+        in snapshot: HomeConfigurationSnapshot
+    ) -> HomeConfigurationSnapshot {
+        var updated = snapshot
+        guard let index = updated.profiles.firstIndex(where: { $0.id == profileID }) else { return snapshot }
+        updated.profiles[index].applicationActivation = activation
+        updated.profiles[index].updatedAt = updatedAt
+        return updated
+    }
+
+    private static func estimatedSize(of activation: ProfileApplicationActivation) -> Int {
+        activation.applications.reduce(1) { size, application in
+            size + 32 + application.bundleIdentifier.utf8.count + application.displayName.utf8.count
         }
     }
 
@@ -653,6 +691,7 @@ nonisolated enum HomeConfigurationAction:
             96
 
         return profileOverhead
+            + estimatedSize(of: profile.applicationActivation)
             + profile.name.utf8.count
             + profile.rules.reduce(
                 0
