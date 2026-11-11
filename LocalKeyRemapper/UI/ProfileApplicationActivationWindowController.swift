@@ -16,7 +16,7 @@ final class ProfileApplicationActivationWindowController: NSWindowController, NS
         title: "Activate this profile for", identifier: "profile.apps.list"
     )
     private let explanationLabel = NSTextField(wrappingLabelWithString:
-        "Select this profile automatically when one of these apps is in front. Each app can select one profile."
+        "Enabled apps select this profile automatically when they are in front. Use the switches to pause individual assignments."
     )
     private let remappingCheckbox = NSButton(
         checkboxWithTitle: "Also turn remapping on automatically", target: nil, action: nil
@@ -135,6 +135,12 @@ final class ProfileApplicationActivationWindowController: NSWindowController, NS
         applicationList.addButton.action = #selector(addApps)
         applicationList.removeButton.target = self
         applicationList.removeButton.action = #selector(removeApps)
+        applicationList.onActivationChange = { [weak self] applications in
+            guard let self else { return }
+            var updated = self.activation
+            updated.applications = applications
+            self.publish(updated)
+        }
         remappingCheckbox.identifier = NSUserInterfaceItemIdentifier("profile.apps.enableRemapping")
         remappingCheckbox.target = self
         remappingCheckbox.action = #selector(changeRemapping)
@@ -173,7 +179,7 @@ final class ProfileApplicationActivationWindowController: NSWindowController, NS
     private func refreshApplicationList() {
         var messages: [String: String] = [:]
         var hasGlobalConflict = false
-        for app in activation.applications {
+        for app in activation.enabledApplications {
             let identifier = app.bundleIdentifier
             var reasons: [String] = []
             let profileNames = conflicts.duplicateProfileNames(for: identifier)
@@ -181,7 +187,7 @@ final class ProfileApplicationActivationWindowController: NSWindowController, NS
                 let names = profileNames.map { "“\($0)”" }.joined(separator: ", ")
                 reasons.append("This app is assigned to multiple profiles: \(names).")
             }
-            if conflicts.conflictsWithGlobalScope(identifier, in: activation) {
+            if conflicts.conflictsWithGlobalScope(app, in: activation) {
                 hasGlobalConflict = true
                 reasons.append("This app is globally excluded. Remapping stays off.")
             }

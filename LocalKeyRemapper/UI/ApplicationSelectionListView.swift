@@ -9,6 +9,7 @@ import AppKit
 
 @MainActor
 private final class ApplicationCell: NSTableCellView {
+    let activationSwitch = NSSwitch()
     let nameLabel = NSTextField(labelWithString: "")
     let identifierLabel = NSTextField(labelWithString: "")
     var showsConflict = false {
@@ -24,12 +25,20 @@ private final class ApplicationCell: NSTableCellView {
         nameLabel.lineBreakMode = .byTruncatingTail
         identifierLabel.lineBreakMode = .byTruncatingTail
         identifierLabel.textColor = .secondaryLabelColor
+        activationSwitch.controlSize = .small
+        activationSwitch.toolTip = "Enable or disable this entry without removing the app."
+        activationSwitch.translatesAutoresizingMaskIntoConstraints = false
+        activationSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        activationSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(activationSwitch)
         for label in [nameLabel, identifierLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
             addSubview(label)
         }
         NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            activationSwitch.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            activationSwitch.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameLabel.leadingAnchor.constraint(equalTo: activationSwitch.trailingAnchor, constant: 8),
             nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 5),
             identifierLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
@@ -66,6 +75,8 @@ final class ApplicationSelectionListView: NSStackView, NSTableViewDataSource, NS
     private var conflictMessages: [String: String] = [:]
     private var controlFont = NSFont.systemFont(ofSize: 14)
     private var detailFont = NSFont.systemFont(ofSize: 12)
+
+    var onActivationChange: (([ForegroundApplicationScope.Application]) -> Void)?
 
     var selectedIdentifiers: Set<String> {
         Set(table.selectedRowIndexes.compactMap { index in
@@ -119,9 +130,22 @@ final class ApplicationSelectionListView: NSStackView, NSTableViewDataSource, NS
             return
         }
 
+        let keepsRows = self.applications.elementsEqual(applications) {
+            $0.bundleIdentifier == $1.bundleIdentifier
+        }
         let selected = selectedIdentifiers
         self.applications = applications
         self.conflictMessages = conflictMessages
+        if keepsRows {
+            // Keep the current cell and keyboard focus when toggling an entry.
+            for row in applications.indices {
+                if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? ApplicationCell {
+                    configure(cell, for: applications[row])
+                }
+            }
+            return
+        }
+
         table.reloadData()
         table.selectRowIndexes(
             IndexSet(applications.indices.filter { selected.contains(applications[$0].bundleIdentifier) }),
@@ -153,10 +177,19 @@ final class ApplicationSelectionListView: NSStackView, NSTableViewDataSource, NS
         let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ApplicationCell
             ?? ApplicationCell(frame: .zero)
         cell.identifier = identifier
-        let application = applications[row]
+        cell.activationSwitch.target = self
+        cell.activationSwitch.action = #selector(applicationActivationChanged(_:))
+        configure(cell, for: applications[row])
+        return cell
+    }
+
+    private func configure(_ cell: ApplicationCell, for application: ForegroundApplicationScope.Application) {
         let conflict = conflictMessages[application.bundleIdentifier]
+        cell.activationSwitch.state = application.isEnabled ? .on : .off
+        cell.activationSwitch.setAccessibilityLabel("Active entry for \(application.displayName)")
         cell.nameLabel.stringValue = application.displayName
         cell.nameLabel.font = controlFont
+        cell.nameLabel.textColor = application.isEnabled ? .labelColor : .secondaryLabelColor
         cell.nameLabel.setAccessibilityLabel(
             conflict.map { "\(application.displayName). \($0)" } ?? application.displayName
         )
@@ -165,7 +198,20 @@ final class ApplicationSelectionListView: NSStackView, NSTableViewDataSource, NS
         cell.showsConflict = conflict != nil
         cell.toolTip = [application.displayName, application.bundleIdentifier, conflict]
             .compactMap { $0 }.joined(separator: "\n")
-        return cell
+    }
+
+    @objc private func applicationActivationChanged(_ sender: NSSwitch) {
+        let row = table.row(for: sender)
+        guard applications.indices.contains(row) else { return }
+        let bundleIdentifier = applications[row].bundleIdentifier
+        var updated = applications
+        updated[row].isEnabled = sender.state == .on
+        onActivationChange?(updated)
+
+        // The draft may reject the edit if its profile was deleted.
+        if let application = applications.first(where: { $0.bundleIdentifier == bundleIdentifier }) {
+            sender.state = application.isEnabled ? .on : .off
+        }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

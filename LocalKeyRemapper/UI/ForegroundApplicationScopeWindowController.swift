@@ -16,7 +16,7 @@ final class ForegroundApplicationScopeWindowController: NSWindowController, NSWi
     private let otherAppsTitle = NSTextField(labelWithString: "Other Apps")
     private let otherAppsControl = NSPopUpButton(frame: .zero, pullsDown: false)
     private let explanationLabel = NSTextField(wrappingLabelWithString:
-        "Included apps and profile app settings can turn remapping on automatically. Excluded apps keep remapping off."
+        "Enabled entries in Included Apps turn remapping on. Enabled entries in Excluded Apps keep it off. Profile assignments can also turn remapping on."
     )
     private let validationLabel = NSTextField(wrappingLabelWithString: "")
     private let activeProfileConflictLabel = NSTextField(wrappingLabelWithString: "")
@@ -152,6 +152,18 @@ final class ForegroundApplicationScopeWindowController: NSWindowController, NSWi
         includedView.removeButton.action = #selector(ForegroundApplicationScopeWindowController.removeIncludedApps)
         excludedView.removeButton.target = self
         excludedView.removeButton.action = #selector(ForegroundApplicationScopeWindowController.removeExcludedApps)
+        includedView.onActivationChange = { [weak self] applications in
+            guard let self else { return }
+            var updated = self.scope
+            updated.includedApplications = applications
+            self.publish(updated)
+        }
+        excludedView.onActivationChange = { [weak self] applications in
+            guard let self else { return }
+            var updated = self.scope
+            updated.excludedApplications = applications
+            self.publish(updated)
+        }
         saveButton.bezelStyle = .rounded
         saveButton.target = self
         saveButton.action = #selector(ForegroundApplicationScopeWindowController.saveHomeDraft)

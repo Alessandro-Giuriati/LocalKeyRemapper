@@ -1808,7 +1808,9 @@ final class HomeProfilesSectionView:
 
         let hasAppConflict = conflictingApplicationProfileIDs.contains(profile.id)
         let appsLabel = "Configure apps for “\(profile.name)”"
-        let appsHelp = "Choose apps that activate “\(profile.name)” (\(profile.applicationActivation.applications.count) selected)."
+        let appEntries = profile.applicationActivation.applications
+        let enabledApps = appEntries.lazy.filter(\.isEnabled).count
+        let appsHelp = "Choose apps that activate “\(profile.name)” (\(enabledApps) of \(appEntries.count) enabled)."
         let appsButton = actionButton(
             title: "",
             systemImageName: hasAppConflict ? "exclamationmark.triangle.fill" : "app.badge",

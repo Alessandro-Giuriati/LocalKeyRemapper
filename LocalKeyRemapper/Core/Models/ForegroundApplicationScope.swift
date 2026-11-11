@@ -8,7 +8,7 @@
 import Foundation
 
 /// Stores app override lists and the behavior for every unlisted app.
-/// Drafts may overlap. Persistence validates that the lists are disjoint.
+/// Drafts may overlap. Persistence validates that enabled entries are disjoint.
 nonisolated struct ForegroundApplicationScope: Codable, Equatable {
     enum List: Equatable {
         case included
@@ -24,7 +24,7 @@ nonisolated struct ForegroundApplicationScope: Codable, Equatable {
                 let names = applications.map {
                     "\($0.displayName) (\($0.bundleIdentifier))"
                 }.joined(separator: "\n")
-                return "These apps appear in both lists. Remove each one from either list before saving.\n\n\(names)"
+                return "These apps are enabled in both lists. Turn each one off in one list before saving.\n\n\(names)"
             }
         }
     }
@@ -39,6 +39,26 @@ nonisolated struct ForegroundApplicationScope: Codable, Equatable {
     struct Application: Codable, Equatable {
         let bundleIdentifier: String
         let displayName: String
+        var isEnabled: Bool
+
+        init(bundleIdentifier: String, displayName: String, isEnabled: Bool = true) {
+            self.bundleIdentifier = bundleIdentifier
+            self.displayName = displayName
+            self.isEnabled = isEnabled
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case bundleIdentifier
+            case displayName
+            case isEnabled
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+            displayName = try container.decode(String.self, forKey: .displayName)
+            isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        }
     }
 
     static let unrestricted = Self()
@@ -70,7 +90,9 @@ nonisolated struct ForegroundApplicationScope: Codable, Equatable {
     }
 
     var observesForegroundApplication: Bool {
-        !includedApplications.isEmpty || !excludedApplications.isEmpty || permitsTemporaryManualActivation
+        includedApplications.contains(where: \.isEnabled)
+            || excludedApplications.contains(where: \.isEnabled)
+            || permitsTemporaryManualActivation
     }
 
     var permitsTemporaryManualActivation: Bool {
@@ -82,14 +104,14 @@ nonisolated struct ForegroundApplicationScope: Codable, Equatable {
             return false
         }
 
-        return !includedApplications.contains(where: { $0.bundleIdentifier == bundleIdentifier })
-            && !excludedApplications.contains(where: { $0.bundleIdentifier == bundleIdentifier })
+        return !containsEnabledApplication(bundleIdentifier, in: .included)
+            && !containsEnabledApplication(bundleIdentifier, in: .excluded)
     }
 
     func validate() throws {
-        let includedIdentifiers = Set(includedApplications.map(\.bundleIdentifier))
+        let includedIdentifiers = Set(includedApplications.lazy.filter(\.isEnabled).map(\.bundleIdentifier))
         let overlaps = excludedApplications.filter {
-            includedIdentifiers.contains($0.bundleIdentifier)
+            $0.isEnabled && includedIdentifiers.contains($0.bundleIdentifier)
         }
         guard overlaps.isEmpty else {
             throw ValidationError.overlappingApplications(overlaps)
@@ -129,13 +151,18 @@ nonisolated struct ForegroundApplicationScope: Codable, Equatable {
         remappingOverride(in: bundleIdentifier) ?? true
     }
 
-    /// A nil override uses the user's manual setting for unlisted apps.
+    func containsEnabledApplication(_ bundleIdentifier: String?, in list: List) -> Bool {
+        let applications = list == .included ? includedApplications : excludedApplications
+        return applications.contains { $0.isEnabled && $0.bundleIdentifier == bundleIdentifier }
+    }
+
+    /// A nil override uses the user's manual setting for apps without an enabled entry.
     func remappingOverride(in bundleIdentifier: String?) -> Bool? {
-        if excludedApplications.contains(where: { $0.bundleIdentifier == bundleIdentifier }) {
+        if containsEnabledApplication(bundleIdentifier, in: .excluded) {
             return false
         }
 
-        if includedApplications.contains(where: { $0.bundleIdentifier == bundleIdentifier }) {
+        if containsEnabledApplication(bundleIdentifier, in: .included) {
             return true
         }
 

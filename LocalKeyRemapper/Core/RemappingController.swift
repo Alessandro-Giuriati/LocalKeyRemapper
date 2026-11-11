@@ -102,9 +102,7 @@ final class RemappingController:
     }
 
     private var isGloballyExcluded: Bool {
-        foregroundApplicationScope.excludedApplications.contains {
-            $0.bundleIdentifier == foregroundApplicationBundleIdentifier
-        }
+        foregroundApplicationScope.containsEnabledApplication(foregroundApplicationBundleIdentifier, in: .excluded)
     }
 
     private var canTemporarilyEnableRemapping: Bool {
@@ -434,7 +432,7 @@ final class RemappingController:
         // Reuse the paused tap between included apps. The event-tap manager
         // disables delivery after pending remapped releases have completed.
         let retainsAutomaticRuntime = eventTapManager.isRunning
-            && (!foregroundApplicationScope.includedApplications.isEmpty
+            && (foregroundApplicationScope.includedApplications.contains(where: \.isEnabled)
                 || foregroundApplicationScope.permitsTemporaryManualActivation
                 || hasAssignedForegroundProfile)
         let needsRuntime = isManualRemappingEnabled || shouldRemap || retainsAutomaticRuntime

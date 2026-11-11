@@ -7,6 +7,10 @@ nonisolated struct ProfileApplicationActivation: Codable, Equatable {
 
     static let disabled = Self()
 
+    var enabledApplications: [ForegroundApplicationScope.Application] {
+        applications.filter(\.isEnabled)
+    }
+
     func adding(_ applications: [ForegroundApplicationScope.Application]) -> Self {
         var updated = self
         var identifiers = Set(updated.applications.map(\.bundleIdentifier))
@@ -16,7 +20,7 @@ nonisolated struct ProfileApplicationActivation: Codable, Equatable {
         return updated
     }
 
-    /// Each foreground app must resolve to exactly one profile.
+    /// Each foreground app may have at most one enabled profile assignment.
     static func validate(_ profiles: [RemappingProfile]) throws {
         if let error = validationErrors(for: profiles).first {
             throw error
@@ -49,7 +53,7 @@ nonisolated struct ProfileApplicationActivation: Codable, Equatable {
                 return "Choose a valid application for “\(name)”."
             case .conflictingProfiles(let app, let profiles):
                 let names = profiles.map { "“\($0)”" }.joined(separator: ", ")
-                return "“\(app)” is assigned to \(profiles.count) profiles: \(names). Keep it in one profile before saving Home."
+                return "“\(app)” is enabled in \(profiles.count) profiles: \(names). Leave it enabled in only one profile before saving Home."
             }
         }
     }
@@ -63,18 +67,18 @@ nonisolated struct ProfileApplicationConflicts {
     }
 
     private let duplicates: [String: Assignment]
-    let globallyExcludedAppIDs: Set<String>
+    private let globallyExcludedAppIDs: Set<String>
 
     init(profiles: [RemappingProfile] = [], scope: ForegroundApplicationScope = .unrestricted) {
         var assignments: [String: Assignment] = [:]
         for profile in profiles {
-            for app in profile.applicationActivation.applications {
+            for app in profile.applicationActivation.enabledApplications {
                 assignments[app.bundleIdentifier, default: Assignment(appName: app.displayName)]
                     .profiles[profile.id] = profile.name
             }
         }
         duplicates = assignments.filter { $0.value.profiles.count > 1 }
-        globallyExcludedAppIDs = Set(scope.excludedApplications.map(\.bundleIdentifier))
+        globallyExcludedAppIDs = Set(scope.excludedApplications.lazy.filter(\.isEnabled).map(\.bundleIdentifier))
     }
 
     func duplicateErrors(involving profileID: UUID?) -> [ProfileApplicationActivation.ValidationError] {
@@ -89,21 +93,24 @@ nonisolated struct ProfileApplicationConflicts {
         duplicates[bundleIdentifier]?.profiles.values.sorted() ?? []
     }
 
-    func conflictsWithGlobalScope(_ bundleIdentifier: String, in activation: ProfileApplicationActivation) -> Bool {
-        activation.enablesRemapping && globallyExcludedAppIDs.contains(bundleIdentifier)
+    func conflictsWithGlobalScope(
+        _ app: ForegroundApplicationScope.Application,
+        in activation: ProfileApplicationActivation
+    ) -> Bool {
+        app.isEnabled && activation.enablesRemapping && globallyExcludedAppIDs.contains(app.bundleIdentifier)
     }
 
     func affects(_ activation: ProfileApplicationActivation) -> Bool {
-        activation.applications.contains { app in
+        activation.enabledApplications.contains { app in
             duplicates[app.bundleIdentifier] != nil
-                || conflictsWithGlobalScope(app.bundleIdentifier, in: activation)
+                || conflictsWithGlobalScope(app, in: activation)
         }
     }
 
     func globalWarning(for profile: RemappingProfile) -> String? {
         let activation = profile.applicationActivation
         let blockedApps = activation.applications.filter {
-            conflictsWithGlobalScope($0.bundleIdentifier, in: activation)
+            conflictsWithGlobalScope($0, in: activation)
         }
         guard !blockedApps.isEmpty else { return nil }
         let names = blockedApps.map(\.displayName).joined(separator: ", ")

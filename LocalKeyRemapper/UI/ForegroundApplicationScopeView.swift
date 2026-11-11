@@ -78,10 +78,14 @@ final class ForegroundApplicationScopeView: NSStackView {
         } else {
             behavior = "stay off"
         }
+        let included = scope.includedApplications.lazy.filter(\.isEnabled).count
+        let excluded = scope.excludedApplications.lazy.filter(\.isEnabled).count
+        let inactive = scope.includedApplications.count + scope.excludedApplications.count - included - excluded
+        let inactiveSummary = inactive > 0 ? " · \(inactive) inactive" : ""
         summaryLabel.stringValue =
-            "\(scope.includedApplications.count) included · \(scope.excludedApplications.count) excluded · Other apps \(behavior)"
+            "\(included) included · \(excluded) excluded\(inactiveSummary) · Other apps \(behavior)"
         if scope.validationMessage != nil {
-            summaryLabel.stringValue += "\nResolve apps listed in both groups before saving."
+            summaryLabel.stringValue += "\nResolve apps enabled in both groups before saving."
             summaryLabel.textColor = .systemRed
         } else {
             summaryLabel.textColor = .secondaryLabelColor

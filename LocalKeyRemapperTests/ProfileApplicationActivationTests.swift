@@ -59,6 +59,47 @@ final class ProfileApplicationActivationTests: XCTestCase {
         XCTAssertNoThrow(try RemappingProfilesConfigurationValidator().validate(configuration([first, second])))
     }
 
+    func testInactiveProfileEntriesPersistAndAreIgnoredByActivationAndConflicts() throws {
+        var first = profile(enablesRemapping: true)
+        var second = profile(enablesRemapping: true)
+        second.name = "Second"
+        second.applicationActivation.applications[0].isEnabled = false
+        let config = configuration([first, second])
+        let data = try JSONEncoder().encode(config)
+        let restored = try JSONDecoder().decode(RemappingProfilesConfiguration.self, from: data)
+        XCTAssertEqual(restored, config)
+        try ProfileApplicationActivation.validate(restored.profiles)
+
+        let inactive = second.applicationActivation.applications[0]
+        let disabledExclusion = ForegroundApplicationScope(excludedApplications: [inactive])
+        let conflicts = ProfileApplicationConflicts(profiles: restored.profiles, scope: disabledExclusion)
+        XCTAssertFalse(conflicts.affects(first.applicationActivation))
+        XCTAssertNil(conflicts.globalWarning(for: first))
+        let activeExclusion = ForegroundApplicationScope(excludedApplications: [app])
+        let exclusionConflicts = ProfileApplicationConflicts(profiles: restored.profiles, scope: activeExclusion)
+        XCTAssertTrue(exclusionConflicts.affects(first.applicationActivation))
+        XCTAssertFalse(exclusionConflicts.affects(second.applicationActivation))
+
+        var selected: [UUID] = []
+        var overrides: [Bool?] = []
+        let controller = ProfileApplicationActivationController(
+            activateProfile: { selected.append($0) },
+            applyRemappingOverride: { _, override, _ in overrides.append(override) },
+            reportFailure: { _, _ in XCTFail("Unexpected failure") }
+        )
+        controller.load(restored)
+        controller.foregroundApplicationDidActivate(bundleIdentifier: app.bundleIdentifier)
+        XCTAssertEqual(selected, [first.id])
+        XCTAssertEqual(overrides, [true])
+
+        first.applicationActivation.applications[0].isEnabled = false
+        controller.load(configuration([first, second]))
+        controller.foregroundApplicationDidActivate(bundleIdentifier: app.bundleIdentifier)
+        XCTAssertEqual(selected, [first.id])
+        XCTAssertEqual(overrides, [true, nil])
+        XCTAssertFalse(controller.foregroundApplicationHasAssignment)
+    }
+
     func testDuplicateWarningListsEveryOwnerAndSkipsUnrelatedEditors() throws {
         let first = profile()
         var second = profile()
@@ -337,8 +378,14 @@ final class ProfileApplicationActivationTests: XCTestCase {
             remappingEngine: RemappingEngine(), eventTapManager: ControllerMockEventTapManager(),
             foregroundApplicationBundleIdentifierProvider: { self.app.bundleIdentifier }
         )
-        runtime.setForegroundApplicationScope(.init(excludedApplications: [app]))
+        var inactive = app
+        inactive.isEnabled = false
+        runtime.setForegroundApplicationScope(.init(excludedApplications: [inactive]))
         runtime.setProfileApplicationRemappingOverride(true, bundleIdentifier: app.bundleIdentifier)
+        XCTAssertEqual(runtime.foregroundApplicationOverride, true)
+        XCTAssertEqual(runtime.state, .enabled)
+
+        runtime.setForegroundApplicationScope(.init(excludedApplications: [app]))
         XCTAssertEqual(runtime.foregroundApplicationOverride, false)
         XCTAssertNotEqual(runtime.state, .enabled)
         runtime.setForegroundApplicationScope(.init(includedApplications: [app]))

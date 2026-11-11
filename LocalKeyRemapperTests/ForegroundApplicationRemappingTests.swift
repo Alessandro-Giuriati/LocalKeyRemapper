@@ -109,6 +109,32 @@ final class ForegroundApplicationRemappingTests: XCTestCase {
         }
     }
 
+    func testInactiveEntriesPersistAndFallBackToOtherApps() throws {
+        var inactive = editor
+        inactive.isEnabled = false
+        var scope = ForegroundApplicationScope(
+            includedApplications: [inactive],
+            excludedApplications: [editor]
+        )
+        XCTAssertNoThrow(try scope.validate())
+        XCTAssertEqual(scope.remappingOverride(in: editor.bundleIdentifier), false)
+
+        scope.includedApplications = [editor]
+        scope.excludedApplications = [inactive]
+        XCTAssertNoThrow(try scope.validate())
+        XCTAssertEqual(scope.remappingOverride(in: editor.bundleIdentifier), true)
+
+        scope.includedApplications = [inactive]
+        XCTAssertNil(scope.remappingOverride(in: editor.bundleIdentifier))
+        XCTAssertFalse(scope.observesForegroundApplication)
+        let data = try JSONEncoder().encode(scope)
+        XCTAssertEqual(try JSONDecoder().decode(ForegroundApplicationScope.self, from: data), scope)
+
+        scope.allowsOtherApplications = false
+        scope.allowsManualActivationForOtherApplications = true
+        XCTAssertTrue(scope.permitsTemporaryManualActivation(in: editor.bundleIdentifier))
+    }
+
     func testConflictingHomeDraftCanBeUndoneAndRedone() {
         let profiles = ControllerMockRulesStore().configuration
         let session = HomeConfigurationEditorSession(snapshot: .init(
@@ -250,6 +276,31 @@ final class ForegroundApplicationRemappingTests: XCTestCase {
         XCTAssertTrue(tap.foregroundApplicationAllowsRemapping)
         XCTAssertEqual(tap.startCallCount, 1)
         XCTAssertEqual(store.loadCallCount, 1)
+    }
+
+    func testDisablingTheLastIncludedEntryReleasesTheTapAndCanBeReversed() {
+        let tap = ControllerMockEventTapManager()
+        let controller = RemappingController(
+            permissionService: ControllerMockPermissionService(isGranted: true),
+            profilesStore: ControllerMockRulesStore(),
+            rulesValidator: RemappingRulesValidator(),
+            remappingEngine: RemappingEngine(),
+            eventTapManager: tap,
+            foregroundApplicationBundleIdentifierProvider: { self.editor.bundleIdentifier }
+        )
+        var scope = ForegroundApplicationScope(includedApplications: [editor])
+        controller.setForegroundApplicationScope(scope)
+        XCTAssertEqual(controller.state, .enabled)
+
+        scope.includedApplications[0].isEnabled = false
+        controller.setForegroundApplicationScope(scope)
+        XCTAssertEqual(controller.state, .disabled)
+        XCTAssertFalse(tap.isRunning)
+
+        scope.includedApplications[0].isEnabled = true
+        controller.setForegroundApplicationScope(scope)
+        XCTAssertEqual(controller.state, .enabled)
+        XCTAssertTrue(tap.foregroundApplicationAllowsRemapping)
     }
 
     func testUnlistedAppsCanStayOffWhileIncludedAppsEnableAutomatically() {

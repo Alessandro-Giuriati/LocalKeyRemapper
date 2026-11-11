@@ -53,7 +53,7 @@ final class ProfileApplicationActivationController {
         do {
             try ProfileApplicationActivation.validate(configuration.profiles)
             for profile in configuration.profiles {
-                for application in profile.applicationActivation.applications {
+                for application in profile.applicationActivation.enabledApplications {
                     assignments[application.bundleIdentifier] = Assignment(
                         profileID: profile.id,
                         enablesRemapping: profile.applicationActivation.enablesRemapping

@@ -45,10 +45,23 @@ final class ForegroundApplicationScopeWindowTests: XCTestCase {
 
         save.performClick(nil)
         XCTAssertEqual(saves, 0)
-        controller.load(.init(includedApplications: [application]))
+        content.layoutSubtreeIfNeeded()
+        let excluded = try XCTUnwrap(tables.first { $0.identifier?.rawValue == "scope.excludedApps" })
+        let cell = try XCTUnwrap(excluded.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        let switches: [NSSwitch] = descendants(in: cell)
+        let activation = try XCTUnwrap(switches.first)
+        let action = try XCTUnwrap(activation.action)
+        XCTAssertEqual(activation.state, .on)
+        activation.state = .off
+        XCTAssertTrue(NSApp.sendAction(action, to: activation.target, from: activation))
+        XCTAssertEqual(excluded.numberOfRows, 1)
         XCTAssertTrue(save.isEnabled)
         save.performClick(nil)
         XCTAssertEqual(saves, 1)
+
+        activation.state = .on
+        XCTAssertTrue(NSApp.sendAction(action, to: activation.target, from: activation))
+        XCTAssertFalse(save.isEnabled)
     }
 
     func testRemovingAnExcludedAppPublishesTheResolvedHomeDraft() throws {

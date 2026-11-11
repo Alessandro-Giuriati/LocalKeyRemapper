@@ -14,9 +14,9 @@ import XCTest
 final class ProfileApplicationActivationWindowTests: XCTestCase {
     private let app = ForegroundApplicationScope.Application(bundleIdentifier: "com.example.editor", displayName: "Editor")
 
-    func testCheckboxEditsHomeDraftAndReflectsUndoWithoutSaving() throws {
+    func testActivationControlsEditHomeDraftAndReflectUndoWithoutSaving() throws {
         _ = NSApplication.shared
-        let profile = RemappingProfile(name: "Editor")
+        let profile = RemappingProfile(name: "Editor", applicationActivation: .init(applications: [app]))
         let session = HomeConfigurationEditorSession(snapshot: .init(
             profilesConfiguration: .init(profiles: [profile], activeProfileID: profile.id),
             launchBehavior: .alwaysOff, shortcutConfiguration: .disabled
@@ -34,11 +34,32 @@ final class ProfileApplicationActivationWindowTests: XCTestCase {
         XCTAssertEqual(checkbox.state, .off)
         checkbox.performClick(nil)
         XCTAssertTrue(session.draft.profiles[0].applicationActivation.enablesRemapping)
-        XCTAssertEqual(session.savedSnapshot.profiles[0].applicationActivation, .disabled)
+        XCTAssertEqual(session.savedSnapshot.profiles[0].applicationActivation, profile.applicationActivation)
         session.undo()
         XCTAssertEqual(checkbox.state, .off)
         session.redo()
         XCTAssertEqual(checkbox.state, .on)
+
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let tables: [NSTableView] = descendants(in: content)
+        let table = try XCTUnwrap(tables.first)
+        let cell = try XCTUnwrap(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        let switches: [NSSwitch] = descendants(in: cell)
+        let activation = try XCTUnwrap(switches.first)
+        let action = try XCTUnwrap(activation.action)
+        XCTAssertEqual(activation.state, .on)
+        activation.state = .off
+        XCTAssertTrue(NSApp.sendAction(action, to: activation.target, from: activation))
+        var inactive = app
+        inactive.isEnabled = false
+        XCTAssertEqual(session.draft.profiles[0].applicationActivation.applications, [inactive])
+        XCTAssertEqual(session.savedSnapshot.profiles[0].applicationActivation.applications, [app])
+        XCTAssertEqual(table.numberOfRows, 1)
+        session.undo()
+        XCTAssertEqual(activation.state, .on)
+        session.redo()
+        XCTAssertEqual(activation.state, .off)
     }
 
     func testRemovingSelectedAppPublishesAnIndependentSelection() throws {
